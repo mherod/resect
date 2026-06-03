@@ -49,6 +49,7 @@ import {
 } from "../core/scanner.ts";
 import { createSourceFileFromText } from "../core/source-file.ts";
 import { applyTextChanges } from "../core/text-changes.ts";
+import { loadTransformConfig } from "../core/transform-config.ts";
 import {
 	addExportToDestinationBarrel,
 	findDestinationBarrel,
@@ -73,12 +74,19 @@ import type {
 	RestrictedDependencyViolation,
 	UpdatedReference,
 } from "../types/move.ts";
+import type { TransformRule } from "../types/transform.ts";
 import type { MutatingCommandOptions, ProjectConfig } from "../types.ts";
 
 export interface MoveOptions extends MutatingCommandOptions {
 	source: string;
 	target: string;
 	verify?: boolean;
+	/**
+	 * Path to a declarative `.resect/transforms.js` config (epic #103). Resolved
+	 * relative to the project root; parsed into a typed rule set before the move.
+	 * A missing/malformed config fails the move and writes nothing.
+	 */
+	transform?: string;
 }
 
 export async function moveCommand(options: MoveOptions): Promise<void> {
@@ -138,6 +146,24 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 		}
 	}
 
+	// Load the declarative transform config (epic #103, slice A) before any file
+	// I/O so a missing/malformed config fails the move and writes nothing. The
+	// rewrite visitor that consumes these rules lands in #103 B.
+	let transformRules: TransformRule[] = [];
+	if (options.transform) {
+		try {
+			transformRules = await loadTransformConfig(
+				project.rootDir,
+				options.transform
+			);
+		} catch (error) {
+			logger.error(
+				`\n❌ ${error instanceof Error ? error.message : String(error)}`
+			);
+			process.exit(1);
+		}
+	}
+
 	logger.info(`\n${dryRun ? "🔍 Dry run:" : "🚀"} Moving module...`);
 	logger.info(`   From: ${absoluteSource}`);
 	logger.info(`   To:   ${absoluteTarget}`);
@@ -156,7 +182,8 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 		dryRun,
 		verbose,
 		workspace ?? undefined,
-		force
+		force,
+		transformRules
 	);
 
 	// For cross-package moves, run build scripts to update dist/
@@ -211,6 +238,13 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 		for (const dep of result.dependencyChanges) {
 			logger.info(`   • ${dep.field}: "${dep.name}": "${dep.version}"`);
 		}
+		logger.empty();
+	}
+
+	if (result.transformRules && result.transformRules.length > 0) {
+		logger.info(
+			`📐 Loaded ${result.transformRules.length} transform rule(s) from ${options.transform} (application lands in #103 B).`
+		);
 		logger.empty();
 	}
 
@@ -450,7 +484,8 @@ export async function moveModule(
 	dryRun: boolean,
 	verbose: boolean,
 	workspace?: WorkspaceInfo,
-	force = false
+	force = false,
+	transformRules: TransformRule[] = []
 ): Promise<MoveResult> {
 	const errors: MoveError[] = [];
 	const updatedReferences: UpdatedReference[] = [];
@@ -881,6 +916,7 @@ export async function moveModule(
 		errors,
 		dependencyChanges,
 		...(restrictedViolations.length > 0 ? { restrictedViolations } : {}),
+		...(transformRules.length > 0 ? { transformRules } : {}),
 	};
 }
 

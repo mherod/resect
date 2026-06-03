@@ -51,10 +51,11 @@ const EXPECTED_FLAGS = [
 	"convention-threshold",
 	"ignore",
 	"entrypoint-globs",
+	"transform",
 ] as const;
 
 describe("option-flags", () => {
-	test("PARSE_ARGS_OPTIONS has exactly the expected 46 flags", () => {
+	test("PARSE_ARGS_OPTIONS has exactly the expected flag set", () => {
 		const keys = Object.keys(PARSE_ARGS_OPTIONS);
 		expect(keys).toEqual([...EXPECTED_FLAGS]);
 	});
@@ -114,6 +115,7 @@ describe("option-flags", () => {
 			"majority-threshold",
 			"convention-threshold",
 			"ignore",
+			"transform",
 		] as const;
 
 		for (const flag of stringFlags) {
@@ -192,6 +194,7 @@ describe("option-flags", () => {
 			"convention-threshold": "0.8",
 			ignore: "**/*.test.ts",
 			"entrypoint-globs": ["src/**/*.ts"],
+			transform: ".resect/transforms.js",
 		};
 		expect(_fixture.help).toBe(true);
 	});

@@ -1,3 +1,5 @@
+import type { TransformRule } from "./transform.ts";
+
 export interface MoveOperation {
 	sourcePath: string;
 	targetPath: string;
@@ -21,6 +23,13 @@ export interface MoveResult {
 	 * move) unless `--force`, in which case it lists the overridden violations.
 	 */
 	restrictedViolations?: RestrictedDependencyViolation[];
+	/**
+	 * Declarative transform rules loaded from `--transform <config>` that were in
+	 * effect for this move (epic #103, slice A). Present only when a config was
+	 * supplied. This slice surfaces the loaded rules for observability and for
+	 * the #103 B rewrite visitor to consume; no rewrite is applied yet.
+	 */
+	transformRules?: TransformRule[];
 }
 
 /**

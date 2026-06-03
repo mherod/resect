@@ -83,6 +83,7 @@ import { isWorktreeDirty } from "./core/git.ts";
 import { buildDependencyGraph } from "./core/graph.ts";
 import { loadProject, resolveTsConfig } from "./core/project.ts";
 import { analyzeSimilarity } from "./core/similarity.ts";
+import { loadTransformConfig } from "./core/transform-config.ts";
 import { discoverProject } from "./core/tsconfig-discovery.ts";
 import {
 	isIncompleteTypeCheck,
@@ -92,6 +93,7 @@ import {
 import { discoverWorkspace } from "./core/workspace.ts";
 import type { InlineConflict, InlineRewrite } from "./types/inline.ts";
 import type { TidyFixCategory } from "./types/tidy.ts";
+import type { TransformRule } from "./types/transform.ts";
 import type { ProjectConfig } from "./types.ts";
 
 // ── Mutating-tool helpers ──────────────────────────────────────────
@@ -1452,6 +1454,7 @@ async function moveTool(args: {
 	force: boolean;
 	verify: boolean;
 	verbose: boolean;
+	transform?: string;
 }): Promise<CallToolResult> {
 	const absoluteSource = path.resolve(args.source);
 	const absoluteTarget = path.resolve(args.target);
@@ -1471,6 +1474,20 @@ async function moveTool(args: {
 
 	const workspace = (await discoverWorkspace(project.rootDir)) ?? undefined;
 
+	// Load the declarative transform config (epic #103, slice A) before the move
+	// runs so a missing/malformed config fails fast and writes nothing.
+	let transformRules: TransformRule[] = [];
+	if (args.transform) {
+		try {
+			transformRules = await loadTransformConfig(
+				project.rootDir,
+				args.transform
+			);
+		} catch (error) {
+			return errorText(error instanceof Error ? error.message : String(error));
+		}
+	}
+
 	const runMove = async () =>
 		moveModule(
 			absoluteSource,
@@ -1478,7 +1495,12 @@ async function moveTool(args: {
 			project,
 			args.dryRun,
 			args.verbose,
-			workspace
+			workspace,
+			// MCP gates force at the worktree layer above; moveModule's conflict
+			// force stays at its default (unchanged behaviour). The 8th arg threads
+			// the loaded transform rules (#123).
+			false,
+			transformRules
 		);
 
 	const shouldVerify = args.verify && !args.dryRun;
@@ -1513,6 +1535,10 @@ async function moveTool(args: {
 			name: v.name,
 			destinationPackage: v.destinationPackage,
 			packageJson: path.relative(root, v.packageJsonPath),
+		})),
+		transformRules: (result.transformRules ?? []).map((r) => ({
+			from: r.from,
+			to: r.to,
 		})),
 		errors: result.errors.map((e) => ({
 			file: path.relative(root, e.file),
@@ -1726,9 +1752,24 @@ server.registerTool(
 				.boolean()
 				.optional()
 				.describe("Include extra detail in the result (default false)"),
+			transform: z
+				.string()
+				.optional()
+				.describe(
+					"Path to a declarative `.resect/transforms.js` config (epic #103), resolved relative to the project root. Parsed/validated before the move; a missing or malformed config fails the move and writes nothing"
+				),
 		},
 	},
-	async ({ source, target, project, dryRun, force, verify, verbose }) => {
+	async ({
+		source,
+		target,
+		project,
+		dryRun,
+		force,
+		verify,
+		verbose,
+		transform,
+	}) => {
 		try {
 			return await moveTool({
 				source,
@@ -1738,6 +1779,7 @@ server.registerTool(
 				force: force ?? false,
 				verify: verify ?? true,
 				verbose: verbose ?? false,
+				transform,
 			});
 		} catch (error) {
 			return toError(error);

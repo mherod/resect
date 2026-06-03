@@ -210,6 +210,12 @@ export type {
 	SimilarityFilterOptions,
 } from "./core/similarity.ts";
 export { analyzeSimilarity } from "./core/similarity.ts";
+// ── Core: transform config (epic #103) ─────────────────────────────
+export {
+	DEFAULT_TRANSFORM_CONFIG_PATH,
+	loadTransformConfig,
+	validateTransformConfig,
+} from "./core/transform-config.ts";
 // ── Core: tsconfig discovery ────────────────────────────────────────
 export type {
 	ProjectDiscovery,
@@ -318,5 +324,6 @@ export type {
 	TidySimilarMember,
 	TidyUnusedFinding,
 } from "./types/tidy.ts";
+export type { TransformConfig, TransformRule } from "./types/transform.ts";
 // ── Core types ──────────────────────────────────────────────────────
 export type { ProjectConfig, ProjectReference } from "./types.ts";

@@ -62,6 +62,7 @@ export const COMMANDS: CommandDef[] = [
 				verify: !values["no-verify"],
 				project: values.project,
 				workspace: values.workspace,
+				transform: values.transform,
 			});
 		},
 	},
