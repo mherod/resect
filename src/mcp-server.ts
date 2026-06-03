@@ -60,7 +60,7 @@ import {
 	applyMockCleanup,
 	buildMockCleanupReport,
 } from "./commands/mock-cleanup.ts";
-import { moveModule } from "./commands/move.ts";
+import { moveModule, rollbackTransformMove } from "./commands/move.ts";
 import { buildNamingReport } from "./commands/naming.ts";
 import {
 	FIND_TYPES,
@@ -1508,6 +1508,18 @@ async function moveTool(args: {
 		? await withTypecheckGuard(project, runMove)
 		: { result: await runMove(), delta: undefined };
 
+	// #103 C: a transform move whose post-move verify introduced new type errors
+	// is rolled back, mirroring the CLI. Plain moves keep the report-only delta.
+	let transformRolledBack = false;
+	if (
+		shouldVerify &&
+		delta &&
+		(result.transformRewrites?.length ?? 0) > 0 &&
+		(delta.newErrors.length > 0 || delta.verificationIncomplete)
+	) {
+		transformRolledBack = await rollbackTransformMove(project, result);
+	}
+
 	const root = project.rootDir;
 	return jsonText({
 		dryRun: args.dryRun,
@@ -1551,6 +1563,7 @@ async function moveTool(args: {
 			message: e.message,
 			recoverable: e.recoverable,
 		})),
+		transformRolledBack,
 		typecheck: delta,
 	});
 }

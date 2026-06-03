@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import path from "node:path";
 import { loadProject, resolveTsConfig } from "../core/project.ts";
 import { loadTransformConfig } from "../core/transform-config.ts";
@@ -6,13 +6,13 @@ import type { TransformRule } from "../types/transform.ts";
 import { cleanup, makeFixture } from "./__test-helpers.ts";
 import { moveModule } from "./move.ts";
 
+// Track every fixture and clean up once at the end: an afterEach that drained a
+// shared list would delete a fixture another test is still using under
+// `bun test --concurrent`.
 const dirs: string[] = [];
-afterEach(async () => {
-	while (dirs.length > 0) {
-		const dir = dirs.pop();
-		if (dir) {
-			await cleanup(dir);
-		}
+afterAll(async () => {
+	for (const dir of dirs) {
+		await cleanup(dir);
 	}
 });
 

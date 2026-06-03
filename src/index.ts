@@ -111,7 +111,11 @@ export {
 } from "./commands/mock-cleanup.ts";
 // ── Commands: move ──────────────────────────────────────────────────
 export type { MoveOptions } from "./commands/move.ts";
-export { moveCommand, moveModule } from "./commands/move.ts";
+export {
+	moveCommand,
+	moveModule,
+	rollbackTransformMove,
+} from "./commands/move.ts";
 // ── Commands: naming ───────────────────────────────────────────────
 export {
 	buildNamingReport,

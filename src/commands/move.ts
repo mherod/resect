@@ -12,7 +12,7 @@ import {
 	safeCaseRename,
 	shouldUseSafeCaseRename,
 } from "../core/filesystem-case.ts";
-import { ensureCleanWorktree } from "../core/git.ts";
+import { ensureCleanWorktree, rollbackMoves } from "../core/git.ts";
 import {
 	buildDependencyGraph,
 	findAllReferences,
@@ -77,6 +77,7 @@ import type {
 } from "../types/move.ts";
 import type { TransformRewrite, TransformRule } from "../types/transform.ts";
 import type { MutatingCommandOptions, ProjectConfig } from "../types.ts";
+import { applyChanges, normalizeImports } from "./alias.ts";
 
 export interface MoveOptions extends MutatingCommandOptions {
 	source: string;
@@ -209,6 +210,12 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 		const errors = await runTypeCheck(project);
 		if (errors.length > 0) {
 			const incomplete = isIncompleteTypeCheck(errors);
+			const transformed = (result.transformRewrites?.length ?? 0) > 0;
+			// #103 C: a transform that introduces new type errors rolls the move
+			// back; a plain move keeps today's report-and-exit behaviour.
+			const rolledBack = transformed
+				? await rollbackTransformMove(project, result)
+				: false;
 			logger.error(
 				incomplete
 					? `\n❌ Type checking did not complete after move (${errors.length} fatal/global diagnostic(s)) — the move may have introduced errors that could not be detected:`
@@ -220,11 +227,19 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 			if (errors.length > 10) {
 				logger.error(`   ... and ${errors.length - 10} more`);
 			}
-			logger.error(
-				incomplete
-					? "\n⚠️  Move completed but verification was incomplete. Please review the moved file and any dependencies manually."
-					: "\n⚠️  Move completed but introduced type errors. Please review."
-			);
+			if (transformed) {
+				logger.error(
+					rolledBack
+						? "\n↩️  Transform introduced type errors — the move was rolled back."
+						: "\n⚠️  Transform introduced type errors and automatic rollback failed (non-git tree?). Restore the move manually."
+				);
+			} else {
+				logger.error(
+					incomplete
+						? "\n⚠️  Move completed but verification was incomplete. Please review the moved file and any dependencies manually."
+						: "\n⚠️  Move completed but introduced type errors. Please review."
+				);
+			}
 			process.exit(1);
 		}
 		logger.info("\n✅ Type checking passed - no errors introduced");
@@ -810,6 +825,18 @@ export async function moveModule(
 		finalizeMovedContent(await rt.fs.readFile(sourcePath));
 	}
 
+	// #103 C: after the transform rewrite lands, normalize the moved file's own
+	// import specifiers to the project's relative convention (the form the move
+	// already emits for relocated imports). Transform-gated, so a non-transform
+	// move is byte-for-byte unchanged. The caller's tsc verify then gates the
+	// whole move and rolls back on new errors.
+	if (!dryRun && transformRewrites.length > 0) {
+		const normalized = normalizeImports(targetPath, "relative", project);
+		if (normalized.changes.length > 0) {
+			await applyChanges(normalized.changes);
+		}
+	}
+
 	// Update all referencing files
 	for (const [filePath, refs] of refsByFile) {
 		// Skip the source file itself (we handled it above)
@@ -966,6 +993,30 @@ export async function moveModule(
 		...(transformRules.length > 0 ? { transformRules } : {}),
 		...(transformRewrites.length > 0 ? { transformRewrites } : {}),
 	};
+}
+
+/**
+ * Reverse a transform move whose post-move `tsc` verify failed (#103 C). Restores
+ * the source file and the rewritten importers, then removes the destination,
+ * relying on the clean-worktree precondition `moveModule` enforces. Best-effort:
+ * in a non-git tree `git restore` is unavailable, so it returns `false` and the
+ * caller surfaces the diagnostics for manual cleanup.
+ */
+export async function rollbackTransformMove(
+	project: ProjectConfig,
+	result: MoveResult
+): Promise<boolean> {
+	try {
+		const importerFiles = new Set(result.updatedReferences.map((r) => r.file));
+		await rollbackMoves(
+			project.rootDir,
+			[{ from: result.movedFile.from, to: result.movedFile.to }],
+			importerFiles
+		);
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 async function moveFileWithContent(
