@@ -79,6 +79,52 @@ import { makeAuthorUrl } from "@/lib/utils";
 
 Other tools naively change `export * from "./moved-file"` to `export * from "@scope/package"`, which pulls in everything and causes conflicts. resect removes the re-export entirely — the destination package exports it now.
 
+## AST Transform Pipelines (`move --transform`)
+
+When a file changes _environment_ as it moves — say, out of a Vite app and into a Next.js package — the imports update cleanly but the runtime API calls inside it don't. `import.meta.env.VITE_API_URL` is valid in the old home and broken in the new one. `move --transform` applies a declarative, reviewable set of AST node rewrites to the moved file as part of the same operation, so the move lands type-checked rather than half-migrated.
+
+```bash
+# Apply the conventional config at .resect/transforms.js
+resect move src/config.ts packages/shared/src/config.ts --transform=.resect/transforms.js
+
+# Point at any other config path
+resect move src/config.ts packages/shared/src/config.ts --transform=config/env-transforms.js
+
+# Preview the rewrites without writing anything
+resect move src/config.ts packages/shared/src/config.ts --transform=.resect/transforms.js --dry-run
+```
+
+> `--transform` takes its config path as a value, so use the `--transform=<path>` form (a bare `--transform` would swallow the next argument). `.resect/transforms.js` is the conventional location, but the path is always explicit.
+
+### The config file
+
+The config exports a list of `{ from, to }` rules — either as `{ transforms: [...] }` or as a bare array:
+
+```js
+// .resect/transforms.js
+module.exports = {
+  transforms: [
+    { from: "import.meta.env.VITE_API_URL", to: "process.env.NEXT_PUBLIC_API_URL" },
+    { from: "import.meta.env.MODE", to: "process.env.NODE_ENV" },
+  ],
+};
+```
+
+`export default [...]` and `export const transforms = [...]` are both accepted.
+
+### What it does
+
+1. **Matches AST nodes, not text** — each rule rewrites property-access (`a.b.c`) and element-access (`a["b"]`) expressions in the moved file whose normalized source exactly equals `from`. Whitespace differences are tolerated; unrelated substrings are never touched.
+2. **Reports every rewrite** — applied changes come back as `transformRewrites` (`from`, `to`, `file`, `line`); the CLI prints them as `file:line  from → to`.
+3. **Normalizes imports** — after rewriting, the moved file's import specifiers are re-normalized so the new code stays consistent with its destination.
+4. **Verifies and rolls back** — the standard `tsc --noEmit` gate runs after the move; if a rewrite introduced a type error (or verification was incomplete), the entire move is rolled back — source restored, destination removed — so a bad transform never leaves a broken tree.
+
+A missing or malformed config fails fast with a clear error and writes nothing — there is no partial move on a bad config.
+
+> **Security note:** a `.js` config is evaluated to load it. resect validates that the _result_ is a pure declarative mapping, but does not yet sandbox arbitrary user-supplied JS — treat the config like any other code you run.
+
+The same option is available on the MCP `move` tool (pass `transform: "<path>"`) and the library `moveModule()`, which accepts the parsed `TransformRule[]` directly.
+
 ## Commands
 
 ### `move <source> <target>`
@@ -97,6 +143,7 @@ resect move src/utils/old.ts src/helpers/new.ts --dry-run
 - Internal imports within the moved file
 - Jest/Vitest mock calls
 - Case-only renames on case-insensitive filesystems
+- Declarative AST rewrites via `--transform` (see [AST Transform Pipelines](#ast-transform-pipelines-move---transform))
 
 ### `rename <file> <oldName> <newName>`
 
@@ -127,6 +174,23 @@ Shows:
 - Barrel files that re-export this module
 - **Unresolvable imports** — specifiers that cannot be resolved, with line numbers and diagnostics
 - **Project-wide unresolvable imports** — all broken imports across the entire project, shown at the end
+
+### `analyze-impact <source> <target>`
+
+Scout the blast radius of a proposed move/rename **before** mutating anything. Read-only — safe to call speculatively.
+
+```bash
+resect analyze-impact src/utils/foo.ts packages/shared/src/foo.ts
+resect analyze-impact src/old.ts src/new.ts --verbose
+```
+
+Reports:
+- **Impacted files** — direct importers plus indirect ones reached through barrel chains
+- **Workspace boundaries crossed** — source and target package when the move spans packages
+- **Missing dependencies** — external imports of the source absent from the target package (for cross-package moves)
+- **Breaking-risk band** — `low` / `medium` / `high`
+
+Use this instead of running `move` and reading the fallout.
 
 ### `find <query>`
 
@@ -233,6 +297,23 @@ resect extract-common src --skip-same-file --skip-directives
 
 Without `--output`, keeps one canonical copy in place and replaces all others with imports. With `--output`, writes the function to the specified destination file and rewrites all source locations to import from it.
 
+### `extract-component <file> <selector> <new-file>`
+
+Split a JSX/TSX subtree out of a component into its own typed sub-component, wiring up the props automatically.
+
+```bash
+resect extract-component src/App.tsx Card src/Card.tsx              # By JSX element name
+resect extract-component src/App.tsx L12-40 src/Panel.tsx --dry-run # By line range, previewed
+resect extract-component src/App.tsx Card src/Card.tsx --json
+```
+
+The selector targets the subtree to lift — either a JSX element name (`Card`) or a `Lstart-end` line range (`L12-40`). resect:
+- Generates the new component file with a `PascalCase` name and a typed props interface inferred from the free variables the subtree closes over.
+- Replaces the original subtree with a call to the new component, threading the captured values through as props.
+- Runs `tsc --noEmit` before and after, and rolls back on regression.
+
+Free variables derived from hooks (`use*`) cannot be lifted as props — when one is detected the extraction is blocked and nothing is written. Mutating; CLI writes by default (`--dry-run` previews), the MCP tool defaults to `dryRun: true`.
+
 ### `unused <directory>`
 
 Find exports and files that no other file in the project imports.
@@ -333,18 +414,6 @@ resect barrel . --workspace
 
 The headline finding is **sub-path export shadowing**: a file reachable through a barrel that ALSO has a dedicated package `exports` sub-path entry (e.g. `"./cn"`). Consumers should import via the sub-path specifier (`@scope/utils/cn`), not the package root barrel, and a cross-package `move` should target that sub-path rather than collapsing to the root (see [#93](https://github.com/mherod/resect/issues/93)). It also reports **wildcard re-exports** (`export * from`) that obscure a package's public surface, **barrel chains** (barrels re-exporting other barrels), and **unused barrels** (no importers). Per barrel it returns entry counts by kind, distinct source-module count, and consumer count.
 
-### `inline <barrel-file>`
-
-Inline a pure re-export barrel: rewrite all importers to import directly from the canonical source(s), removing the barrel indirection at call sites. The barrel file itself is left in place (use `unused` to identify it for removal once all importers have been retargeted).
-
-```bash
-resect inline src/shared/index.ts
-resect inline src/utils/barrel.ts --dry-run
-resect inline src/api/index.ts --no-verify
-```
-
-The barrel must be a **pure re-export barrel** — every top-level statement must be an `export … from "…"` statement. Any local declarations, imports, or bare exports without a `from` clause cause the command to abort. Namespace imports (`import * as x`), dynamic imports, and barrels that re-export from more than one canonical source are skipped with a warning. By default, runs `tsc --noEmit` before and after applying changes; use `--no-verify` to skip. Supports `--dry-run`, `--force`, `--json`, `--verbose`.
-
 ### `tidy <directory>`
 
 Compose structural findings into one tidyup report, with guarded fix mode.
@@ -371,6 +440,7 @@ resect ships a stdio [Model Context Protocol](https://modelcontextprotocol.io) s
 |------|-------------|
 | `find` | Find files and exports by name |
 | `analyze` | A module's exports, imports, referencing files, barrel re-exports, unresolvable + unused exports |
+| `analyze-impact` | Blast radius of a proposed move/rename: impacted files, boundaries crossed, missing deps, breaking-risk band |
 | `discover` | tsconfig files, extends chains, project references, path aliases, file ownership |
 | `workspace` | Monorepo packages, entrypoints, exports maps, barrel files |
 | `audit` | Module health: fan-out, fan-in, instability, large export surfaces, cycles |
@@ -392,6 +462,7 @@ resect ships a stdio [Model Context Protocol](https://modelcontextprotocol.io) s
 | `mock-cleanup` | Remove orphan mock factory keys with typecheck rollback |
 | `tidy` | Apply safe grouped tidy fixes with typecheck rollback |
 | `extract-common` | Consolidate duplicate functions into one canonical copy and rewrite callers |
+| `extract-component` | Split a JSX subtree into a typed sub-component, threading captured values as props |
 
 Each mutating tool:
 
@@ -507,6 +578,9 @@ Under Bun the default runtime works out of the box; subpath entry points `@mhero
 | `--project` | `-p` | Path to project directory or tsconfig.json |
 | `--verbose` | | Enable detailed output |
 | `--no-verify` | | Skip type checking verification (not recommended) |
+| `--force` | | Proceed past the dirty-worktree guard and similarity/conflict blocks (mutating commands) |
+| `--fix` | | Apply suggested fixes (mock-cleanup, test-relocation, naming, tidy) |
+| `--transform` | | Apply AST rewrites from a config during a move; takes a value: `--transform=.resect/transforms.js` |
 | `--type` | `-t` | Filter find results by type: `file`, `export`, or `all` |
 | `--prefer` | | Alias strategy: `alias`, `relative`, or `shortest` |
 | `--rename-specifier` | | Exact alias rewrite pair `<from>=<to>`; repeat for batch rewrites |
@@ -523,6 +597,25 @@ Under Bun the default runtime works out of the box; subpath entry points `@mhero
 | `--group` | | Target a specific group number (extract-common) |
 | `--output` | `-o` | Write extracted functions to this file (extract-common) |
 | `--workspace` | | Scan across all workspace packages |
+| `--skip-wrappers` | | Skip thin wrapper functions (similar/extract-common) |
+| `--kinds` | | Restrict similar scan to `function`, `type`, `interface` (comma-separated) |
+| `--bucket` | | Restrict similar output to `exact`, `high`, or `medium` |
+| `--format` | | Output format for `similar`: `compact` |
+| `--ignore` | | Glob of files to exclude as reported candidates (unused/organise) |
+| `--entrypoint-globs` | | Extra globs treated as public entrypoints (unused); repeatable |
+| `--fan-out-threshold` | | Flag files importing more than N modules (audit/tidy) |
+| `--fan-in-threshold` | | Flag files imported by more than N files (audit/tidy) |
+| `--export-threshold` | | Flag files exporting more than N symbols (audit/tidy) |
+| `--majority-threshold` | | Fraction of a directory that sets the majority casing (naming) |
+| `--min-siblings` | | Minimum sibling files before a directory's casing is judged (naming) |
+| `--include-tests` | | Include test files in the naming audit |
+| `--convention-threshold` | | Confidence threshold for test-placement convention (test-relocation) |
+| `--experimental` | | Opt into experimental output (required by `tidy` in 1.x) |
+| `--fix-category` | | Explicit tidy fix categories, e.g. `dead-exports` (repeatable) |
+| `--alias-prefer` | | Alias strategy used by `tidy --fix=alias-normalisation` |
+| `--scope` | | Restrict `tidy` findings to a sub-path |
+| `--out` | | Write the `tidy` JSON report to this file |
+| `--max-changes` | | Ceiling on writes a `tidy --fix` run may apply before aborting |
 
 ## How It Works
 

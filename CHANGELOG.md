@@ -20,6 +20,32 @@ All notable user-facing changes to this project are documented here.
 
 ### New Features
 
+- **`move --transform` AST transform pipelines**: `resect move <src> <dst>
+  --transform=.resect/transforms.js` applies a declarative set of
+  property/element-access node rewrites to the moved file as part of the move,
+  so a file changing environment (e.g. `import.meta.env.VITE_API_URL` →
+  `process.env.NEXT_PUBLIC_API_URL`) lands type-checked rather than
+  half-migrated. The config exports `{ transforms: [{ from, to }] }` (or a bare
+  array; `export default` / `export const transforms` / `module.exports` all
+  accepted). Rewrites match AST nodes by normalized source text (not regex),
+  are reported as `transformRewrites` (`from`/`to`/`file`/`line`), the moved
+  file's imports are re-normalized, and the standard `tsc --noEmit` gate rolls
+  the whole move back if a rewrite introduces a type error. A missing or
+  malformed config fails fast and writes nothing. Available on the CLI, the MCP
+  `move` tool (`transform: "<path>"`), and the library `moveModule()` (accepts
+  `TransformRule[]`). Epic #103 (#123 loader, #124 visitor, #125 verify/rollback).
+- **`analyze-impact` command**: `resect analyze-impact <source> <target>` (and
+  the `analyze-impact` MCP tool) scouts the blast radius of a proposed
+  move/rename without mutating anything — impacted files (direct + barrel-chain
+  importers), workspace boundaries crossed, dependencies missing from the target
+  package, and a `low`/`medium`/`high` breaking-risk band. Read-only.
+- **`extract-component` command**: `resect extract-component <file> <selector>
+  <new-file>` splits a JSX/TSX subtree into its own typed sub-component,
+  inferring a props interface from the captured free variables and threading
+  them through at the call site. Selector is a JSX element name or an `Lstart-end`
+  line range. Free variables derived from hooks (`use*`) block the extraction.
+  Runs `tsc --noEmit` before/after with rollback; the MCP tool defaults to
+  `dryRun: true`. Epic #101.
 - **`barrel` command**: `resect barrel <dir>` (and the `barrel` MCP tool)
   analyzes barrel files (index.ts re-export hubs) and surfaces consumer-facing
   problem cases. Headline finding is **sub-path export shadowing** (issue #93):
