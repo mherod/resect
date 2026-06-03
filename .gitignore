@@ -47,3 +47,4 @@ __tmp_git_test__/
 __fixtures__/
 /.pipeline
 /.claude/agent-memory
+/.claude/scheduled_tasks.lock

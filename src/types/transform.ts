@@ -1,7 +1,8 @@
 /**
  * Declarative AST transform rules applied during a cross-environment `move`
  * (epic #103). This module owns only the *config shape*; the loader lives in
- * `src/core/transform-config.ts` and the rewrite visitor lands in #103 B.
+ * `src/core/transform-config.ts` and the rewrite visitor in
+ * `src/core/transform-visitor.ts` (#103 B).
  *
  * A rule is a pure source→target accessor mapping (e.g.
  * `import.meta.env.VITE_API_URL` → `process.env.NEXT_PUBLIC_API_URL`), keyed by
@@ -21,4 +22,20 @@ export interface TransformRule {
  */
 export interface TransformConfig {
 	transforms: TransformRule[];
+}
+
+/**
+ * One accessor rewrite the move visitor applied (or, under `--dry-run`, would
+ * apply) to the moved file (#103 B). Reported so the CLI/MCP can surface exactly
+ * what changed, and so dry-run can preview the rewrite without writing.
+ */
+export interface TransformRewrite {
+	/** The source accessor that was matched, e.g. "import.meta.env.VITE_API_URL". */
+	from: string;
+	/** The replacement accessor written in its place. */
+	to: string;
+	/** 1-based line number in the moved file where the rewrite applies. */
+	line: number;
+	/** Absolute path of the moved file the rewrite targets. */
+	file: string;
 }

@@ -1540,6 +1540,12 @@ async function moveTool(args: {
 			from: r.from,
 			to: r.to,
 		})),
+		transformRewrites: (result.transformRewrites ?? []).map((r) => ({
+			from: r.from,
+			to: r.to,
+			line: r.line,
+			file: path.relative(root, r.file),
+		})),
 		errors: result.errors.map((e) => ({
 			file: path.relative(root, e.file),
 			message: e.message,

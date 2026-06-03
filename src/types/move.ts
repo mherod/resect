@@ -1,4 +1,4 @@
-import type { TransformRule } from "./transform.ts";
+import type { TransformRewrite, TransformRule } from "./transform.ts";
 
 export interface MoveOperation {
 	sourcePath: string;
@@ -30,6 +30,13 @@ export interface MoveResult {
 	 * the #103 B rewrite visitor to consume; no rewrite is applied yet.
 	 */
 	transformRules?: TransformRule[];
+	/**
+	 * Accessor rewrites the transform visitor applied to the moved file (#103 B),
+	 * e.g. `import.meta.env.X` → `process.env.Y`. Present only when at least one
+	 * rule matched. Under `--dry-run` these are the rewrites that *would* apply;
+	 * no file is written.
+	 */
+	transformRewrites?: TransformRewrite[];
 }
 
 /**

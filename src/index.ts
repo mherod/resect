@@ -216,6 +216,10 @@ export {
 	loadTransformConfig,
 	validateTransformConfig,
 } from "./core/transform-config.ts";
+export {
+	applyTransformRules,
+	planTransformRewrites,
+} from "./core/transform-visitor.ts";
 // ── Core: tsconfig discovery ────────────────────────────────────────
 export type {
 	ProjectDiscovery,
@@ -324,6 +328,10 @@ export type {
 	TidySimilarMember,
 	TidyUnusedFinding,
 } from "./types/tidy.ts";
-export type { TransformConfig, TransformRule } from "./types/transform.ts";
+export type {
+	TransformConfig,
+	TransformRewrite,
+	TransformRule,
+} from "./types/transform.ts";
 // ── Core types ──────────────────────────────────────────────────────
 export type { ProjectConfig, ProjectReference } from "./types.ts";

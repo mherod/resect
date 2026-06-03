@@ -50,6 +50,7 @@ import {
 import { createSourceFileFromText } from "../core/source-file.ts";
 import { applyTextChanges } from "../core/text-changes.ts";
 import { loadTransformConfig } from "../core/transform-config.ts";
+import { applyTransformRules } from "../core/transform-visitor.ts";
 import {
 	addExportToDestinationBarrel,
 	findDestinationBarrel,
@@ -74,7 +75,7 @@ import type {
 	RestrictedDependencyViolation,
 	UpdatedReference,
 } from "../types/move.ts";
-import type { TransformRule } from "../types/transform.ts";
+import type { TransformRewrite, TransformRule } from "../types/transform.ts";
 import type { MutatingCommandOptions, ProjectConfig } from "../types.ts";
 
 export interface MoveOptions extends MutatingCommandOptions {
@@ -242,9 +243,21 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 	}
 
 	if (result.transformRules && result.transformRules.length > 0) {
-		logger.info(
-			`📐 Loaded ${result.transformRules.length} transform rule(s) from ${options.transform} (application lands in #103 B).`
-		);
+		const rewrites = result.transformRewrites ?? [];
+		if (rewrites.length > 0) {
+			logger.info(
+				`📐 ${options.dryRun ? "Would apply" : "Applied"} ${rewrites.length} transform rewrite(s) from ${result.transformRules.length} rule(s):`
+			);
+			for (const rewrite of rewrites) {
+				logger.info(
+					`   ${path.basename(rewrite.file)}:${rewrite.line}  ${rewrite.from} → ${rewrite.to}`
+				);
+			}
+		} else {
+			logger.info(
+				`📐 Loaded ${result.transformRules.length} transform rule(s) from ${options.transform}; no matching accessors in the moved file.`
+			);
+		}
 		logger.empty();
 	}
 
@@ -490,7 +503,20 @@ export async function moveModule(
 	const errors: MoveError[] = [];
 	const updatedReferences: UpdatedReference[] = [];
 	const dependencyChanges: DependencyChange[] = [];
+	const transformRewrites: TransformRewrite[] = [];
 	const rt = getRuntime();
+
+	// Apply the configured accessor rewrites (#103 B) to the moved file's content
+	// just before it is written. Positional edits only — no AST reserialize. A
+	// move with no rule set (or no match) returns the content byte-for-byte.
+	const finalizeMovedContent = (rawContent: string): string => {
+		if (transformRules.length === 0) {
+			return rawContent;
+		}
+		const applied = applyTransformRules(rawContent, targetPath, transformRules);
+		transformRewrites.push(...applied.rewrites);
+		return applied.content;
+	};
 
 	// Validate source exists
 	if (!(await rt.fs.exists(sourcePath))) {
@@ -745,13 +771,23 @@ export async function moveModule(
 				updatedReferences.push(...updates);
 				if (!dryRun) {
 					// We'll write this as part of the move
-					await moveFileWithContent(rt, sourcePath, targetPath, newContent);
+					await moveFileWithContent(
+						rt,
+						sourcePath,
+						targetPath,
+						finalizeMovedContent(newContent)
+					);
 					fileMoved = true;
 				}
 			} else if (!dryRun) {
 				// No internal changes, just copy
 				const content = await rt.fs.readFile(sourcePath);
-				await moveFileWithContent(rt, sourcePath, targetPath, content);
+				await moveFileWithContent(
+					rt,
+					sourcePath,
+					targetPath,
+					finalizeMovedContent(content)
+				);
 				fileMoved = true;
 			}
 		}
@@ -760,7 +796,18 @@ export async function moveModule(
 	// If file wasn't moved yet (no internal refs or couldn't parse), copy as-is
 	if (!(fileMoved || dryRun)) {
 		const content = await rt.fs.readFile(sourcePath);
-		await moveFileWithContent(rt, sourcePath, targetPath, content);
+		await moveFileWithContent(
+			rt,
+			sourcePath,
+			targetPath,
+			finalizeMovedContent(content)
+		);
+	}
+
+	// Dry-run writes nothing, but still surface the rewrites that WOULD apply to
+	// the moved file so `--dry-run` previews them (#103 B acceptance criterion).
+	if (dryRun && transformRules.length > 0) {
+		finalizeMovedContent(await rt.fs.readFile(sourcePath));
 	}
 
 	// Update all referencing files
@@ -917,6 +964,7 @@ export async function moveModule(
 		dependencyChanges,
 		...(restrictedViolations.length > 0 ? { restrictedViolations } : {}),
 		...(transformRules.length > 0 ? { transformRules } : {}),
+		...(transformRewrites.length > 0 ? { transformRewrites } : {}),
 	};
 }
 
