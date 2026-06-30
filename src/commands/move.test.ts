@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { captureOutput, makeTempDir } from "./__test-helpers.ts";
+import { captureOutput, makeTempDir, runCli } from "./__test-helpers.ts";
 import { moveCommand } from "./move.ts";
 
 const tempDirs: string[] = [];
@@ -27,6 +27,51 @@ async function expectGit(cwd: string, args: string[]): Promise<string> {
 		);
 	}
 	return stdout;
+}
+
+async function makeMoveCliProject(): Promise<{
+	consumerPath: string;
+	sourcePath: string;
+	targetPath: string;
+	tsconfigPath: string;
+}> {
+	const dir = await tempDir();
+	const srcDir = path.join(dir, "src");
+	await mkdir(srcDir, { recursive: true });
+	const tsconfigPath = path.join(dir, "tsconfig.json");
+	await writeFile(
+		tsconfigPath,
+		JSON.stringify(
+			{
+				compilerOptions: {
+					module: "ESNext",
+					moduleResolution: "Bundler",
+					noEmit: true,
+					strict: true,
+					target: "ESNext",
+					types: [],
+				},
+				include: ["src/**/*.ts"],
+			},
+			null,
+			2
+		)
+	);
+
+	const sourcePath = path.join(srcDir, "source.ts");
+	const targetPath = path.join(srcDir, "nested", "source.ts");
+	const consumerPath = path.join(srcDir, "consumer.ts");
+	await writeFile(
+		path.join(srcDir, "preexisting.ts"),
+		"export const existing: string = 1;\n"
+	);
+	await writeFile(sourcePath, "export const value = 1;\n");
+	await writeFile(
+		consumerPath,
+		'import { value } from "./source";\nexport const result = value;\n'
+	);
+
+	return { consumerPath, sourcePath, targetPath, tsconfigPath };
 }
 
 afterAll(async () => {
@@ -97,5 +142,31 @@ describe("moveModule", () => {
 			"src/utils/foo.ts",
 		]);
 		expect(log.trim().split("\n").length).toBeGreaterThanOrEqual(2);
+	});
+});
+
+describe("move CLI verification", () => {
+	test("allows pre-existing type errors when the move adds no new errors", async () => {
+		const { consumerPath, sourcePath, targetPath, tsconfigPath } =
+			await makeMoveCliProject();
+
+		const result = await runCli([
+			"move",
+			sourcePath,
+			targetPath,
+			"--force",
+			"-p",
+			tsconfigPath,
+		]);
+
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain(
+			"Type errors: 1 total (1 before, 0 new, 0 fixed)"
+		);
+		expect(result.stdout).toContain("Moved successfully");
+		expect(result.stderr).not.toContain("introduced new type errors");
+		expect(await Bun.file(sourcePath).exists()).toBe(false);
+		expect(await Bun.file(targetPath).exists()).toBe(true);
+		expect(await Bun.file(consumerPath).text()).toContain("./nested/source");
 	});
 });

@@ -58,7 +58,10 @@ import {
 	updateBarrelExports,
 	updateFileReferences,
 } from "../core/updater.ts";
-import { isIncompleteTypeCheck, runTypeCheck } from "../core/verify.ts";
+import {
+	printVerificationResults,
+	runWithTypecheckGuard,
+} from "../core/verify.ts";
 import {
 	discoverWorkspace,
 	filterToWorkspaceBoundary,
@@ -177,72 +180,64 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 	}
 	logger.empty();
 
-	const result = await moveModule(
-		absoluteSource,
-		absoluteTarget,
-		project,
-		dryRun,
-		verbose,
-		workspace ?? undefined,
-		force,
-		transformRules
-	);
-
-	// For cross-package moves, run build scripts to update dist/
-	if (!dryRun && result.success && workspace) {
-		const isCrossPackage = isCrossPackageMove(
+	const runMove = async () => {
+		const moveResult = await moveModule(
 			absoluteSource,
 			absoluteTarget,
-			workspace
+			project,
+			dryRun,
+			verbose,
+			workspace ?? undefined,
+			force,
+			transformRules
 		);
-		if (isCrossPackage) {
-			await runPackageBuilds(
+
+		// For cross-package moves, run build scripts to update dist/. Keep this
+		// inside the verification guard so the after-check sees the final state.
+		if (!dryRun && moveResult.success && workspace) {
+			const isCrossPackage = isCrossPackageMove(
 				absoluteSource,
 				absoluteTarget,
-				workspace,
-				verbose
+				workspace
 			);
+			if (isCrossPackage) {
+				await runPackageBuilds(
+					absoluteSource,
+					absoluteTarget,
+					workspace,
+					verbose
+				);
+			}
 		}
-	}
 
-	if (!dryRun && verify && result.success) {
-		// Run type checking to verify the move didn't break anything
-		const errors = await runTypeCheck(project);
-		if (errors.length > 0) {
-			const incomplete = isIncompleteTypeCheck(errors);
+		return moveResult;
+	};
+	const { result, delta } =
+		verify && !dryRun
+			? await runWithTypecheckGuard(project, runMove)
+			: { result: await runMove(), delta: undefined };
+
+	if (delta && result.success) {
+		printVerificationResults(delta);
+		if (!delta.success) {
 			const transformed = (result.transformRewrites?.length ?? 0) > 0;
-			// #103 C: a transform that introduces new type errors rolls the move
-			// back; a plain move keeps today's report-and-exit behaviour.
 			const rolledBack = transformed
 				? await rollbackTransformMove(project, result)
 				: false;
-			logger.error(
-				incomplete
-					? `\n❌ Type checking did not complete after move (${errors.length} fatal/global diagnostic(s)) — the move may have introduced errors that could not be detected:`
-					: `\n❌ Type checking failed after move - ${errors.length} error(s):`
-			);
-			for (const error of errors.slice(0, 10)) {
-				logger.error(`   ${error}`);
-			}
-			if (errors.length > 10) {
-				logger.error(`   ... and ${errors.length - 10} more`);
+			let verificationFailureMessage =
+				"\n⚠️  Move completed but introduced new type errors. Plain moves are left in place so you can inspect or revert them explicitly.";
+			if (delta.verificationIncomplete) {
+				verificationFailureMessage =
+					"\n⚠️  Move completed but verification was incomplete. Please review the moved file and any dependencies manually.";
 			}
 			if (transformed) {
-				logger.error(
-					rolledBack
-						? "\n↩️  Transform introduced type errors — the move was rolled back."
-						: "\n⚠️  Transform introduced type errors and automatic rollback failed (non-git tree?). Restore the move manually."
-				);
-			} else {
-				logger.error(
-					incomplete
-						? "\n⚠️  Move completed but verification was incomplete. Please review the moved file and any dependencies manually."
-						: "\n⚠️  Move completed but introduced type errors. Please review."
-				);
+				verificationFailureMessage = rolledBack
+					? "\n↩️  Transform introduced type errors — the move was rolled back."
+					: "\n⚠️  Transform introduced type errors and automatic rollback failed (non-git tree?). Restore the move manually.";
 			}
+			logger.error(verificationFailureMessage);
 			process.exit(1);
 		}
-		logger.info("\n✅ Type checking passed - no errors introduced");
 	}
 
 	printCommandResult(result, "move", "Moved", dryRun, verbose, project.rootDir);
