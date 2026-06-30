@@ -1,15 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 const CLI = ["bun", path.resolve(import.meta.dir, "../cli.ts")];
 
 describe("workspace command", () => {
 	test("exits with error for non-workspace directory", async () => {
-		const tmpDir = path.join(
-			import.meta.dir,
-			"__fixtures__",
-			`ws-test-nonexist-${Date.now()}`
-		);
+		const tmpDir = await mkdtemp(path.join(tmpdir(), "resect-ws-test-"));
 		await Bun.write(path.join(tmpDir, "file.ts"), "export const x = 1;");
 
 		const proc = Bun.spawn([...CLI, "workspace", tmpDir], {
