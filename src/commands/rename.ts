@@ -22,6 +22,10 @@ import {
 	deduplicateChanges,
 	type TextChange,
 } from "../core/text-changes.ts";
+import {
+	printVerificationResults,
+	runWithTypecheckGuard,
+} from "../core/verify.ts";
 import { discoverWorkspace } from "../core/workspace.ts";
 import { getRuntime } from "../runtime/index.ts";
 import type { ModuleReference } from "../types/graph.ts";
@@ -32,6 +36,7 @@ export interface RenameOptions extends MutatingCommandOptions {
 	file: string;
 	oldName: string;
 	newName: string;
+	verify?: boolean;
 }
 
 export interface RenameResult {
@@ -51,6 +56,7 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 		verbose = false,
 		project: projectArg,
 		workspace = false,
+		verify = true,
 	} = options;
 
 	const absolutePath = path.resolve(file);
@@ -99,16 +105,21 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 	logger.info(`   File: ${absolutePath}`);
 	logger.info(`   ${oldName} → ${newName}\n`);
 
-	const result = await renameSymbol(
-		absolutePath,
-		oldName,
-		newName,
-		project,
-		dryRun,
-		verbose,
-		extraProjects,
-		force
-	);
+	const runRename = async () =>
+		renameSymbol(
+			absolutePath,
+			oldName,
+			newName,
+			project,
+			dryRun,
+			verbose,
+			extraProjects,
+			force
+		);
+	const { result, delta } =
+		verify && !dryRun
+			? await runWithTypecheckGuard(project, runRename)
+			: { result: await runRename(), delta: undefined };
 
 	printCommandResult(
 		result,
@@ -118,6 +129,13 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 		verbose,
 		project.rootDir
 	);
+
+	if (delta) {
+		printVerificationResults(delta);
+		if (!delta.success) {
+			process.exit(1);
+		}
+	}
 
 	if (!result.success) {
 		process.exit(1);

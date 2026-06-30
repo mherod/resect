@@ -98,6 +98,36 @@ export async function verifyTypeChecking(
 	};
 }
 
+/** Run a mutating operation between before/after typechecks and return its delta. */
+export async function runWithTypecheckGuard<T>(
+	project: ProjectConfig,
+	applyChanges: () => Promise<T>
+): Promise<{ result: T; delta: VerificationResult }> {
+	const errorsBefore = await runTypeCheck(project);
+	const result = await applyChanges();
+	const errorsAfter = await runTypeCheck(project);
+	const newErrors = errorsAfter.filter(
+		(error) => !errorsBefore.includes(error)
+	);
+	const fixedErrors = errorsBefore.filter(
+		(error) => !errorsAfter.includes(error)
+	);
+	const verificationIncomplete =
+		isIncompleteTypeCheck(errorsBefore) || isIncompleteTypeCheck(errorsAfter);
+
+	return {
+		result,
+		delta: {
+			success: !verificationIncomplete && newErrors.length === 0,
+			errorsBefore,
+			errorsAfter,
+			newErrors,
+			fixedErrors,
+			verificationIncomplete,
+		},
+	};
+}
+
 /** Structured result from a tsc invocation, including incompleteness signal. */
 export interface TypeCheckOutcome {
 	errors: string[];

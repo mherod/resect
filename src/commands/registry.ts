@@ -87,6 +87,7 @@ export const COMMANDS: CommandDef[] = [
 				verbose: values.verbose,
 				project: values.project,
 				workspace: values.workspace,
+				verify: !values["no-verify"],
 			});
 		},
 	},

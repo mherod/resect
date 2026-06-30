@@ -86,15 +86,13 @@ import { analyzeSimilarity } from "./core/similarity.ts";
 import { loadTransformConfig } from "./core/transform-config.ts";
 import { discoverProject } from "./core/tsconfig-discovery.ts";
 import {
-	isIncompleteTypeCheck,
-	runTypeCheck,
+	runWithTypecheckGuard,
 	type VerificationResult,
 } from "./core/verify.ts";
 import { discoverWorkspace } from "./core/workspace.ts";
 import type { InlineConflict, InlineRewrite } from "./types/inline.ts";
 import type { TidyFixCategory } from "./types/tidy.ts";
 import type { TransformRule } from "./types/transform.ts";
-import type { ProjectConfig } from "./types.ts";
 
 // ── Mutating-tool helpers ──────────────────────────────────────────
 
@@ -105,31 +103,6 @@ async function checkWorktree(
 ): Promise<{ dirty: boolean; blocked: boolean }> {
 	const dirty = await isWorktreeDirty(cwd);
 	return { dirty, blocked: dirty && !force };
-}
-
-/** Run tsc before/after the mutating op and return the diagnostic delta. */
-async function withTypecheckGuard<T>(
-	project: ProjectConfig,
-	apply: () => Promise<T>
-): Promise<{ result: T; delta: VerificationResult }> {
-	const errorsBefore = await runTypeCheck(project);
-	const result = await apply();
-	const errorsAfter = await runTypeCheck(project);
-	const newErrors = errorsAfter.filter((e) => !errorsBefore.includes(e));
-	const fixedErrors = errorsBefore.filter((e) => !errorsAfter.includes(e));
-	const verificationIncomplete =
-		isIncompleteTypeCheck(errorsBefore) || isIncompleteTypeCheck(errorsAfter);
-	return {
-		result,
-		delta: {
-			success: !verificationIncomplete && newErrors.length === 0,
-			errorsBefore,
-			errorsAfter,
-			newErrors,
-			fixedErrors,
-			verificationIncomplete,
-		},
-	};
 }
 
 // ── Result helpers ──────────────────────────────────────────────────
@@ -1505,7 +1478,7 @@ async function moveTool(args: {
 
 	const shouldVerify = args.verify && !args.dryRun;
 	const { result, delta } = shouldVerify
-		? await withTypecheckGuard(project, runMove)
+		? await runWithTypecheckGuard(project, runMove)
 		: { result: await runMove(), delta: undefined };
 
 	// #103 C: a transform move whose post-move verify introduced new type errors
@@ -1605,7 +1578,7 @@ async function renameTool(args: {
 
 	const shouldVerify = args.verify && !args.dryRun;
 	const { result, delta } = shouldVerify
-		? await withTypecheckGuard(project, runRename)
+		? await runWithTypecheckGuard(project, runRename)
 		: { result: await runRename(), delta: undefined };
 
 	const root = project.rootDir;
@@ -1680,7 +1653,7 @@ async function aliasTool(args: {
 			rolledBack = !verification.success;
 		} else {
 			const guarded = args.verify
-				? await withTypecheckGuard(project, async () =>
+				? await runWithTypecheckGuard(project, async () =>
 						applyAliasChanges(result.changes)
 					)
 				: { delta: undefined };
@@ -2002,7 +1975,7 @@ async function extractCommonTool(args: {
 	type Result = Awaited<ReturnType<typeof runExtractCommon>>;
 	const guarded: { result: Result; delta: VerificationResult | undefined } =
 		shouldVerify
-			? await withTypecheckGuard(project, runExtract)
+			? await runWithTypecheckGuard(project, runExtract)
 			: { result: await runExtract(), delta: undefined };
 	const { result, delta } = guarded;
 

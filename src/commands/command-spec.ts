@@ -316,18 +316,21 @@ Options:
   --force         Allow operation when git worktree has uncommitted changes
   --verbose       Show detailed information about each change
   --workspace     Scan across all workspace packages
+  --no-verify     Disable type checking verification (enabled by default)
 
 Features:
   • Renames the export in the source file
   • Updates all named imports across the codebase
   • Updates barrel file re-exports
   • Preserves import aliases (import { Old as X } → import { New as X })
+  • Runs tsc before and after the rename; fails when new type errors appear
   • Handles classes, functions, constants, types, and interfaces
 
 Examples:
   ${CLI_NAME} rename src/components/Button.tsx Button PrimaryButton
   ${CLI_NAME} rename src/utils/api.ts fetchUser getUser --dry-run
   ${CLI_NAME} rename src/types.ts UserDTO User --verbose
+  ${CLI_NAME} rename src/types.ts UserDTO User --no-verify
 `,
 		mcpDescription:
 			"Rename an exported symbol (function, class, type, interface, enum, const) in its source file and update every import that references it across the project. Updates both the declaration and all unaliased import bindings; aliased imports (`import { foo as bar }`) are left intact because the local name is already decoupled. Checks for conflicts before mutating: aborts if the new name already exists in the source file or in any importing file's local bindings. Defaults to `dryRun: true`; when `dryRun: false` and `verify: true` (both default) runs `tsc --noEmit` before AND after and returns the diagnostic delta. A dirty worktree is returned as an error unless `force: true`. Returns success, updated reference list, errors, worktree-dirty flag, and (when verified) the typecheck delta.",

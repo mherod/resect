@@ -1,6 +1,51 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
 import ts from "typescript";
+import { makeTempDir, runCli } from "./__test-helpers.ts";
 import { renameInSourceFile } from "./rename";
+
+const tempDirs: string[] = [];
+
+afterAll(async () => {
+	for (const dir of tempDirs) {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+async function makeRenameCliProject(): Promise<{
+	apiPath: string;
+	consumerPath: string;
+	tsconfigPath: string;
+}> {
+	const dir = await makeTempDir("rename");
+	tempDirs.push(dir);
+	const srcDir = path.join(dir, "src");
+	await mkdir(srcDir, { recursive: true });
+	const tsconfigPath = path.join(dir, "tsconfig.json");
+	await writeFile(
+		tsconfigPath,
+		JSON.stringify({
+			compilerOptions: {
+				module: "ESNext",
+				moduleResolution: "Bundler",
+				noEmit: true,
+				strict: true,
+				target: "ESNext",
+				types: [],
+			},
+			include: ["src/**/*.ts"],
+		})
+	);
+	const apiPath = path.join(srcDir, "api.ts");
+	const consumerPath = path.join(srcDir, "consumer.ts");
+	await writeFile(apiPath, "export const foo = 1;\n");
+	await writeFile(
+		consumerPath,
+		'import * as api from "./api";\nexport const value: 1 = api.foo;\n'
+	);
+	return { apiPath, consumerPath, tsconfigPath };
+}
 
 function buildProgram(source: string): {
 	program: ts.Program;
@@ -163,5 +208,51 @@ describe("renameInSourceFile — shadowing", () => {
 		const result = rename(src, "foo", "bar");
 		expect(result).toContain("export const bar = 1");
 		expect(result).toContain("const obj = { bar }");
+	});
+});
+
+describe("rename CLI verification", () => {
+	test("fails by default when the rename introduces a typecheck delta", async () => {
+		const { apiPath, consumerPath, tsconfigPath } =
+			await makeRenameCliProject();
+
+		const result = await runCli([
+			"rename",
+			apiPath,
+			"foo",
+			"bar",
+			"--force",
+			"-p",
+			tsconfigPath,
+		]);
+
+		expect(result.exitCode).toBe(1);
+		expect(result.stdout).toContain("Renamed successfully");
+		expect(result.stderr).toContain("Type checking failed");
+		expect(result.stderr).toContain("Property 'foo' does not exist");
+		expect(await Bun.file(apiPath).text()).toContain("export const bar = 1");
+		expect(await Bun.file(consumerPath).text()).toContain("api.foo");
+	});
+
+	test("--no-verify preserves the legacy unchecked CLI path", async () => {
+		const { apiPath, consumerPath, tsconfigPath } =
+			await makeRenameCliProject();
+
+		const result = await runCli([
+			"rename",
+			apiPath,
+			"foo",
+			"bar",
+			"--force",
+			"--no-verify",
+			"-p",
+			tsconfigPath,
+		]);
+
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain("Renamed successfully");
+		expect(result.stderr).not.toContain("Type checking failed");
+		expect(await Bun.file(apiPath).text()).toContain("export const bar = 1");
+		expect(await Bun.file(consumerPath).text()).toContain("api.foo");
 	});
 });
