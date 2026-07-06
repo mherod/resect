@@ -33,6 +33,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { version } from "../package.json";
+import { affected } from "./commands/affected.ts";
 import {
 	type AliasResult,
 	applyChanges as applyAliasChanges,
@@ -786,6 +787,33 @@ server.registerTool(
 	async ({ source, target, project }) => {
 		try {
 			return jsonText(await analyzeImpact({ source, target, project }));
+		} catch (error) {
+			return toError(error);
+		}
+	}
+);
+
+server.registerTool(
+	"affected",
+	{
+		description: mcpDescription("affected"),
+		inputSchema: {
+			files: z
+				.array(z.string())
+				.describe("List of file paths that have changed"),
+			project: z
+				.string()
+				.optional()
+				.describe("Optional path to the project root or tsconfig.json"),
+			workspace: z
+				.boolean()
+				.optional()
+				.describe("Scan across all workspace packages"),
+		},
+	},
+	async ({ files, project, workspace }) => {
+		try {
+			return jsonText(await affected({ files, project, workspace }));
 		} catch (error) {
 			return toError(error);
 		}

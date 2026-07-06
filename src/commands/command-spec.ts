@@ -162,6 +162,37 @@ Examples:
 			"Scout the blast radius of a proposed move/rename BEFORE you mutate anything. Given a source file and a proposed target path, returns the impact radius — impactedFilesCount + impactedFiles (direct + indirect/barrel-chain importers), boundaryCrossedCount with source/target package (workspace boundaries crossed), missingDependencies (external imports of the source absent from the target package, for cross-package moves), and breakingRisk ('low'|'medium'|'high'). Call this speculatively instead of running move/rename and reading the fallout. Strictly read-only — no writes, no worktree gating. NOTE: breakingRisk is not yet scored (always 'low') until #116 lands.",
 	},
 	{
+		name: "affected",
+		usage: "<files...>",
+		summary: "List all files affected by changes to the specified files",
+		cliHelp: `
+Usage: ${CLI_NAME} affected <files...> [options]
+
+List all files affected by changes to the specified files (transitive importers).
+Useful for scoping test or linting blast radius in git hooks.
+
+Arguments:
+  files...      One or more file paths that have changed
+
+Options:
+  -p, --project      Path to project directory or tsconfig.json
+  --workspace        Scan across all workspace packages
+  --json             Output results as JSON
+  --verbose          Show detailed reference information
+
+Output includes:
+  • The input files themselves (since they were changed)
+  • All files that import them directly or transitively
+
+Examples:
+  ${CLI_NAME} affected src/utils/helpers.ts
+  ${CLI_NAME} affected src/foo.ts src/bar.ts --json
+  ${CLI_NAME} affected src/core.ts --workspace
+`,
+		mcpDescription:
+			"Find the transitive blast radius of changes to a set of files. Returns the files themselves plus all direct and indirect/transitive importers. Useful for CI, testing, and linting pipelines to focus validation only on affected files. Read-only.",
+	},
+	{
 		name: "discover",
 		usage: "<directory>",
 		summary: "Discover tsconfig files and project structure",

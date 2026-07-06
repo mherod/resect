@@ -1,4 +1,5 @@
 import { logger } from "../cli-logger.ts";
+import { affectedCommand } from "./affected.ts";
 import { aliasCommand } from "./alias.ts";
 import { analyzeCommand } from "./analyze.ts";
 import { analyzeImpactCommand } from "./analyze-impact.ts";
@@ -119,6 +120,25 @@ export const COMMANDS: CommandDef[] = [
 				verbose: values.verbose,
 				project: values.project,
 				workspace: values.workspace,
+			});
+		},
+	},
+
+	{
+		name: "affected",
+		helpText: cliHelp("affected"),
+		run: async (files, values) => {
+			if (files.length === 0) {
+				logger.error("Error: affected requires at least one <file> argument");
+				logger.error(`Run '${CLI_NAME} affected --help' for usage`);
+				process.exit(1);
+			}
+			await affectedCommand({
+				files,
+				verbose: values.verbose,
+				project: values.project,
+				workspace: values.workspace,
+				json: values.json,
 			});
 		},
 	},

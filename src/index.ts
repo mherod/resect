@@ -5,6 +5,9 @@
  * calling any command that touches the filesystem.
  */
 
+// ── Commands: affected ──────────────────────────────────────────────
+export type { AffectedOptions } from "./commands/affected.ts";
+export { affected, affectedCommand } from "./commands/affected.ts";
 // ── Commands: alias ─────────────────────────────────────────────────
 export type {
 	AliasChange,

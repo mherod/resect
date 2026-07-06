@@ -2,10 +2,10 @@
 # Exit on any error
 set -e
 
-# Run tests with the canonical timeout (matches package.json `test` + CI).
-# Bare `bun test` uses bun's 5000ms default, which flakes CLI-subprocess /
-# tsc-heavy tests under full-suite CPU contention (see #94).
-bun test --timeout=20000
+# Run only affected tests using resect's graph analysis to speed up commit times.
+# Falls back to the full suite under config changes or errors.
+bun scripts/run-affected-tests.ts
+
 
 # Check for duplicate/similar functions (skip if CLI not available)
 if [ -f "src/cli.ts" ]; then
