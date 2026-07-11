@@ -134,6 +134,21 @@ function toError(error: unknown): CallToolResult {
 	return errorText(error instanceof Error ? error.message : String(error));
 }
 
+/**
+ * Run a tool handler, converting any thrown error into an `isError` tool
+ * result. Replaces the identical try/catch+toError block every tool
+ * registration used to repeat (#138).
+ */
+async function withErrorHandling(
+	fn: () => Promise<CallToolResult>
+): Promise<CallToolResult> {
+	try {
+		return await fn();
+	} catch (error) {
+		return toError(error);
+	}
+}
+
 /** Single source for the "no owning tsconfig" tool error. */
 function tsconfigNotFound(targetPath: string): CallToolResult {
 	return errorText(`Could not find tsconfig.json for ${targetPath}`);
@@ -734,11 +749,9 @@ server.registerTool(
 		},
 	},
 	async ({ query, project, type }) => {
-		try {
+		return withErrorHandling(async () => {
 			return findTool(query, project, type);
-		} catch (error) {
-			return toError(error);
-		}
+		});
 	}
 );
 
@@ -761,11 +774,9 @@ server.registerTool(
 		},
 	},
 	async ({ file, project }) => {
-		try {
-			return await analyzeTool(file, project);
-		} catch (error) {
-			return toError(error);
-		}
+		return withErrorHandling(async () => {
+			return analyzeTool(file, project);
+		});
 	}
 );
 
@@ -793,11 +804,9 @@ server.registerTool(
 		},
 	},
 	async ({ source, target, project }) => {
-		try {
+		return withErrorHandling(async () => {
 			return jsonText(await analyzeImpact({ source, target, project }));
-		} catch (error) {
-			return toError(error);
-		}
+		});
 	}
 );
 
@@ -820,11 +829,9 @@ server.registerTool(
 		},
 	},
 	async ({ files, project, workspace }) => {
-		try {
+		return withErrorHandling(async () => {
 			return jsonText(await affected({ files, project, workspace }));
-		} catch (error) {
-			return toError(error);
-		}
+		});
 	}
 );
 
@@ -863,14 +870,12 @@ server.registerTool(
 		},
 	},
 	async ({ file, selector, newFile, dryRun, force }) => {
-		try {
-			return await extractComponentTool(file, selector, newFile, {
+		return withErrorHandling(async () => {
+			return extractComponentTool(file, selector, newFile, {
 				dryRun,
 				force,
 			});
-		} catch (error) {
-			return toError(error);
-		}
+		});
 	}
 );
 
@@ -887,11 +892,9 @@ server.registerTool(
 		},
 	},
 	async ({ directory }) => {
-		try {
+		return withErrorHandling(async () => {
 			return discoverTool(directory);
-		} catch (error) {
-			return toError(error);
-		}
+		});
 	}
 );
 
@@ -908,11 +911,9 @@ server.registerTool(
 		},
 	},
 	async ({ directory }) => {
-		try {
-			return await workspaceTool(directory);
-		} catch (error) {
-			return toError(error);
-		}
+		return withErrorHandling(async () => {
+			return workspaceTool(directory);
+		});
 	}
 );
 
@@ -959,16 +960,14 @@ server.registerTool(
 		fanInThreshold,
 		exportThreshold,
 	}) => {
-		try {
-			return await auditTool(directory, {
+		return withErrorHandling(async () => {
+			return auditTool(directory, {
 				project,
 				fanOutThreshold,
 				fanInThreshold,
 				exportThreshold,
 			});
-		} catch (error) {
-			return toError(error);
-		}
+		});
 	}
 );
 
@@ -997,11 +996,9 @@ server.registerTool(
 		},
 	},
 	async ({ directory, project, workspace }) => {
-		try {
-			return await barrelTool(directory, { project, workspace });
-		} catch (error) {
-			return toError(error);
-		}
+		return withErrorHandling(async () => {
+			return barrelTool(directory, { project, workspace });
+		});
 	}
 );
 
@@ -1036,11 +1033,9 @@ server.registerTool(
 		},
 	},
 	async ({ directory, project, ignore, entrypointGlobs }) => {
-		try {
-			return await unusedTool(directory, { project, ignore, entrypointGlobs });
-		} catch (error) {
-			return toError(error);
-		}
+		return withErrorHandling(async () => {
+			return unusedTool(directory, { project, ignore, entrypointGlobs });
+		});
 	}
 );
 
@@ -1122,8 +1117,8 @@ server.registerTool(
 		kinds,
 		bucket,
 	}) => {
-		try {
-			return await similarTool(directory, {
+		return withErrorHandling(async () => {
+			return similarTool(directory, {
 				project,
 				threshold,
 				maxGroups,
@@ -1134,9 +1129,7 @@ server.registerTool(
 				kinds,
 				bucket,
 			});
-		} catch (error) {
-			return toError(error);
-		}
+		});
 	}
 );
 
@@ -1225,8 +1218,8 @@ server.registerTool(
 		fanInThreshold,
 		exportThreshold,
 	}) => {
-		try {
-			return await tidyTool(directory, {
+		return withErrorHandling(async () => {
+			return tidyTool(directory, {
 				experimental,
 				project,
 				scope,
@@ -1240,9 +1233,7 @@ server.registerTool(
 				fanInThreshold,
 				exportThreshold,
 			});
-		} catch (error) {
-			return toError(error);
-		}
+		});
 	}
 );
 
@@ -1311,8 +1302,8 @@ server.registerTool(
 		dryRun,
 		force,
 	}) => {
-		try {
-			return await namingTool(directory, {
+		return withErrorHandling(async () => {
+			return namingTool(directory, {
 				project,
 				workspace,
 				minSiblings,
@@ -1322,9 +1313,7 @@ server.registerTool(
 				dryRun: fix ? (dryRun ?? true) : undefined,
 				force,
 			});
-		} catch (error) {
-			return toError(error);
-		}
+		});
 	}
 );
 
@@ -1353,11 +1342,9 @@ server.registerTool(
 		},
 	},
 	async ({ directory, project, ignore }) => {
-		try {
-			return await organiseTool(directory, { project, ignore });
-		} catch (error) {
-			return toError(error);
-		}
+		return withErrorHandling(async () => {
+			return organiseTool(directory, { project, ignore });
+		});
 	}
 );
 
@@ -1405,17 +1392,15 @@ server.registerTool(
 		verbose,
 		conventionThreshold,
 	}) => {
-		try {
-			return await testRelocationTool(directory, {
+		return withErrorHandling(async () => {
+			return testRelocationTool(directory, {
 				project,
 				dryRun,
 				force,
 				verbose,
 				conventionThreshold,
 			});
-		} catch (error) {
-			return toError(error);
-		}
+		});
 	}
 );
 
@@ -1454,16 +1439,14 @@ server.registerTool(
 		},
 	},
 	async ({ directory, project, dryRun, force, verify }) => {
-		try {
-			return await mockCleanupTool(directory, {
+		return withErrorHandling(async () => {
+			return mockCleanupTool(directory, {
 				project,
 				dryRun,
 				force,
 				verify,
 			});
-		} catch (error) {
-			return toError(error);
-		}
+		});
 	}
 );
 
@@ -1812,8 +1795,8 @@ server.registerTool(
 		verbose,
 		transform,
 	}) => {
-		try {
-			return await moveTool({
+		return withErrorHandling(async () => {
+			return moveTool({
 				source,
 				target,
 				project,
@@ -1823,9 +1806,7 @@ server.registerTool(
 				verbose: verbose ?? false,
 				transform,
 			});
-		} catch (error) {
-			return toError(error);
-		}
+		});
 	}
 );
 
@@ -1889,8 +1870,8 @@ server.registerTool(
 		verify,
 		verbose,
 	}) => {
-		try {
-			return await renameTool({
+		return withErrorHandling(async () => {
+			return renameTool({
 				file,
 				oldName,
 				newName,
@@ -1900,9 +1881,7 @@ server.registerTool(
 				verify: verify ?? true,
 				verbose: verbose ?? false,
 			});
-		} catch (error) {
-			return toError(error);
-		}
+		});
 	}
 );
 
@@ -1963,8 +1942,8 @@ server.registerTool(
 		force,
 		verify,
 	}) => {
-		try {
-			return await aliasTool({
+		return withErrorHandling(async () => {
+			return aliasTool({
 				target,
 				prefer,
 				renameSpecifiers,
@@ -1973,9 +1952,7 @@ server.registerTool(
 				force: force ?? false,
 				verify: verify ?? true,
 			});
-		} catch (error) {
-			return toError(error);
-		}
+		});
 	}
 );
 
@@ -2195,8 +2172,8 @@ server.registerTool(
 		skipWrappers,
 		strict,
 	}) => {
-		try {
-			return await extractCommonTool({
+		return withErrorHandling(async () => {
+			return extractCommonTool({
 				directory,
 				project,
 				threshold,
@@ -2214,9 +2191,7 @@ server.registerTool(
 				skipWrappers,
 				strict,
 			});
-		} catch (error) {
-			return toError(error);
-		}
+		});
 	}
 );
 
@@ -2324,17 +2299,15 @@ server.registerTool(
 		},
 	},
 	async ({ barrelFile, project, dryRun, force, verify }) => {
-		try {
-			return await inlineTool({
+		return withErrorHandling(async () => {
+			return inlineTool({
 				barrelFile,
 				project,
 				dryRun: dryRun ?? true,
 				force: force ?? false,
 				verify: verify ?? true,
 			});
-		} catch (error) {
-			return toError(error);
-		}
+		});
 	}
 );
 
