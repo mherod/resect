@@ -548,6 +548,83 @@ describe("findCrossPackageImport", () => {
 		);
 		expect(result).toBe("@scope/utils");
 	});
+
+	// ─── wildcard exports key matching (#130) ───────────────────────────────
+	test("escapes regex metacharacters in a wildcard exports key (./*.js)", () => {
+		const workspace = makeWorkspace("/repo", [
+			{
+				name: "@scope/pkg",
+				subdir: "packages/pkg",
+				srcDir: "src",
+				exports: { "./*.js": "./dist/*.js" },
+			},
+		]);
+		// removeExtension only strips the trailing .ts, leaving the literal ".js"
+		// in the subpath — this is what the "./*.js" key is matched against.
+		const matching = findCrossPackageImport(
+			"/repo/packages/pkg/src/foo.js.ts",
+			workspace,
+			false
+		);
+		expect(matching).toBe("@scope/pkg/foo.js");
+
+		// Before the fix, the unescaped "." in the pattern matched any
+		// character, so "fooXjs" (literal X instead of a literal dot) would
+		// incorrectly match too. It must not match now.
+		const nonMatching = findCrossPackageImport(
+			"/repo/packages/pkg/src/fooXjs.ts",
+			workspace,
+			false
+		);
+		expect(nonMatching).toBe("@scope/pkg/src/fooXjs");
+	});
+
+	test("escapes regex metacharacters in a bracketed wildcard exports key (./[locale]/*)", () => {
+		const workspace = makeWorkspace("/repo", [
+			{
+				name: "@scope/pkg",
+				subdir: "packages/pkg",
+				srcDir: "src",
+				exports: { "./[locale]/*": "./dist/[locale]/*.js" },
+			},
+		]);
+		// The brackets are literal characters in the key, not a character
+		// class — constructing the RegExp must not throw, and the literal
+		// "[locale]" segment must match exactly.
+		expect(() =>
+			findCrossPackageImport(
+				"/repo/packages/pkg/src/[locale]/greeting.ts",
+				workspace,
+				false
+			)
+		).not.toThrow();
+		const result = findCrossPackageImport(
+			"/repo/packages/pkg/src/[locale]/greeting.ts",
+			workspace,
+			false
+		);
+		expect(result).toBe("@scope/pkg/[locale]/greeting");
+	});
+
+	test("rejects a multi-star exports key instead of matching wrong (#130)", () => {
+		const workspace = makeWorkspace("/repo", [
+			{
+				name: "@scope/pkg",
+				subdir: "packages/pkg",
+				srcDir: "src",
+				exports: { "./*/*": "./dist/*/*.js" },
+			},
+		]);
+		// Node's exports semantics allow at most one "*" per key; a multi-star
+		// key is invalid and must be skipped, not silently mismatched via a
+		// pattern that still has a literal "*" in it.
+		const result = findCrossPackageImport(
+			"/repo/packages/pkg/src/locales/en.ts",
+			workspace,
+			false
+		);
+		expect(result).toBe("@scope/pkg/src/locales/en");
+	});
 });
 
 // ─── findSubpathExportForFile ───────────────────────────────────────────────

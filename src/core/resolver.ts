@@ -469,6 +469,30 @@ function findExplicitSubpathExport(
 	return null;
 }
 
+/** Escape regex metacharacters so a literal string can be embedded in a RegExp. */
+function escapeRegExpChars(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Build a RegExp matching a package.json `exports` wildcard key (e.g. "./*.js",
+ * "./[locale]/*") against a subpath. Node's exports semantics allow at most one
+ * "*" per key; keys with zero or more than one are rejected (returns null)
+ * rather than silently matching the wrong thing or throwing on unescaped
+ * regex metacharacters like "[", "(", "+" (#130).
+ */
+function buildWildcardExportPattern(exportKey: string): RegExp | null {
+	const starCount = exportKey.split("*").length - 1;
+	if (starCount !== 1) {
+		return null;
+	}
+	const normalizedKey = exportKey.replace(/^\.\//, "");
+	const [prefix = "", suffix = ""] = normalizedKey.split("*");
+	return new RegExp(
+		`^${escapeRegExpChars(prefix)}(.+)${escapeRegExpChars(suffix)}$`
+	);
+}
+
 /**
  * Resolve the package that owns `targetPath` and the file's package-relative
  * subpaths. `subpath` is the path within the package (extension stripped);
@@ -593,8 +617,8 @@ export function findCrossPackageImport(
 			if (valueStr) {
 				// e.g., "./*": "./dist/*.js" and we have "src/foo" -> try "foo"
 				const srcSubpathNoExt = srcSubpath.replace(/\/index$/, "");
-				const pattern = exportKey.replace("*", "(.+)").replace(/^\.\//, "");
-				if (srcSubpathNoExt.match(new RegExp(`^${pattern}$`))) {
+				const pattern = buildWildcardExportPattern(exportKey);
+				if (pattern && srcSubpathNoExt.match(pattern)) {
 					return `${pkg.name}/${srcSubpathNoExt}`;
 				}
 			}
