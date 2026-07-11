@@ -110,6 +110,19 @@ describe("loadTransformConfig (#123)", () => {
 		});
 	});
 
+	test("reloads an edited config on a subsequent call (#145)", async () => {
+		await withTempDir(async (dir) => {
+			const file = path.join(dir, "transforms.js");
+			await Bun.write(file, "module.exports = [{ from: 'a', to: 'b' }];");
+			const first = await loadTransformConfig(dir, "transforms.js");
+			expect(first).toEqual([{ from: "a", to: "b" }]);
+
+			await Bun.write(file, "module.exports = [{ from: 'a', to: 'c' }];");
+			const second = await loadTransformConfig(dir, "transforms.js");
+			expect(second).toEqual([{ from: "a", to: "c" }]);
+		});
+	});
+
 	test("loads a bare-array CommonJS config", async () => {
 		await withTempDir(async (dir) => {
 			await Bun.write(

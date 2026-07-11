@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { getRuntime } from "../runtime/index.ts";
@@ -22,8 +25,23 @@ import type { TransformRule } from "../types/transform.ts";
 export const DEFAULT_TRANSFORM_CONFIG_PATH = ".resect/transforms.js";
 
 /**
+ * Per-path cache of validated rules keyed by content hash, so an unchanged
+ * config is not re-imported on every call while an edited one always is (#145).
+ */
+const configCache = new Map<string, { hash: string; rules: TransformRule[] }>();
+
+/**
  * Resolve `configPath` against `rootDir` (absolute paths pass through), load the
  * `.resect/transforms.js` module, and validate it into a typed `TransformRule[]`.
+ *
+ * Reload semantics (#145): Bun ignores query-string cache-busting on dynamic
+ * `import()` and does not honour `require.cache` eviction, so a long-lived
+ * process (MCP server) would otherwise serve the first-loaded config forever.
+ * Instead the source is content-hashed and, when it changes, imported via a
+ * copy in a fresh temp directory — a new module URL the loader has never
+ * cached. (A fresh directory per load is required: Bun also caches directory
+ * listings for resolution, so a new file in an already-resolved directory is
+ * invisible to `import()`.)
  *
  * @throws Error when the file is missing, cannot be imported, or does not parse
  * into a valid rule set. The caller must not move or write anything on throw.
@@ -35,23 +53,43 @@ export async function loadTransformConfig(
 	const absPath = path.isAbsolute(configPath)
 		? configPath
 		: path.resolve(rootDir, configPath);
+	const rt = getRuntime();
 
-	if (!(await getRuntime().fs.exists(absPath))) {
+	if (!(await rt.fs.exists(absPath))) {
 		throw new Error(
 			`Transform config not found: ${absPath}. Create a ${DEFAULT_TRANSFORM_CONFIG_PATH} exporting { transforms: [{ from, to }] }.`
 		);
 	}
 
+	const source = await rt.fs.readFile(absPath);
+	const hash = createHash("sha256").update(source).digest("hex");
+	const cached = configCache.get(absPath);
+	if (cached?.hash === hash) {
+		return cached.rules;
+	}
+
 	let mod: unknown;
+	let loadDir: string | undefined;
 	try {
-		// Cache-bust so a long-lived process (MCP server) re-reads edited configs.
-		mod = await import(`${pathToFileURL(absPath).href}?t=${process.pid}`);
+		loadDir = await mkdtemp(path.join(tmpdir(), "resect-transform-load-"));
+		const ext = path.extname(absPath) || ".js";
+		const loadPath = path.join(loadDir, `transforms${ext}`);
+		await rt.fs.writeFile(loadPath, source);
+		mod = await import(pathToFileURL(loadPath).href);
 	} catch (error) {
 		const detail = error instanceof Error ? error.message : String(error);
 		throw new Error(`Failed to load transform config ${absPath}: ${detail}`);
+	} finally {
+		if (loadDir) {
+			await rm(loadDir, { recursive: true, force: true }).catch(
+				() => undefined
+			);
+		}
 	}
 
-	return validateTransformConfig(unwrapModule(mod), absPath);
+	const rules = validateTransformConfig(unwrapModule(mod), absPath);
+	configCache.set(absPath, { hash, rules });
+	return rules;
 }
 
 /**
