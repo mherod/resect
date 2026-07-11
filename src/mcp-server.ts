@@ -436,10 +436,11 @@ async function similarTool(
 		skipSameFile?: boolean;
 		minLines?: number;
 		kinds?: ("function" | "type" | "interface")[];
+		bucket?: "exact" | "high" | "medium";
 	}
 ): Promise<CallToolResult> {
 	const absoluteDir = path.resolve(directory);
-	const report = await analyzeSimilarity({
+	const rawReport = await analyzeSimilarity({
 		directory: absoluteDir,
 		threshold: options.threshold ?? 0.8,
 		project: options.project,
@@ -449,6 +450,13 @@ async function similarTool(
 		minLines: options.minLines,
 		kinds: options.kinds,
 	});
+	// Mirrors similarCommand's post-hoc bucket filter (CLI: similar.ts:60-65).
+	const report = options.bucket
+		? {
+				...rawReport,
+				groups: rawReport.groups.filter((g) => g.bucket === options.bucket),
+			}
+		: rawReport;
 	const maxGroups = options.maxGroups ?? 10;
 	const groups =
 		maxGroups > 0 ? report.groups.slice(0, maxGroups) : report.groups;
@@ -1019,11 +1027,17 @@ server.registerTool(
 				.describe(
 					"Glob of files to exclude from the scan, e.g. '*.test.ts' to drop test files (which often hold the only references)"
 				),
+			entrypointGlobs: z
+				.union([z.string(), z.array(z.string())])
+				.optional()
+				.describe(
+					"Glob pattern(s) for convention entrypoints dispatched by filename (e.g. 'hooks/**', 'scripts/*') to exclude from dead-export candidates, e.g. \"hooks/**\""
+				),
 		},
 	},
-	async ({ directory, project, ignore }) => {
+	async ({ directory, project, ignore, entrypointGlobs }) => {
 		try {
-			return await unusedTool(directory, { project, ignore });
+			return await unusedTool(directory, { project, ignore, entrypointGlobs });
 		} catch (error) {
 			return toError(error);
 		}
@@ -1088,6 +1102,12 @@ server.registerTool(
 				.describe(
 					"Limit to specific declaration kinds (default: all of function, type, interface)"
 				),
+			bucket: z
+				.enum(["exact", "high", "medium"])
+				.optional()
+				.describe(
+					"Only return groups in this similarity bucket (exact/high/medium)"
+				),
 		},
 	},
 	async ({
@@ -1100,6 +1120,7 @@ server.registerTool(
 		skipSameFile,
 		minLines,
 		kinds,
+		bucket,
 	}) => {
 		try {
 			return await similarTool(directory, {
@@ -1111,6 +1132,7 @@ server.registerTool(
 				skipSameFile,
 				minLines,
 				kinds,
+				bucket,
 			});
 		} catch (error) {
 			return toError(error);
@@ -1967,6 +1989,7 @@ async function extractCommonTool(args: {
 	dryRun: boolean;
 	force: boolean;
 	verify: boolean;
+	strict?: boolean;
 	nameThreshold?: number;
 	sameNameOnly?: boolean;
 	skipSameFile?: boolean;
@@ -2008,7 +2031,7 @@ async function extractCommonTool(args: {
 	const { result, delta } = guarded;
 
 	const root = project.rootDir;
-	return jsonText({
+	const payload = {
 		dryRun: args.dryRun,
 		force: args.force,
 		worktreeDirty: result.worktreeDirty,
@@ -2035,7 +2058,21 @@ async function extractCommonTool(args: {
 		})),
 		errors: result.errors,
 		typecheck: delta,
-	});
+	};
+
+	// Mirror the CLI's `--strict` gate: surface duplicate groups as a tool error
+	// so agent callers treat "duplicates found" as a failed check, not a quiet
+	// success (matches extractCommonCommand's process.exit(1) semantics).
+	if (args.strict && result.totalGroups > 0) {
+		return {
+			content: [
+				{ type: "text", text: JSON.stringify(payload, mapReplacer, 2) },
+			],
+			isError: true,
+		};
+	}
+
+	return jsonText(payload);
 }
 
 server.registerTool(
@@ -2132,6 +2169,12 @@ server.registerTool(
 				.describe(
 					"Skip thin wrapper functions whose body is a single delegating call"
 				),
+			strict: z
+				.boolean()
+				.optional()
+				.describe(
+					"Return the tool result as an error when duplicate groups are found (default false), for CI-style gating"
+				),
 		},
 	},
 	async ({
@@ -2150,6 +2193,7 @@ server.registerTool(
 		minLines,
 		skipDirectives,
 		skipWrappers,
+		strict,
 	}) => {
 		try {
 			return await extractCommonTool({
@@ -2168,6 +2212,7 @@ server.registerTool(
 				minLines,
 				skipDirectives,
 				skipWrappers,
+				strict,
 			});
 		} catch (error) {
 			return toError(error);
