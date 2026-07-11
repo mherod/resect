@@ -30,11 +30,15 @@ export async function affected(options: AffectedOptions): Promise<string[]> {
 	}
 
 	const absoluteFiles = files.map((f) => path.resolve(f));
-	const firstFileDir = path.dirname(absoluteFiles[0]);
+	const firstFile = absoluteFiles[0];
+	if (!firstFile) {
+		return [];
+	}
+	const firstFileDir = path.dirname(firstFile);
 
 	let tsconfigPath: string | undefined;
 	if (!workspaceArg) {
-		tsconfigPath = resolveTsConfig(projectArg, firstFileDir);
+		tsconfigPath = resolveTsConfig(projectArg, firstFileDir) ?? undefined;
 		if (!tsconfigPath) {
 			throw new Error(`Could not find tsconfig.json for ${files[0]}`);
 		}
@@ -104,7 +108,8 @@ async function buildGraphSet(
 
 	let resolvedTsConfigPath = tsconfigPath;
 	if (!resolvedTsConfigPath) {
-		resolvedTsConfigPath = resolveTsConfig(projectArg, firstFileDir);
+		resolvedTsConfigPath =
+			resolveTsConfig(projectArg, firstFileDir) ?? undefined;
 		if (!resolvedTsConfigPath) {
 			throw new Error("Could not find tsconfig.json");
 		}
@@ -113,7 +118,7 @@ async function buildGraphSet(
 	const projectGraphs = await buildProjectGraphs(resolvedTsConfigPath);
 	return projectGraphs.length > 1
 		? mergeDependencyGraphs(projectGraphs.map((g) => g.graph))
-		: await buildDependencyGraph(loadProject(resolvedTsConfigPath));
+		: buildDependencyGraph(loadProject(resolvedTsConfigPath));
 }
 
 export async function affectedCommand(options: AffectedOptions): Promise<void> {
