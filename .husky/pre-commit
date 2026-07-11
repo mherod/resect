@@ -31,17 +31,17 @@ STAGED_HASH=$(git diff --cached | sha256sum | cut -d' ' -f1)
 STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
 PARTIALLY_STAGED=$(git diff --name-only)
 
-# Stash unstaged changes to preserve working directory
-# --keep-index keeps staged changes in working tree
-git stash push --quiet --keep-index --message "pre-commit-stash" || true
-STASHED=$?
+# Stash unstaged changes to preserve working directory (see .husky/lib/stash-guard.sh
+# for why the exit code alone can't tell us whether a stash was created, #153).
+. "$(dirname "$0")/lib/stash-guard.sh"
+stash_guard_push
 
 # Run formatter on the staged files
 bun x ultracite fix
 FORMAT_EXIT_CODE=$?
 
 # Restore working directory state
-if [ $STASHED -eq 0 ]; then
+if [ "$STASH_GUARD_CREATED" -eq 1 ]; then
   # Re-stage the formatted files
   if [ -n "$STAGED_FILES" ]; then
     echo "$STAGED_FILES" | while IFS= read -r file; do
@@ -50,10 +50,9 @@ if [ $STASHED -eq 0 ]; then
       fi
     done
   fi
-  
-  # Restore unstaged changes
-  git stash pop --quiet || true
-  
+
+  stash_guard_restore
+
   # Restore partial staging if files were partially staged
   if [ -n "$PARTIALLY_STAGED" ]; then
     for file in $PARTIALLY_STAGED; do
