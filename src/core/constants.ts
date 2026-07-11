@@ -33,8 +33,20 @@ export const VUE_EXTENSION = /\.vue$/;
 export const TS_JS_VUE_EXTENSIONS = /\.(ts|tsx|js|jsx|mts|cts|mjs|cjs|vue)$/;
 
 /**
- * Remove TypeScript/JavaScript/Vue extension from a path
+ * TypeScript declaration file extensions, matched as a single unit so
+ * `error.d.ts` strips to `error`, not `error.d` (#160). Must be tried before
+ * `TS_JS_VUE_EXTENSIONS`, which only matches the trailing `.ts`/`.mts`/`.cts`.
+ */
+export const DECLARATION_FILE_EXTENSIONS = /\.d\.(ts|mts|cts)$/;
+
+/**
+ * Remove a TypeScript/JavaScript/Vue extension from a path, treating
+ * `.d.ts`/`.d.mts`/`.d.cts` as one extension rather than stripping only the
+ * trailing `.ts` and leaving a dangling `.d` (#160).
  */
 export function removeExtension(filePath: string): string {
+	if (DECLARATION_FILE_EXTENSIONS.test(filePath)) {
+		return filePath.replace(DECLARATION_FILE_EXTENSIONS, "");
+	}
 	return filePath.replace(TS_JS_VUE_EXTENSIONS, "");
 }

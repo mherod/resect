@@ -254,16 +254,21 @@ function updateAliasedSpecifier(
 		if (oldTargetPath.startsWith(absolutePattern)) {
 			// Check if the NEW target is ALSO within this alias scope
 			if (normalizedNewTarget.startsWith(absolutePattern)) {
-				// New target is in the same alias scope - update the remainder
+				// New target is in the same alias scope - update the remainder.
+				// Strip any leading slash before joining so a wildcard alias prefix
+				// that already ends in "/" (e.g. "@/*" -> "@/") doesn't produce a
+				// double slash (#160).
 				const newRemainder = removeExtension(
-					normalizedNewTarget.slice(absolutePattern.length)
+					normalizedNewTarget.slice(absolutePattern.length).replace(/^\//, "")
 				);
 
 				const aliasPrefix = aliasMatch.alias.endsWith("/*")
 					? aliasMatch.alias.slice(0, -1)
 					: aliasMatch.alias;
 
-				const aliased = aliasPrefix + newRemainder;
+				const aliased = newRemainder
+					? `${aliasPrefix}${aliasPrefix.endsWith("/") ? "" : "/"}${newRemainder}`
+					: aliasPrefix;
 
 				// An alias that resolves to the root's own barrel `index`
 				// (`<alias>/index`) is (almost) never an exported subpath, so it

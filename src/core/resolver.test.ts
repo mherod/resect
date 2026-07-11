@@ -642,3 +642,69 @@ describe("calculateNewSpecifier intra-package self-import (#121)", () => {
 		expect(result).toBe("@scope/web-analytics");
 	});
 });
+
+describe("calculateNewSpecifier alias slash/extension normalization (#160)", () => {
+	test("wildcard alias: moving a sibling file never produces a double slash", () => {
+		// "@/*" -> "@/" once the trailing "*" is stripped; the remainder used to
+		// keep its leading slash, producing "@//components/visually-hidden".
+		const project = makeProject("/repo", { "@/*": ["src/*"] });
+		const oldTarget = "/repo/src/components/VisuallyHidden.tsx";
+		const newTarget = "/repo/src/components/visually-hidden.tsx";
+		const fromFile = "/repo/src/components/video-dialog.tsx";
+
+		const result = calculateNewSpecifier(
+			"@/components/VisuallyHidden",
+			fromFile,
+			oldTarget,
+			newTarget,
+			project
+		);
+
+		expect(result).not.toContain("//");
+		expect(result).toBe("@/components/visually-hidden");
+	});
+
+	test("non-wildcard package alias: moving a sibling file never produces a double slash", () => {
+		const project = makeProject("/repo", {
+			"@my-org/shared-utils/*": ["packages/shared-utils/src/*"],
+		});
+		const oldTarget = "/repo/packages/shared-utils/src/error.ts";
+		const newTarget = "/repo/packages/shared-utils/src/errors/error.ts";
+		const fromFile = "/repo/packages/shared-utils/src/index.ts";
+
+		const result = calculateNewSpecifier(
+			"@my-org/shared-utils/error",
+			fromFile,
+			oldTarget,
+			newTarget,
+			project
+		);
+
+		expect(result).not.toContain("//");
+		expect(result).toBe("@my-org/shared-utils/errors/error");
+	});
+
+	test("rewritten specifier never retains a dangling .d from a .d.ts target", () => {
+		// A declaration file target (e.g. resolved across a workspace package
+		// boundary) must not leave `.d` on the specifier after extension removal.
+		const project = makeProject("/repo", {
+			"@my-org/shared-schemas/*": ["packages/shared-schemas/dist/*"],
+		});
+		const oldTarget = "/repo/packages/shared-schemas/dist/audit-log.d.ts";
+		const newTarget = "/repo/packages/shared-schemas/dist/types/audit-log.d.ts";
+		const fromFile = "/repo/packages/shared-schemas/dist/index.d.ts";
+
+		const result = calculateNewSpecifier(
+			"@my-org/shared-schemas/audit-log",
+			fromFile,
+			oldTarget,
+			newTarget,
+			project
+		);
+
+		expect(result).not.toContain("//");
+		expect(result.endsWith(".d")).toBe(false);
+		expect(result.endsWith("/index.d")).toBe(false);
+		expect(result).toBe("@my-org/shared-schemas/types/audit-log");
+	});
+});
