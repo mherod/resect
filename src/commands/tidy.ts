@@ -3,6 +3,7 @@ import ts from "typescript";
 import { logger } from "../cli-logger.ts";
 import { mapConcurrent } from "../core/concurrency.ts";
 import { TS_JS_VUE_EXTENSIONS } from "../core/constants.ts";
+import { diffDiagnostics } from "../core/diagnostics.ts";
 import {
 	ensureCleanWorktree,
 	isWorktreeDirty,
@@ -883,11 +884,11 @@ function typecheckDelta(options: {
 	before: Awaited<ReturnType<typeof runTypeCheckDetailed>>;
 	after: Awaited<ReturnType<typeof runTypeCheckDetailed>>;
 }): TypecheckDelta {
-	const newErrors = options.after.errors.filter(
-		(error) => !options.before.errors.includes(error)
-	);
-	const fixedErrors = options.before.errors.filter(
-		(error) => !options.after.errors.includes(error)
+	// Compare by normalized diagnostic identity, not raw string equality, so a
+	// pre-existing error whose line/col shifted isn't misreported as new (#128).
+	const { newErrors, fixedErrors } = diffDiagnostics(
+		options.before.errors,
+		options.after.errors
 	);
 	const verificationIncomplete =
 		options.before.incomplete || options.after.incomplete;

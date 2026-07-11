@@ -2,6 +2,7 @@ import path from "node:path";
 import { logger } from "../cli-logger.ts";
 import ts from "../core/ast-utils.ts";
 import { mapConcurrent } from "../core/concurrency.ts";
+import { diffDiagnostics } from "../core/diagnostics.ts";
 import { ensureCleanWorktree, rollbackFiles } from "../core/git.ts";
 import {
 	createProgram,
@@ -586,12 +587,9 @@ export async function applyChangesWithVerification(
 	const after = await runTypeCheckDetailed(project);
 	const errorsBefore = before.errors;
 	const errorsAfter = after.errors;
-	const newErrors = errorsAfter.filter(
-		(error) => !errorsBefore.includes(error)
-	);
-	const fixedErrors = errorsBefore.filter(
-		(error) => !errorsAfter.includes(error)
-	);
+	// Compare by normalized diagnostic identity, not raw string equality, so a
+	// pre-existing error whose line/col shifted isn't misreported as new (#128).
+	const { newErrors, fixedErrors } = diffDiagnostics(errorsBefore, errorsAfter);
 	const verificationIncomplete = before.incomplete || after.incomplete;
 	const result: VerificationResult = {
 		success: newErrors.length === 0 && !verificationIncomplete,

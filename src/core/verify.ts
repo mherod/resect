@@ -4,6 +4,7 @@ import { logger } from "../cli-logger.ts";
 import { getRuntime } from "../runtime/index.ts";
 import type { ProjectConfig } from "../types.ts";
 import { TSC_ERROR_PATTERN, TSC_GLOBAL_ERROR_PATTERN } from "./constants.ts";
+import { diffDiagnostics } from "./diagnostics.ts";
 import { createProgram } from "./project.ts";
 import {
 	scanUnresolvableImports,
@@ -12,6 +13,17 @@ import {
 
 /** Marker prefix for the synthetic "tsc fatalled with no parseable diagnostic" error string. */
 export const VERIFY_INCOMPLETE_PREFIX = "VERIFY_INCOMPLETE:";
+
+/**
+ * Resolve a tsc diagnostic's (possibly project-relative) file path to an absolute
+ * one, using the same cwd `runTypeCheckDetailed` invokes tsc from, so diagnostic
+ * comparisons and caller-supplied `translateBeforeFile` callbacks can compare
+ * against absolute paths regardless of how tsc reported the file.
+ */
+function resolveDiagnosticFile(project: ProjectConfig, file: string): string {
+	const cwd = path.dirname(project.tsconfigPath);
+	return path.normalize(path.resolve(cwd, file)).replace(/\\/g, "/");
+}
 
 export interface UnresolvableDiagnosticWithFile extends UnresolvableDiagnostic {
 	file: string;
@@ -60,7 +72,8 @@ export interface VerificationResult {
 export async function verifyTypeChecking(
 	project: ProjectConfig,
 	beforeSnapshot: () => void,
-	applyChanges: () => Promise<void> | void
+	applyChanges: () => Promise<void> | void,
+	options?: { translateBeforeFile?: (file: string) => string }
 ): Promise<VerificationResult> {
 	// Run type check before changes
 	const before = await runTypeCheckDetailed(project);
@@ -80,9 +93,17 @@ export async function verifyTypeChecking(
 	const errorsBefore = before.errors;
 	const errorsAfter = after.errors;
 
-	// Compare errors
-	const newErrors = errorsAfter.filter((err) => !errorsBefore.includes(err));
-	const fixedErrors = errorsBefore.filter((err) => !errorsAfter.includes(err));
+	// Compare errors by normalized identity (file+code+message), not raw string
+	// equality, with optional translation of pre-existing errors' file paths so a
+	// moved file's inherited errors aren't misreported as new (#128).
+	const { newErrors, fixedErrors } = diffDiagnostics(
+		errorsBefore,
+		errorsAfter,
+		{
+			resolveFile: (file) => resolveDiagnosticFile(project, file),
+			translateBeforeFile: options?.translateBeforeFile,
+		}
+	);
 
 	const verificationIncomplete = before.incomplete || after.incomplete;
 	const success = newErrors.length === 0 && !verificationIncomplete;
@@ -98,19 +119,27 @@ export async function verifyTypeChecking(
 	};
 }
 
-/** Run a mutating operation between before/after typechecks and return its delta. */
+/**
+ * Run a mutating operation between before/after typechecks and return its delta.
+ * `translateBeforeFile` maps a pre-existing error's file path to where it is
+ * expected after the change (e.g. a moved file's old path -> new path) so
+ * inherited errors on a moved file are matched instead of counted as new (#128).
+ */
 export async function runWithTypecheckGuard<T>(
 	project: ProjectConfig,
-	applyChanges: () => Promise<T>
+	applyChanges: () => Promise<T>,
+	options?: { translateBeforeFile?: (file: string) => string }
 ): Promise<{ result: T; delta: VerificationResult }> {
 	const errorsBefore = await runTypeCheck(project);
 	const result = await applyChanges();
 	const errorsAfter = await runTypeCheck(project);
-	const newErrors = errorsAfter.filter(
-		(error) => !errorsBefore.includes(error)
-	);
-	const fixedErrors = errorsBefore.filter(
-		(error) => !errorsAfter.includes(error)
+	const { newErrors, fixedErrors } = diffDiagnostics(
+		errorsBefore,
+		errorsAfter,
+		{
+			resolveFile: (file) => resolveDiagnosticFile(project, file),
+			translateBeforeFile: options?.translateBeforeFile,
+		}
 	);
 	const verificationIncomplete =
 		isIncompleteTypeCheck(errorsBefore) || isIncompleteTypeCheck(errorsAfter);

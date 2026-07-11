@@ -214,7 +214,15 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 	};
 	const { result, delta } =
 		verify && !dryRun
-			? await runWithTypecheckGuard(project, runMove)
+			? await runWithTypecheckGuard(project, runMove, {
+					// Errors pre-existing on the source file re-report at the
+					// destination path after the move; translate so they match
+					// the "before" snapshot instead of counting as new (#128).
+					translateBeforeFile: (file) =>
+						normalizePath(file) === normalizePath(absoluteSource)
+							? normalizePath(absoluteTarget)
+							: file,
+				})
 			: { result: await runMove(), delta: undefined };
 
 	if (delta && result.success) {
