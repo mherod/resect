@@ -22,6 +22,8 @@ Run a single test file:
 bun test src/cli.test.ts
 ```
 
+DO: Budget output for the full `bun test --timeout=20000 --parallel=4` suite or filter its first run to `(fail)`, pass/fail totals, and `Ran ...`; do not rerun all 765 tests solely because tool output was truncated.
+
 **Package management vs runtime:** pnpm is the package manager (`pnpm install`, `pnpm publish`). Bun is the runtime (`bun test`, `bun run src/cli.ts`).
 
 ## Safe File Deletion
@@ -133,7 +135,7 @@ const { line, character } = sourceFile.getLineAndCharacterOfPosition(
 The `tsconfig-discovery.ts` module handles complex project structures:
 
 - **Monorepos**: Discovers all tsconfig.json files recursively, skipping node_modules/dist/build/.git
-- **Solution-style configs**: Detects configs with `references` but no `compilerOptions` (project references)
+- **Solution-style configs**: Detects configs with `references`, no `include` entries, and no `files` property. `files: []` is not a solution config under `parseTsConfig()` and must not be used in solution-style test fixtures.
 - **File ownership**: Maps each file to its owning tsconfig based on include/exclude patterns
 - **Extends chains**: Tracks inheritance relationships between configs
 
@@ -591,7 +593,8 @@ DO: write them via `mapConcurrent([...updates], ([filePath, content]) => rt.fs.w
 
 Commits, pushes, and memory-file edits are hook-gated — independent gates checking "skill used in the last 30 turns / 20 min". Invoke the skill BEFORE the action:
 
-DO: `/commit` skill → `TaskList` (recent sync) → `git commit`. Skipping either blocks the commit.
+DO: Resolve the active hook directory with `git config --get core.hooksPath` before reading `.husky/pre-commit` or preparing hook-only dependencies. A configured path such as `/Library/Application Support/OpenAI/Tools/PushPatrol/git-hooks` means the repository-local `.husky` file is not the active Git hook.
+DO: Invoke `/commit` as a real skill invocation → `TaskList` (recent sync) → `git commit`. Reading `/Users/matthew.herod/.codex/skills/commit/SKILL.md` alone does not satisfy the recent-skill gate.
 DO: `/push` skill before `git push` (separate gate; `/commit` does not satisfy it). After pushing, run the hard-success-gate + `gh run watch` per [CI Gate Authority].
 DO: `/update-memory` skill before editing any memory file (`CLAUDE.md`, `GEMINI.md`, `AGENTS.md`, `.cursorrules`).
 DO: Keep ≥1 task `in_progress` and ≥2 pending before Bash/Edit/Write (`pretooluse-require-tasks` + planning-buffer hooks).
