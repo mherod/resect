@@ -246,6 +246,74 @@ export function usedInternal() {
 		await cleanup(dir);
 	});
 
+	test("--fix --dry-run aggregates structured edits without writing", async () => {
+		const dir = await makeGitFixture("fix-preview", {
+			"src/util.ts": `
+export function helper() {
+	return 1;
+}
+
+export function usedInternal() {
+	return helper();
+}
+`,
+		});
+		const file = path.join(dir, "src/util.ts");
+		const before = await readFile(file, "utf8");
+
+		const human = Bun.spawn(
+			[
+				...CLI,
+				"tidy",
+				path.join(dir, "src"),
+				"--experimental",
+				"--fix=dead-exports",
+				"--dry-run",
+			],
+			{ stdout: "pipe", stderr: "pipe" }
+		);
+		const humanStdout = await new Response(human.stdout).text();
+		await human.exited;
+		expect(human.exitCode).toBe(0);
+		expect(humanStdout).toContain("--- a/util.ts");
+		expect(humanStdout).toContain("-export function helper()");
+		expect(humanStdout).toContain("+function helper()");
+
+		const json = Bun.spawn(
+			[
+				...CLI,
+				"tidy",
+				path.join(dir, "src"),
+				"--experimental",
+				"--fix=dead-exports",
+				"--dry-run",
+				"--json",
+			],
+			{ stdout: "pipe", stderr: "pipe" }
+		);
+		const jsonStdout = await new Response(json.stdout).text();
+		await json.exited;
+		expect(json.exitCode).toBe(0);
+		const report = JSON.parse(jsonStdout);
+		expect(report.applied).toHaveLength(0);
+		expect(report.edits).toHaveLength(1);
+		expect(report.edits[0]).toEqual(
+			expect.objectContaining({
+				file: "util.ts",
+				oldText: expect.stringContaining("export function helper()"),
+				newText: expect.stringContaining("function helper()"),
+			})
+		);
+		expect(
+			before.slice(0, report.edits[0].start) +
+				report.edits[0].newText +
+				before.slice(report.edits[0].end)
+		).not.toContain("export function helper()");
+		expect(await readFile(file, "utf8")).toBe(before);
+
+		await cleanup(dir);
+	});
+
 	test("--fix refuses a dirty worktree without force", async () => {
 		const dir = await makeGitFixture("dirty-refusal", {
 			"src/util.ts": `

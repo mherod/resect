@@ -15,7 +15,7 @@ export type {
 	AliasResult,
 	MissedEquivalent,
 } from "./commands/alias.ts";
-export { aliasCommand } from "./commands/alias.ts";
+export { aliasCommand, planAliasEdits } from "./commands/alias.ts";
 // ── Commands: analyze ───────────────────────────────────────────────
 export type { AnalyzeOptions } from "./commands/analyze.ts";
 export { analyze, analyzeCommand } from "./commands/analyze.ts";
@@ -153,6 +153,7 @@ export {
 export {
 	buildTidyReport,
 	formatTidyReport,
+	previewTidyFixes,
 	tidyCommand,
 } from "./commands/tidy.ts";
 // ── Commands: unused ────────────────────────────────────────────────
@@ -341,4 +342,15 @@ export type {
 	TransformRule,
 } from "./types/transform.ts";
 // ── Core types ──────────────────────────────────────────────────────
+export type {
+	SerializedEdit,
+	StructuredEdit,
+	TextChange,
+} from "./core/text-changes.ts";
+export {
+	applyStructuredEdits,
+	createStructuredEdit,
+	formatUnifiedDiff,
+	serializeStructuredEdits,
+} from "./core/text-changes.ts";
 export type { ProjectConfig, ProjectReference } from "./types.ts";

@@ -40,6 +40,7 @@ import {
 	applyChangesWithVerification as applyAliasChangesWithVerification,
 	normalizeImports,
 	parseSpecifierRenames,
+	planAliasEdits,
 	renameImportSpecifiers,
 } from "./commands/alias.ts";
 import { analyze } from "./commands/analyze.ts";
@@ -78,12 +79,14 @@ import {
 	ALL_TIDY_FIX_CATEGORIES,
 	applyTidyFixes,
 	buildTidyReport,
+	previewTidyFixes,
 } from "./commands/tidy.ts";
 import { findUnusedExports } from "./commands/unused.ts";
 import { isWorktreeDirty } from "./core/git.ts";
 import { buildDependencyGraph } from "./core/graph.ts";
 import { loadProject, resolveTsConfig } from "./core/project.ts";
 import { analyzeSimilarity } from "./core/similarity.ts";
+import { serializeStructuredEdits } from "./core/text-changes.ts";
 import { loadTransformConfig } from "./core/transform-config.ts";
 import { discoverProject } from "./core/tsconfig-discovery.ts";
 import {
@@ -550,7 +553,33 @@ async function tidyTool(
 		exportThreshold: options.exportThreshold,
 	});
 	if (dryRun) {
-		return jsonText({ dryRun, force: options.force ?? false, report });
+		const result = await previewTidyFixes(
+			report,
+			{
+				directory: absoluteDir,
+				project: options.project,
+				experimental: options.experimental,
+				scope: options.scope,
+				workspace: options.workspace,
+				fix: true,
+				dryRun: true,
+				fixCategories: options.fixCategories,
+				aliasPrefer: options.aliasPrefer,
+				maxChanges: options.maxChanges,
+				fanOutThreshold: options.fanOutThreshold,
+				fanInThreshold: options.fanInThreshold,
+				exportThreshold: options.exportThreshold,
+			},
+			{ project, reportDirectory: absoluteDir }
+		);
+		return jsonText({
+			dryRun,
+			force: options.force ?? false,
+			success: result.success,
+			errors: result.errors,
+			edits: serializeStructuredEdits(result.report.edits),
+			report: result.report,
+		});
 	}
 	const result = await applyTidyFixes(
 		report,
@@ -578,6 +607,7 @@ async function tidyTool(
 		rollbackDisabled: result.worktreeDirtyRollbackDisabled,
 		success: result.success,
 		errors: result.errors,
+		edits: serializeStructuredEdits(result.report.edits),
 		report: result.report,
 	});
 }
@@ -1549,6 +1579,9 @@ async function moveTool(args: {
 			from: path.relative(root, result.movedFile.from),
 			to: path.relative(root, result.movedFile.to),
 		},
+		edits: serializeStructuredEdits(result.edits, (file) =>
+			path.relative(root, file)
+		),
 		updatedReferenceCount: result.updatedReferences.length,
 		updatedReferences: result.updatedReferences.map((r) => ({
 			file: path.relative(root, r.file),
@@ -1638,6 +1671,9 @@ async function renameTool(args: {
 			oldName: result.renamedSymbol.oldName,
 			newName: result.renamedSymbol.newName,
 		},
+		edits: serializeStructuredEdits(result.edits, (file) =>
+			path.relative(root, file)
+		),
 		updatedReferenceCount: result.updatedReferences.length,
 		updatedReferences: result.updatedReferences.map((r) => ({
 			file: path.relative(root, r.file),
@@ -1682,6 +1718,10 @@ async function aliasTool(args: {
 		renames.length > 0
 			? renameImportSpecifiers(absoluteTarget, renames, project)
 			: normalizeImports(absoluteTarget, args.prefer ?? "alias", project);
+	result.edits =
+		result.conflicts.length === 0
+			? await planAliasEdits(result.changes)
+			: [];
 
 	let delta: VerificationResult | undefined;
 	let rolledBack = false;
@@ -1720,6 +1760,9 @@ async function aliasTool(args: {
 		rolledBack,
 		filesProcessed: result.filesProcessed,
 		importsUpdated: result.importsUpdated,
+		edits: serializeStructuredEdits(result.edits, (file) =>
+			path.relative(root, file)
+		),
 		changes: result.changes.map((c) => ({
 			file: path.relative(root, c.file),
 			line: c.line,

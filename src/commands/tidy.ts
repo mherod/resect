@@ -29,7 +29,10 @@ import {
 import { createSourceFileFromText } from "../core/source-file.ts";
 import {
 	applyTextChanges,
+	createStructuredEdit,
 	deduplicateChanges,
+	formatUnifiedDiff,
+	type StructuredEdit,
 	type TextChange,
 } from "../core/text-changes.ts";
 import { runTypeCheckDetailed } from "../core/verify.ts";
@@ -389,6 +392,7 @@ export async function buildTidyReport(
 			similar: similar.findings,
 			audit: audit.findings,
 		},
+		edits: [],
 		applied: [],
 		typecheckDelta: null,
 		summary: {
@@ -891,6 +895,116 @@ async function planTidyFixes(
 	return planned;
 }
 
+function relativeStructuredEdit(
+	edit: StructuredEdit,
+	reportDirectory: string
+): StructuredEdit {
+	const relativeEdit: Omit<StructuredEdit, "line"> = {
+		file: toRelativePath(reportDirectory, edit.file),
+		start: edit.start,
+		end: edit.end,
+		oldText: edit.oldText,
+		newText: edit.newText,
+	};
+	Object.defineProperty(relativeEdit, "line", {
+		value: edit.line,
+		enumerable: false,
+	});
+	return relativeEdit as StructuredEdit;
+}
+
+async function previewPlannedTidyEdits(
+	planned: readonly PlannedTidyChange[],
+	reportDirectory: string,
+	project: ProjectConfig
+): Promise<StructuredEdit[]> {
+	const byFile = new Map<string, PlannedTextChange[]>();
+	const moves: PlannedMoveChange[] = [];
+	for (const change of planned) {
+		if (change.kind === "move") {
+			moves.push(change);
+			continue;
+		}
+		const changes = byFile.get(change.file) ?? [];
+		changes.push(change);
+		byFile.set(change.file, changes);
+	}
+
+	const textEdits = await mapConcurrent(
+		Array.from(byFile.entries()),
+		async ([file, changes]) => {
+			const content = await Bun.file(file).text();
+			const textChanges = deduplicateChanges(
+				changes.flatMap((change) => change.changes)
+			);
+			return createStructuredEdit(
+				file,
+				content,
+				applyTextChanges(content, textChanges)
+			);
+		},
+		{ concurrency: FIX_WRITE_CONCURRENCY }
+	);
+
+	const edits = textEdits.filter(
+		(edit): edit is StructuredEdit => edit !== undefined
+	);
+	if (moves.length > 0) {
+		const { moveModule } = await import("./move.ts");
+		for (const move of moves) {
+			const result = await moveModule(
+				move.source,
+				move.target,
+				project,
+				true,
+				false
+			);
+			if (result.success) {
+				edits.push(...result.edits);
+			}
+		}
+	}
+
+	return edits.map((edit) => relativeStructuredEdit(edit, reportDirectory));
+}
+
+export async function previewTidyFixes(
+	report: TidyReport,
+	options: TidyOptions,
+	providedContext?: TidyProjectContext
+): Promise<TidyApplyResult> {
+	const context = providedContext ?? (await resolveTidyProjectContext(options));
+	const planned = await planTidyFixes(
+		report,
+		options,
+		context.reportDirectory,
+		context.project
+	);
+	const maxChanges = options.maxChanges ?? DEFAULT_MAX_CHANGES;
+	const edits = await previewPlannedTidyEdits(
+		planned,
+		context.reportDirectory,
+		context.project
+	);
+	const previewReport = { ...report, edits };
+	if (planned.length > maxChanges) {
+		return {
+			report: previewReport,
+			success: false,
+			errors: [
+				`tidy planned ${planned.length} change(s), which exceeds --max-changes ${maxChanges}. Re-run with a larger limit to apply.`,
+			],
+			worktreeDirtyRollbackDisabled: false,
+		};
+	}
+	return {
+		report: previewReport,
+		success: true,
+		errors: [],
+		worktreeDirtyRollbackDisabled: false,
+	};
+}
+
 function typecheckDelta(options: {
 	before: Awaited<ReturnType<typeof runTypeCheckDetailed>>;
 	after: Awaited<ReturnType<typeof runTypeCheckDetailed>>;
@@ -1093,9 +1207,15 @@ export async function applyTidyFixes(
 		context.reportDirectory,
 		context.project
 	);
+	const edits = await previewPlannedTidyEdits(
+		planned,
+		context.reportDirectory,
+		context.project
+	);
+	const reportWithEdits = { ...report, edits };
 	if (planned.length > maxChanges) {
 		return {
-			report,
+			report: reportWithEdits,
 			success: false,
 			errors: [
 				`tidy planned ${planned.length} change(s), which exceeds --max-changes ${maxChanges}. Re-run with a larger limit to apply.`,
@@ -1105,7 +1225,7 @@ export async function applyTidyFixes(
 	}
 	if (planned.length === 0) {
 		return {
-			report: applyReportMutation(report, [], null),
+			report: applyReportMutation(reportWithEdits, [], null),
 			success: true,
 			errors: [],
 			worktreeDirtyRollbackDisabled: !rollbackEnabled,
@@ -1151,7 +1271,7 @@ export async function applyTidyFixes(
 			? "type checking did not complete"
 			: "type checking introduced new errors";
 		return {
-			report: applyReportMutation(report, applied, delta),
+			report: applyReportMutation(reportWithEdits, applied, delta),
 			success: false,
 			errors: [`tidy rolled back because ${reason}.`],
 			worktreeDirtyRollbackDisabled: !rollbackEnabled,
@@ -1159,7 +1279,7 @@ export async function applyTidyFixes(
 	}
 
 	return {
-		report: applyReportMutation(report, applied, delta),
+		report: applyReportMutation(reportWithEdits, applied, delta),
 		success: true,
 		errors: [],
 		worktreeDirtyRollbackDisabled: !rollbackEnabled,
@@ -1240,6 +1360,11 @@ export function formatTidyReport(report: TidyReport): string {
 		lines.push("");
 	}
 
+	if (report.edits.length > 0) {
+		lines.push(`Planned edits (${report.edits.length})`);
+		lines.push(formatUnifiedDiff(report.edits), "");
+	}
+
 	if (report.typecheckDelta) {
 		lines.push(
 			`Typecheck: ${report.typecheckDelta.errorsBefore} before, ${report.typecheckDelta.errorsAfter} after, ${report.typecheckDelta.newErrors.length} new, ${report.typecheckDelta.fixedCount} fixed`
@@ -1257,7 +1382,9 @@ export async function tidyCommand(options: TidyOptions): Promise<void> {
 	assertExperimental(options.experimental);
 	const report = await buildTidyReport(options);
 	const result = options.fix
-		? await applyTidyFixes(report, options)
+		? options.dryRun
+			? await previewTidyFixes(report, options)
+			: await applyTidyFixes(report, options)
 		: { report, success: true, errors: [] };
 	const output = options.json
 		? `${JSON.stringify(result.report, null, 2)}\n`

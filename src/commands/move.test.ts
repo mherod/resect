@@ -146,6 +146,76 @@ describe("moveModule", () => {
 });
 
 describe("move CLI verification", () => {
+	test("dry-run edits reproduce the real move without writing", async () => {
+		const { consumerPath, sourcePath, targetPath, tsconfigPath } =
+			await makeMoveCliProject();
+		const consumerBefore = await Bun.file(consumerPath).text();
+		const sourceBefore = await Bun.file(sourcePath).text();
+
+		const human = await runCli([
+			"move",
+			sourcePath,
+			targetPath,
+			"--dry-run",
+			"-p",
+			tsconfigPath,
+		]);
+		expect(human.exitCode).toBe(0);
+		expect(human.stdout).toContain("--- a/src/consumer.ts");
+		expect(human.stdout).toContain("@@ -1,1 +1,1 @@");
+
+		const json = await runCli([
+			"move",
+			sourcePath,
+			targetPath,
+			"--dry-run",
+			"--json",
+			"-p",
+			tsconfigPath,
+		]);
+		const payload = JSON.parse(json.stdout) as {
+			edits: Array<{
+				file: string;
+				start: number;
+				end: number;
+				oldText: string;
+				newText: string;
+			}>;
+		};
+		expect(json.exitCode).toBe(0);
+		expect(payload.edits).toHaveLength(1);
+		expect(payload.edits[0]).toEqual({
+			file: "src/consumer.ts",
+			start: 0,
+			end: 34,
+			oldText: 'import { value } from "./source";\n',
+			newText: 'import { value } from "./nested/source";\n',
+		});
+		expect(await Bun.file(sourcePath).exists()).toBe(true);
+		expect(await Bun.file(targetPath).exists()).toBe(false);
+		expect(await Bun.file(consumerPath).text()).toContain('from "./source"');
+
+		const edit = payload.edits[0];
+		if (!edit) {
+			throw new Error("Expected a consumer edit");
+		}
+		const previewedConsumer =
+			consumerBefore.slice(0, edit.start) +
+			edit.newText +
+			consumerBefore.slice(edit.end);
+		const applied = await runCli([
+			"move",
+			sourcePath,
+			targetPath,
+			"--no-verify",
+			"-p",
+			tsconfigPath,
+		]);
+		expect(applied.exitCode).toBe(0);
+		expect(await Bun.file(targetPath).text()).toBe(sourceBefore);
+		expect(await Bun.file(consumerPath).text()).toBe(previewedConsumer);
+	});
+
 	test("allows pre-existing type errors when the move adds no new errors", async () => {
 		const { consumerPath, sourcePath, targetPath, tsconfigPath } =
 			await makeMoveCliProject();

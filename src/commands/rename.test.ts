@@ -212,6 +212,74 @@ describe("renameInSourceFile — shadowing", () => {
 });
 
 describe("rename CLI verification", () => {
+	test("dry-run edits reproduce the real rename without writing", async () => {
+		const { apiPath, tsconfigPath } = await makeRenameCliProject();
+		const before = await Bun.file(apiPath).text();
+
+		const human = await runCli([
+			"rename",
+			apiPath,
+			"foo",
+			"bar",
+			"--dry-run",
+			"-p",
+			tsconfigPath,
+		]);
+		expect(human.exitCode).toBe(0);
+		expect(human.stdout).toContain("--- a/src/api.ts");
+		expect(human.stdout).toContain("-export const foo = 1;");
+		expect(human.stdout).toContain("+export const bar = 1;");
+
+		const json = await runCli([
+			"rename",
+			apiPath,
+			"foo",
+			"bar",
+			"--dry-run",
+			"--json",
+			"-p",
+			tsconfigPath,
+		]);
+		const payload = JSON.parse(json.stdout) as {
+			edits: Array<{
+				file: string;
+				start: number;
+				end: number;
+				oldText: string;
+				newText: string;
+			}>;
+		};
+		expect(json.exitCode).toBe(0);
+		expect(payload.edits).toEqual([
+			{
+				file: "src/api.ts",
+				start: 0,
+				end: 22,
+				oldText: "export const foo = 1;\n",
+				newText: "export const bar = 1;\n",
+			},
+		]);
+		expect(await Bun.file(apiPath).text()).toBe(before);
+
+		const edit = payload.edits[0];
+		if (!edit) {
+			throw new Error("Expected an API edit");
+		}
+		const previewed =
+			before.slice(0, edit.start) + edit.newText + before.slice(edit.end);
+		const applied = await runCli([
+			"rename",
+			apiPath,
+			"foo",
+			"bar",
+			"--no-verify",
+			"-p",
+			tsconfigPath,
+		]);
+		expect(applied.exitCode).toBe(0);
+		expect(await Bun.file(apiPath).text()).toBe(previewed);
+	});
+
 	test("fails by default when the rename introduces a typecheck delta", async () => {
 		const { apiPath, consumerPath, tsconfigPath } =
 			await makeRenameCliProject();

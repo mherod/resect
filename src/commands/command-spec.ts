@@ -266,6 +266,7 @@ Options:
   --rename-specifier  Exact specifier rewrite pair: <from>=<to> (repeatable)
   -p, --project   Path to project directory or tsconfig.json
   -n, --dry-run   Preview changes without modifying files
+  --json          Emit structured edits as JSON (use with --dry-run)
   --force         Allow operation when git worktree has uncommitted changes
   --no-verify     Disable type checking verification (enabled by default)
   --verbose       Show detailed changes
@@ -305,6 +306,7 @@ Arguments:
 
 Options:
   -n, --dry-run     Preview changes without modifying files
+  --json            Emit structured edits as JSON (use with --dry-run)
   --force           Allow operation when git worktree has uncommitted changes
   --verbose         Show detailed information about each change
   --workspace       Scan across all workspace packages
@@ -344,6 +346,7 @@ Arguments:
 
 Options:
   -n, --dry-run   Preview changes without modifying files
+  --json          Emit structured edits as JSON (use with --dry-run)
   --force         Allow operation when git worktree has uncommitted changes
   --verbose       Show detailed information about each change
   --workspace     Scan across all workspace packages
@@ -786,6 +789,7 @@ Options:
   --workspace            Scan across all workspace packages where supported
   --fix                  Apply safe fixes (dead-exports, alias-normalisation)
   --fix=<categories>     Apply comma-separated tidy fix categories
+  -n, --dry-run         Plan selected fixes and emit their diffs without writing
   --alias-prefer=<s>     Alias-normalisation strategy: alias, relative, or shortest
   --max-changes          Abort --fix when planned changes exceed this limit (default: 50)
   --force                Allow --fix when the git worktree is dirty
@@ -795,6 +799,7 @@ Examples:
   ${CLI_NAME} tidy src --experimental
   ${CLI_NAME} tidy src --experimental --json
   ${CLI_NAME} tidy src --experimental --fix
+  ${CLI_NAME} tidy src --experimental --fix --dry-run
   ${CLI_NAME} tidy src --experimental --fix=dead-exports
   ${CLI_NAME} tidy src --experimental --fix=alias-normalisation --alias-prefer=relative
   ${CLI_NAME} tidy src --experimental --scope src/core

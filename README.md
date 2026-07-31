@@ -44,9 +44,45 @@ resect move src/old/file.ts src/new/file.ts
 # Preview changes without modifying files
 resect move src/old.ts src/new.ts --dry-run
 
+# Preview the same change as machine-readable edits
+resect move src/old.ts src/new.ts --dry-run --json
+
 # Move between packages in a monorepo
 resect move apps/web/src/utils/helper.ts packages/shared/src/helper.ts
 ```
+
+### Dry-run diffs and structured edits
+
+`move`, `rename`, and `alias` print unified diff hunks during a dry run. Add
+`--json` to receive the same plan as an `edits` array. `tidy --fix --dry-run`
+aggregates the selected fix categories into this same schema. No dry-run path
+writes files.
+
+```json
+{
+  "edits": [
+    {
+      "file": "src/example.ts",
+      "start": 18,
+      "end": 42,
+      "oldText": "import { oldName } from \"./old\";\n",
+      "newText": "import { oldName } from \"./new\";\n"
+    }
+  ]
+}
+```
+
+`start` and `end` are zero-based, half-open JavaScript string offsets into the
+original file. An edit is applied by first checking that
+`content.slice(start, end) === oldText`, then replacing that span with
+`newText`. Edits are line-aligned so the JSON payload and human unified diff
+describe the same change. For `move`, perform the reported `movedFile`
+relocation first; an edit whose `file` is the destination then applies to the
+content moved from the source. Applying the reported relocation and edits
+verbatim produces the same file contents as the real command.
+
+The MCP `move`, `rename`, `alias`, and `tidy` tools return the identical
+five-field `edits` schema when `dryRun: true`.
 
 ## Cross-Package Refactoring
 
@@ -422,13 +458,14 @@ Compose structural findings into one tidyup report, with guarded fix mode.
 resect tidy src --experimental
 resect tidy src --experimental --json
 resect tidy src --experimental --fix
+resect tidy src --experimental --fix --dry-run
 resect tidy src --experimental --fix=dead-exports
 resect tidy src --experimental --fix=alias-normalisation --alias-prefer=relative
 resect tidy src --experimental --scope src/core
 resect tidy src --experimental --json --out tidy-report.json
 ```
 
-In the 1.x series, `--experimental` is required. The JSON schema is versioned as `1-experimental` and may change before 2.0. By default it runs `unused`, `similar`, and `audit` as one read-only pipeline, emits grouped findings plus a summary, and supports `--scope` filtering. `--fix` applies safe categories only: currently `dead-exports` de-exports internally-used unused symbols, while `alias-normalisation` is reserved for the alias cleanup slice. Pass `--fix=<comma-separated-categories>` to opt into an explicit category list. Fix mode refuses dirty worktrees unless `--force`, aborts when planned writes exceed `--max-changes`, runs a closing typecheck, and rolls back if verification regresses or is incomplete.
+In the 1.x series, `--experimental` is required. The JSON schema is versioned as `1-experimental` and may change before 2.0. By default it runs `unused`, `similar`, and `audit` as one read-only pipeline, emits grouped findings plus a summary, and supports `--scope` filtering. `--fix` applies safe categories only: currently `dead-exports` de-exports internally-used unused symbols, while `alias-normalisation` is reserved for the alias cleanup slice. Pass `--fix=<comma-separated-categories>` to opt into an explicit category list. `--fix --dry-run` runs the planners and returns aggregated `edits` without writing. Fix mode refuses dirty worktrees unless `--force`, aborts when planned writes exceed `--max-changes`, runs a closing typecheck, and rolls back if verification regresses or is incomplete.
 
 ## MCP Server (Claude Code)
 
@@ -467,7 +504,7 @@ resect ships a stdio [Model Context Protocol](https://modelcontextprotocol.io) s
 Each mutating tool:
 
 - Defaults to `dryRun: true`; pass `dryRun: false` to apply.
-- Returns a structured diff (`updatedReferences`, `changes`, `errors`, `worktreeDirty`).
+- `move`, `rename`, `alias`, and `tidy` return exact `edits` (`file`, `start`, `end`, `oldText`, `newText`) alongside their command-specific metadata.
 - When `dryRun: false` and `verify: true` (the default), runs `tsc --noEmit` before AND after and returns the diagnostic delta as `typecheck: { errorsBefore, errorsAfter, newErrors, fixedCount }` — the caller sees exactly which type errors the refactor introduced or fixed.
 - Refuses to mutate a dirty worktree unless `force: true` (returned as a structured error, never as a process exit).
 

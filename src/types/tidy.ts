@@ -1,3 +1,4 @@
+import type { StructuredEdit } from "../core/text-changes.ts";
 import type { DeclarationKind, SimilarityBucket } from "./similar.ts";
 
 type TidySchemaVersion = "1-experimental";
@@ -12,6 +13,7 @@ export interface TidyOptions {
 	scope?: string;
 	out?: string;
 	fix?: boolean;
+	dryRun?: boolean;
 	fixCategories?: TidyFixCategory[];
 	aliasPrefer?: "alias" | "relative" | "shortest";
 	force?: boolean;
@@ -109,6 +111,8 @@ export interface TidyReport {
 		similar: TidySimilarFinding[];
 		audit: TidyAuditFinding[];
 	};
+	/** Exact text edits planned for the selected fix categories */
+	edits: StructuredEdit[];
 	applied: TidyAppliedFix[];
 	typecheckDelta: TypecheckDelta | null;
 	summary: {

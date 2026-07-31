@@ -1,4 +1,8 @@
 import path from "node:path";
+import {
+	formatUnifiedDiff,
+	type StructuredEdit,
+} from "./core/text-changes.ts";
 
 /**
  * CLI Logger - Structured logging for user interface output
@@ -110,6 +114,7 @@ export const logger = new CLILogger();
 
 interface CommandResultInput {
 	success: boolean;
+	edits?: StructuredEdit[];
 	updatedReferences: {
 		file: string;
 		line: number;
@@ -157,6 +162,13 @@ export function printCommandResult(
 				}
 			}
 		}
+		logger.empty();
+	}
+
+	if (dryRun && result.edits && result.edits.length > 0) {
+		logger.info(
+			formatUnifiedDiff(result.edits, (file) => path.relative(pathBase, file))
+		);
 		logger.empty();
 	}
 

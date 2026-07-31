@@ -13,7 +13,20 @@ import {
 	resolveModuleSpecifier,
 } from "../core/resolver.ts";
 import { scanModuleReferences } from "../core/scanner.ts";
-import { withSourceFile } from "../core/source-file.ts";
+import {
+	createSourceFileFromText,
+	withSourceFile,
+} from "../core/source-file.ts";
+import {
+	applyStructuredEdits,
+	applyTextChanges,
+	createStructuredEdit,
+	deduplicateChanges,
+	formatUnifiedDiff,
+	serializeStructuredEdits,
+	type StructuredEdit,
+} from "../core/text-changes.ts";
+import { specifierEditsToTextChanges } from "../core/updater.ts";
 import {
 	printVerificationResults,
 	runTypeCheckDetailed,
@@ -34,12 +47,15 @@ export interface AliasOptions extends MutatingCommandOptions {
 	target: string;
 	prefer?: "alias" | "relative" | "shortest";
 	renameSpecifiers?: string[];
+	json?: boolean;
 	verify?: boolean;
 }
 
 export interface AliasResult {
 	filesProcessed: number;
 	importsUpdated: number;
+	/** Exact per-file text edits planned by a dry run */
+	edits?: StructuredEdit[];
 	changes: AliasChange[];
 	conflicts: AliasConflict[];
 	/**
@@ -88,6 +104,7 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 		renameSpecifiers,
 		dryRun = false,
 		force = false,
+		json = false,
 		verbose = false,
 		verify = true,
 		project: projectArg,
@@ -117,6 +134,7 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 			dryRun,
 			specifierRenames,
 			projectArg,
+			json,
 			verbose,
 			verify,
 		});
@@ -137,10 +155,12 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 			process.exit(1);
 		}
 
-		logger.info(
-			`\n${dryRun ? "🔍 Dry run:" : "🔧"} Normalizing imports across ${wsInfo.packages.length} workspace package(s)...`
-		);
-		logger.info(`   Strategy: ${prefer}\n`);
+		if (!json) {
+			logger.info(
+				`\n${dryRun ? "🔍 Dry run:" : "🔧"} Normalizing imports across ${wsInfo.packages.length} workspace package(s)...`
+			);
+			logger.info(`   Strategy: ${prefer}\n`);
+		}
 
 		const { mapConcurrent } = await import("../core/concurrency.ts");
 		const eligiblePkgs = wsInfo.packages.filter((pkg) => pkg.tsconfigPath);
@@ -175,17 +195,30 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 		};
 
 		if (result.changes.length === 0) {
-			logger.info(
-				"✨ No changes needed. All imports already follow the preferred style.\n"
-			);
+			if (json) {
+				printAliasResultJson(result, wsInfo.root);
+			} else {
+				logger.info(
+					"✨ No changes needed. All imports already follow the preferred style.\n"
+				);
+			}
 			return;
 		}
 
 		if (dryRun) {
-			printResults(result, dryRun, verbose, wsInfo.root);
+			result.edits = await planAliasEdits(result.changes);
+			if (json) {
+				printAliasResultJson(result, wsInfo.root);
+			} else {
+				printResults(result, dryRun, verbose, wsInfo.root);
+			}
 		} else {
 			await applyChanges(result.changes);
-			printResults(result, dryRun, verbose, wsInfo.root);
+			if (json) {
+				printAliasResultJson(result, wsInfo.root);
+			} else {
+				printResults(result, dryRun, verbose, wsInfo.root);
+			}
 		}
 		return;
 	}
@@ -200,26 +233,37 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 	}
 	const { project } = context;
 
-	logger.info(`\n${dryRun ? "🔍 Dry run:" : "🔧"} Normalizing imports...`);
-	logger.info(`   Target: ${absoluteTarget}`);
-	logger.info(`   Strategy: ${prefer}`);
-	if (verify) {
-		logger.info("   Verification: enabled");
+	if (!json) {
+		logger.info(`\n${dryRun ? "🔍 Dry run:" : "🔧"} Normalizing imports...`);
+		logger.info(`   Target: ${absoluteTarget}`);
+		logger.info(`   Strategy: ${prefer}`);
+		if (verify) {
+			logger.info("   Verification: enabled");
+		}
+		logger.empty();
 	}
-	logger.empty();
 
 	const result = normalizeImports(absoluteTarget, prefer, project);
 
 	if (result.changes.length === 0) {
-		logger.info(
-			"✨ No changes needed. All imports already follow the preferred style.\n"
-		);
+		if (json) {
+			printAliasResultJson(result, project.rootDir);
+		} else {
+			logger.info(
+				"✨ No changes needed. All imports already follow the preferred style.\n"
+			);
+		}
 		return;
 	}
 
 	// Apply changes with optional verification
 	if (dryRun) {
-		printResults(result, dryRun, verbose, project.rootDir);
+		result.edits = await planAliasEdits(result.changes);
+		if (json) {
+			printAliasResultJson(result, project.rootDir);
+		} else {
+			printResults(result, dryRun, verbose, project.rootDir);
+		}
 	} else if (verify) {
 		const verifyResult = await verifyTypeChecking(
 			project,
@@ -229,9 +273,13 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 			async () => applyChanges(result.changes)
 		);
 
-		printResults(result, dryRun, verbose, project.rootDir);
-		logger.empty();
-		printVerificationResults(verifyResult);
+		if (json) {
+			printAliasResultJson(result, project.rootDir, verifyResult);
+		} else {
+			printResults(result, dryRun, verbose, project.rootDir);
+			logger.empty();
+			printVerificationResults(verifyResult);
+		}
 
 		if (!verifyResult.success) {
 			logger.error(
@@ -241,13 +289,18 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 		}
 	} else {
 		await applyChanges(result.changes);
-		printResults(result, dryRun, verbose, project.rootDir);
+		if (json) {
+			printAliasResultJson(result, project.rootDir);
+		} else {
+			printResults(result, dryRun, verbose, project.rootDir);
+		}
 	}
 }
 
 async function aliasRenameSpecifierCommand(options: {
 	absoluteTarget: string;
 	dryRun: boolean;
+	json: boolean;
 	specifierRenames: SpecifierRename[];
 	projectArg?: string;
 	verbose: boolean;
@@ -262,17 +315,19 @@ async function aliasRenameSpecifierCommand(options: {
 		process.exit(1);
 	}
 	const { project } = context;
-	logger.info(
-		`\n${options.dryRun ? "🔍 Dry run:" : "🔧"} Renaming import specifiers...`
-	);
-	logger.info(`   Target: ${options.absoluteTarget}`);
-	for (const rename of options.specifierRenames) {
-		logger.info(`   ${rename.from} → ${rename.to}`);
+	if (!options.json) {
+		logger.info(
+			`\n${options.dryRun ? "🔍 Dry run:" : "🔧"} Renaming import specifiers...`
+		);
+		logger.info(`   Target: ${options.absoluteTarget}`);
+		for (const rename of options.specifierRenames) {
+			logger.info(`   ${rename.from} → ${rename.to}`);
+		}
+		if (options.verify) {
+			logger.info("   Verification: enabled");
+		}
+		logger.empty();
 	}
-	if (options.verify) {
-		logger.info("   Verification: enabled");
-	}
-	logger.empty();
 
 	const result = renameImportSpecifiers(
 		options.absoluteTarget,
@@ -282,15 +337,27 @@ async function aliasRenameSpecifierCommand(options: {
 
 	if (result.changes.length === 0 && result.conflicts.length === 0) {
 		if (result.missedEquivalents && result.missedEquivalents.length > 0) {
-			printMissedEquivalents(result.missedEquivalents, project.rootDir);
+			if (options.json) {
+				printAliasResultJson(result, project.rootDir);
+			} else {
+				printMissedEquivalents(result.missedEquivalents, project.rootDir);
+			}
 			return;
 		}
-		logger.info("✨ No changes needed. No matching specifiers found.\n");
+		if (options.json) {
+			printAliasResultJson(result, project.rootDir);
+		} else {
+			logger.info("✨ No changes needed. No matching specifiers found.\n");
+		}
 		return;
 	}
 
 	if (result.conflicts.length > 0) {
-		printResults(result, true, true, project.rootDir);
+		if (options.json) {
+			printAliasResultJson(result, project.rootDir);
+		} else {
+			printResults(result, true, true, project.rootDir);
+		}
 		logger.error(
 			"Specifier rename has conflicts. No files were changed; resolve the listed imports and retry."
 		);
@@ -298,7 +365,12 @@ async function aliasRenameSpecifierCommand(options: {
 	}
 
 	if (options.dryRun) {
-		printResults(result, true, options.verbose, project.rootDir);
+		result.edits = await planAliasEdits(result.changes);
+		if (options.json) {
+			printAliasResultJson(result, project.rootDir);
+		} else {
+			printResults(result, true, options.verbose, project.rootDir);
+		}
 		return;
 	}
 
@@ -307,9 +379,13 @@ async function aliasRenameSpecifierCommand(options: {
 			result.changes,
 			project
 		);
-		printResults(result, false, options.verbose, project.rootDir);
-		logger.empty();
-		printVerificationResults(verifyResult);
+		if (options.json) {
+			printAliasResultJson(result, project.rootDir, verifyResult);
+		} else {
+			printResults(result, false, options.verbose, project.rootDir);
+			logger.empty();
+			printVerificationResults(verifyResult);
+		}
 
 		if (!verifyResult.success) {
 			logger.error(
@@ -321,7 +397,11 @@ async function aliasRenameSpecifierCommand(options: {
 	}
 
 	await applyChanges(result.changes);
-	printResults(result, false, options.verbose, project.rootDir);
+	if (options.json) {
+		printAliasResultJson(result, project.rootDir);
+	} else {
+		printResults(result, false, options.verbose, project.rootDir);
+	}
 }
 
 export function parseSpecifierRenames(
@@ -615,6 +695,27 @@ async function rollbackChanges(
 }
 
 export async function applyChanges(changes: AliasChange[]): Promise<void> {
+	const edits = await planAliasEdits(changes);
+	const rt = getRuntime();
+	await mapConcurrent(
+		edits,
+		async (edit) => {
+			const content = await rt.fs.readFile(edit.file);
+			await rt.fs.writeFile(edit.file, applyStructuredEdits(content, [edit]));
+		},
+		{ concurrency: ALIAS_WRITE_CONCURRENCY }
+	);
+}
+
+/**
+ * Resolve semantic import changes into exact, serializable file edits.
+ *
+ * Both dry-run output and the write path consume this plan so applying a
+ * preview verbatim has the same effect as running the command.
+ */
+export async function planAliasEdits(
+	changes: readonly AliasChange[]
+): Promise<StructuredEdit[]> {
 	// Group changes by file
 	const byFile = new Map<string, AliasChange[]>();
 	for (const change of changes) {
@@ -623,40 +724,34 @@ export async function applyChanges(changes: AliasChange[]): Promise<void> {
 		byFile.set(change.file, existing);
 	}
 
-	const { createSourceFileFromText: createSf } = await import(
-		"../core/source-file.ts"
-	);
-	const { specifierEditsToTextChanges: toTextChanges } = await import(
-		"../core/updater.ts"
-	);
-	const { applyTextChanges: applyEdits, deduplicateChanges: dedup } =
-		await import("../core/text-changes.ts");
-
 	const rt = getRuntime();
-	await mapConcurrent(
+	const edits = await mapConcurrent(
 		[...byFile],
 		async ([filePath, fileChanges]) => {
 			let content: string;
 			try {
 				content = await rt.fs.readFile(filePath);
 			} catch {
-				return;
+				return undefined;
 			}
 
 			// Parse the file to find precise specifier locations via AST
-			const sourceFile = createSf(filePath, content);
-			const textChanges = toTextChanges(sourceFile, fileChanges).map(
-				(pair) => pair.change
-			);
+			const sourceFile = createSourceFileFromText(filePath, content);
+			const textChanges = specifierEditsToTextChanges(
+				sourceFile,
+				fileChanges
+			).map((pair) => pair.change);
 
 			if (textChanges.length > 0) {
-				const unique = dedup(textChanges);
-				const newContent = applyEdits(content, unique);
-				await rt.fs.writeFile(filePath, newContent);
+				const unique = deduplicateChanges(textChanges);
+				const newContent = applyTextChanges(content, unique);
+				return createStructuredEdit(filePath, content, newContent);
 			}
+			return undefined;
 		},
 		{ concurrency: ALIAS_WRITE_CONCURRENCY }
 	);
+	return edits.filter((edit): edit is StructuredEdit => edit !== undefined);
 }
 
 function getFilesToProcess(target: string, project: ProjectConfig): string[] {
@@ -927,6 +1022,38 @@ function calculatePreferredSpecifier(
 		: aliasSpecifier;
 }
 
+function printAliasResultJson(
+	result: AliasResult,
+	projectRoot: string,
+	typecheck?: VerificationResult
+): void {
+	logger.info(
+		JSON.stringify(
+			{
+				...result,
+				edits: serializeStructuredEdits(result.edits ?? [], (file) =>
+					path.relative(projectRoot, file)
+				),
+				changes: result.changes.map((change) => ({
+					...change,
+					file: path.relative(projectRoot, change.file),
+				})),
+				conflicts: result.conflicts.map((conflict) => ({
+					...conflict,
+					file: path.relative(projectRoot, conflict.file),
+				})),
+				missedEquivalents: (result.missedEquivalents ?? []).map((missed) => ({
+					...missed,
+					file: path.relative(projectRoot, missed.file),
+				})),
+				typecheck,
+			},
+			null,
+			2
+		)
+	);
+}
+
 function printResults(
 	result: AliasResult,
 	dryRun: boolean,
@@ -957,6 +1084,13 @@ function printResults(
 			}
 			logger.empty();
 		}
+	}
+
+	if (dryRun && result.edits && result.edits.length > 0) {
+		logger.info(
+			formatUnifiedDiff(result.edits, (file) => path.relative(pathBase, file))
+		);
+		logger.empty();
 	}
 
 	if (result.conflicts.length > 0) {

@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
+	applyStructuredEdits,
 	applyTextChanges,
+	createStructuredEdit,
 	deduplicateChanges,
+	formatUnifiedDiff,
+	serializeStructuredEdits,
+	type StructuredEdit,
 	type TextChange,
 } from "./text-changes.ts";
 
@@ -147,5 +152,124 @@ describe("deduplicateChanges", () => {
 		const result = deduplicateChanges(changes);
 		expect(result).toHaveLength(1);
 		expect(result[0]?.newText).toBe("first");
+	});
+});
+
+describe("structured edit previews", () => {
+	test("creates a line-aligned edit that reproduces the final content", () => {
+		const before = "const first = 1;\nconst second = 2;\n";
+		const after = "const first = 1;\nconst renamed = 2;\n";
+		const edit = createStructuredEdit("src/example.ts", before, after);
+
+		expect(edit as Omit<StructuredEdit, "line"> | undefined).toEqual({
+			file: "src/example.ts",
+			start: 17,
+			end: 35,
+			oldText: "const second = 2;\n",
+			newText: "const renamed = 2;\n",
+		});
+		expect(edit?.line).toBe(2);
+		expect(applyStructuredEdits(before, edit ? [edit] : [])).toBe(after);
+	});
+
+	test("returns no edit when the content is unchanged", () => {
+		expect(createStructuredEdit("src/example.ts", "same", "same")).toBeUndefined();
+	});
+
+	test("rejects a structured edit when its old text is stale", () => {
+		const edit: StructuredEdit = {
+			file: "src/example.ts",
+			start: 0,
+			end: 3,
+			line: 1,
+			oldText: "old",
+			newText: "new",
+		};
+
+		expect(() => applyStructuredEdits("different", [edit])).toThrow(
+			"does not match the original content"
+		);
+	});
+
+	test("formats replacements and missing final newlines as unified hunks", () => {
+		const edit = createStructuredEdit(
+			"src/example.ts",
+			"const value = 1;",
+			"const value = 2;"
+		);
+
+		expect(formatUnifiedDiff(edit ? [edit] : [])).toBe(
+			[
+				"--- a/src/example.ts",
+				"+++ b/src/example.ts",
+				"@@ -1,1 +1,1 @@",
+				"-const value = 1;",
+				"\\ No newline at end of file",
+				"+const value = 2;",
+				"\\ No newline at end of file",
+			].join("\n")
+		);
+	});
+
+	test("formats line insertions and deletions as unified hunks", () => {
+		const insertion = createStructuredEdit(
+			"src/example.ts",
+			"first\n",
+			"first\nsecond\n"
+		);
+		const deletion = createStructuredEdit(
+			"src/example.ts",
+			"first\nsecond\n",
+			"first\n"
+		);
+
+		expect(formatUnifiedDiff(insertion ? [insertion] : [])).toBe(
+			[
+				"--- a/src/example.ts",
+				"+++ b/src/example.ts",
+				"@@ -2,0 +2,1 @@",
+				"+second",
+			].join("\n")
+		);
+		expect(formatUnifiedDiff(deletion ? [deletion] : [])).toBe(
+			[
+				"--- a/src/example.ts",
+				"+++ b/src/example.ts",
+				"@@ -2,1 +2,0 @@",
+				"-second",
+			].join("\n")
+		);
+	});
+
+	test("handles a change at offset zero when the file starts with a newline", () => {
+		const edit = createStructuredEdit("src/example.ts", "\nvalue\n", "value\n");
+
+		expect(edit?.start).toBe(0);
+		expect(edit?.line).toBe(1);
+		expect(applyStructuredEdits("\nvalue\n", edit ? [edit] : [])).toBe(
+			"value\n"
+		);
+	});
+
+	test("serializes only the stable five-field public schema", () => {
+		const edit = createStructuredEdit(
+			"/project/src/example.ts",
+			"const value = 1;\n",
+			"const value = 2;\n"
+		);
+
+		expect(
+			serializeStructuredEdits(edit ? [edit] : [], (file) =>
+				file.replace("/project/", "")
+			)
+		).toEqual([
+			{
+				file: "src/example.ts",
+				start: 0,
+				end: 17,
+				oldText: "const value = 1;\n",
+				newText: "const value = 2;\n",
+			},
+		]);
 	});
 });

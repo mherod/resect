@@ -1,3 +1,4 @@
+import type { StructuredEdit } from "../core/text-changes.ts";
 import type { TransformRewrite, TransformRule } from "./transform.ts";
 
 export interface MoveOperation {
@@ -9,6 +10,8 @@ export interface MoveOperation {
 export interface MoveResult {
 	success: boolean;
 	movedFile: { from: string; to: string };
+	/** Exact text edits planned or applied by the move */
+	edits: StructuredEdit[];
 	updatedReferences: UpdatedReference[];
 	errors: MoveError[];
 	/**

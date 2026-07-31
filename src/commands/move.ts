@@ -44,7 +44,12 @@ import {
 	scanModuleReferences,
 } from "../core/scanner.ts";
 import { createSourceFileFromText } from "../core/source-file.ts";
-import { applyTextChanges } from "../core/text-changes.ts";
+import {
+	applyTextChanges,
+	createStructuredEdit,
+	serializeStructuredEdits,
+	type StructuredEdit,
+} from "../core/text-changes.ts";
 import { loadTransformConfig } from "../core/transform-config.ts";
 import { applyTransformRules } from "../core/transform-visitor.ts";
 import {
@@ -75,12 +80,12 @@ import type {
 } from "../types/move.ts";
 import type { TransformRewrite, TransformRule } from "../types/transform.ts";
 import type { MutatingCommandOptions, ProjectConfig } from "../types.ts";
-import { applyChanges, normalizeImports } from "./alias.ts";
 import { setupCommandContext } from "./command-context.ts";
 
 export interface MoveOptions extends MutatingCommandOptions {
 	source: string;
 	target: string;
+	json?: boolean;
 	verify?: boolean;
 	/**
 	 * Path to a declarative `.resect/transforms.js` config (epic #103). Resolved
@@ -96,6 +101,7 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 		target,
 		dryRun = false,
 		force = false,
+		json = false,
 		verbose = false,
 		verify = true,
 		project: projectArg,
@@ -119,7 +125,7 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 		process.exit(1);
 	}
 	const { project, workspace } = context;
-	if (verbose && workspace) {
+	if (!json && verbose && workspace) {
 		logger.info(
 			`Found workspace: ${workspace.type} with ${workspace.packages.length} packages`
 		);
@@ -163,16 +169,18 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 		}
 	}
 
-	logger.info(`\n${dryRun ? "🔍 Dry run:" : "🚀"} Moving module...`);
-	logger.info(`   From: ${absoluteSource}`);
-	logger.info(`   To:   ${absoluteTarget}`);
-	if (await shouldUseSafeCaseRename(absoluteSource, absoluteTarget)) {
-		logger.info("   Case-only rename: via two-step git mv");
+	if (!json) {
+		logger.info(`\n${dryRun ? "🔍 Dry run:" : "🚀"} Moving module...`);
+		logger.info(`   From: ${absoluteSource}`);
+		logger.info(`   To:   ${absoluteTarget}`);
+		if (await shouldUseSafeCaseRename(absoluteSource, absoluteTarget)) {
+			logger.info("   Case-only rename: via two-step git mv");
+		}
+		if (verify && !dryRun) {
+			logger.info("   Verification: enabled");
+		}
+		logger.empty();
 	}
-	if (verify && !dryRun) {
-		logger.info("   Verification: enabled");
-	}
-	logger.empty();
 
 	const runMove = async () => {
 		const moveResult = await moveModule(
@@ -180,7 +188,7 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 			absoluteTarget,
 			project,
 			dryRun,
-			verbose,
+			json ? false : verbose,
 			workspace ?? undefined,
 			force,
 			transformRules
@@ -199,7 +207,7 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 					absoluteSource,
 					absoluteTarget,
 					workspace,
-					verbose
+					json ? false : verbose
 				);
 			}
 		}
@@ -219,9 +227,13 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 				})
 			: { result: await runMove(), delta: undefined };
 
+	let verificationFailed = false;
 	if (delta && result.success) {
-		printVerificationResults(delta);
+		if (!json) {
+			printVerificationResults(delta);
+		}
 		if (!delta.success) {
+			verificationFailed = true;
 			const transformed = (result.transformRewrites?.length ?? 0) > 0;
 			const rolledBack = transformed
 				? await rollbackTransformMove(project, result)
@@ -237,9 +249,44 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 					? "\n↩️  Transform introduced type errors — the move was rolled back."
 					: "\n⚠️  Transform introduced type errors and automatic rollback failed (non-git tree?). Restore the move manually.";
 			}
-			logger.error(verificationFailureMessage);
+			if (!json) {
+				logger.error(verificationFailureMessage);
+				process.exit(1);
+			}
+		}
+	}
+
+	if (json) {
+		const root = project.rootDir;
+		logger.info(
+			JSON.stringify(
+				{
+					...result,
+					movedFile: {
+						from: path.relative(root, result.movedFile.from),
+						to: path.relative(root, result.movedFile.to),
+					},
+					edits: serializeStructuredEdits(result.edits, (file) =>
+						path.relative(root, file)
+					),
+					updatedReferences: result.updatedReferences.map((reference) => ({
+						...reference,
+						file: path.relative(root, reference.file),
+					})),
+					errors: result.errors.map((error) => ({
+						...error,
+						file: path.relative(root, error.file),
+					})),
+					typecheck: delta,
+				},
+				null,
+				2
+			)
+		);
+		if (!(result.success && !verificationFailed)) {
 			process.exit(1);
 		}
+		return;
 	}
 
 	printCommandResult(result, "move", "Moved", dryRun, verbose, project.rootDir);
@@ -513,6 +560,7 @@ export async function moveModule(
 	transformRules: TransformRule[] = []
 ): Promise<MoveResult> {
 	const errors: MoveError[] = [];
+	const edits: StructuredEdit[] = [];
 	const updatedReferences: UpdatedReference[] = [];
 	const dependencyChanges: DependencyChange[] = [];
 	const transformRewrites: TransformRewrite[] = [];
@@ -535,6 +583,7 @@ export async function moveModule(
 		return {
 			success: false,
 			movedFile: { from: sourcePath, to: targetPath },
+			edits: [],
 			updatedReferences: [],
 			errors: [
 				{
@@ -545,6 +594,11 @@ export async function moveModule(
 			],
 		};
 	}
+	const originalSourceContent = await rt.fs.readFile(sourcePath);
+	const shouldNormalizeMovedImports =
+		transformRules.length > 0 &&
+		applyTransformRules(originalSourceContent, targetPath, transformRules).rewrites
+			.length > 0;
 
 	// Check target doesn't exist. On case-insensitive filesystems, the target
 	// path for a same-directory case-only rename aliases the source path.
@@ -555,6 +609,7 @@ export async function moveModule(
 		return {
 			success: false,
 			movedFile: { from: sourcePath, to: targetPath },
+			edits: [],
 			updatedReferences: [],
 			errors: [
 				{
@@ -609,7 +664,6 @@ export async function moveModule(
 	// test-constructed graphs that bypass buildDependencyGraph.
 	const program = graph.program ?? createProgram(project);
 	const sourceAst = program.getSourceFile(sourcePath);
-	let fileMoved = false;
 
 	// Scan exports from the source file for cross-package move handling
 	const movedFileExports = sourceAst ? scanExports(sourceAst) : [];
@@ -698,6 +752,7 @@ export async function moveModule(
 				return {
 					success: false,
 					movedFile: { from: sourcePath, to: targetPath },
+					edits: [],
 					updatedReferences: [],
 					errors: conflicts.map((c) => ({
 						...c,
@@ -753,6 +808,7 @@ export async function moveModule(
 					return {
 						success: false,
 						movedFile: { from: sourcePath, to: targetPath },
+						edits: [],
 						updatedReferences: [],
 						errors: restrictedViolations.map((v) => ({
 							file: v.packageJsonPath,
@@ -766,6 +822,7 @@ export async function moveModule(
 		}
 	}
 
+	let movedContent = originalSourceContent;
 	if (sourceAst) {
 		const internalRefs = scanModuleReferences(sourceAst, project);
 		if (internalRefs.length > 0) {
@@ -776,62 +833,34 @@ export async function moveModule(
 				sourcePath,
 				targetPath,
 				project,
-				program
+				program,
+				shouldNormalizeMovedImports
 			);
 
 			if (updates.length > 0) {
 				updatedReferences.push(...updates);
-				if (!dryRun) {
-					// We'll write this as part of the move
-					await moveFileWithContent(
-						rt,
-						sourcePath,
-						targetPath,
-						finalizeMovedContent(newContent)
-					);
-					fileMoved = true;
-				}
-			} else if (!dryRun) {
-				// No internal changes, just copy
-				const content = await rt.fs.readFile(sourcePath);
-				await moveFileWithContent(
-					rt,
-					sourcePath,
-					targetPath,
-					finalizeMovedContent(content)
-				);
-				fileMoved = true;
+				movedContent = newContent;
 			}
 		}
 	}
 
-	// If file wasn't moved yet (no internal refs or couldn't parse), copy as-is
-	if (!(fileMoved || dryRun)) {
-		const content = await rt.fs.readFile(sourcePath);
+	const finalizedMovedContent = finalizeMovedContent(movedContent);
+	const movedContentEdit = createStructuredEdit(
+		targetPath,
+		originalSourceContent,
+		finalizedMovedContent
+	);
+	if (movedContentEdit) {
+		edits.push(movedContentEdit);
+	}
+
+	if (!dryRun) {
 		await moveFileWithContent(
 			rt,
 			sourcePath,
 			targetPath,
-			finalizeMovedContent(content)
+			finalizedMovedContent
 		);
-	}
-
-	// Dry-run writes nothing, but still surface the rewrites that WOULD apply to
-	// the moved file so `--dry-run` previews them (#103 B acceptance criterion).
-	if (dryRun && transformRules.length > 0) {
-		finalizeMovedContent(await rt.fs.readFile(sourcePath));
-	}
-
-	// #103 C: after the transform rewrite lands, normalize the moved file's own
-	// import specifiers to the project's relative convention (the form the move
-	// already emits for relocated imports). Transform-gated, so a non-transform
-	// move is byte-for-byte unchanged. The caller's tsc verify then gates the
-	// whole move and rolls back on new errors.
-	if (!dryRun && transformRewrites.length > 0) {
-		const normalized = normalizeImports(targetPath, "relative", project);
-		if (normalized.changes.length > 0) {
-			await applyChanges(normalized.changes);
-		}
 	}
 
 	// Update all referencing files
@@ -863,6 +892,14 @@ export async function moveModule(
 			);
 
 			if (updates.length > 0) {
+				const edit = createStructuredEdit(
+					filePath,
+					fileAst.text,
+					newContent
+				);
+				if (edit) {
+					edits.push(edit);
+				}
 				updatedReferences.push(...updates);
 				if (!dryRun) {
 					await rt.fs.writeFile(filePath, newContent);
@@ -904,6 +941,14 @@ export async function moveModule(
 			);
 
 			if (updates.length > 0) {
+				const edit = createStructuredEdit(
+					barrelPath,
+					barrelAst.text,
+					newContent
+				);
+				if (edit) {
+					edits.push(edit);
+				}
 				updatedReferences.push(...updates);
 				if (!dryRun) {
 					await rt.fs.writeFile(barrelPath, newContent);
@@ -932,6 +977,14 @@ export async function moveModule(
 					);
 
 					if (newContent !== barrelContent) {
+						const edit = createStructuredEdit(
+							destBarrelPath,
+							barrelContent,
+							newContent
+						);
+						if (edit) {
+							edits.push(edit);
+						}
 						updatedReferences.push(update);
 						if (!dryRun) {
 							await rt.fs.writeFile(destBarrelPath, newContent);
@@ -958,6 +1011,25 @@ export async function moveModule(
 	// dep was involved, so any write here is already cleared.
 	if (dependencyPlan) {
 		try {
+			if (dependencyPlan.additions.length > 0) {
+				const packageJsonContent = await rt.fs.readFile(
+					dependencyPlan.targetPkg.packageJsonPath
+				);
+				const updatedPackageJson = serializePackageJson(
+					applyDependencyAdditions(
+						dependencyPlan.destJson,
+						dependencyPlan.additions
+					)
+				);
+				const edit = createStructuredEdit(
+					dependencyPlan.targetPkg.packageJsonPath,
+					packageJsonContent,
+					updatedPackageJson
+				);
+				if (edit) {
+					edits.push(edit);
+				}
+			}
 			const synced = await applyCrossPackageDependencyPlan(
 				rt,
 				dependencyPlan,
@@ -983,6 +1055,7 @@ export async function moveModule(
 	return {
 		success: errors.filter((e) => !e.recoverable).length === 0,
 		movedFile: { from: sourcePath, to: targetPath },
+		edits,
 		updatedReferences,
 		errors,
 		dependencyChanges,
@@ -1038,20 +1111,27 @@ function updateInternalImports(
 	_oldPath: string,
 	newPath: string,
 	project: ProjectConfig,
-	program: ts.Program
+	program: ts.Program,
+	preferRelative = false
 ): { newContent: string; updates: UpdatedReference[] } {
 	const changes: { start: number; end: number; newText: string }[] = [];
 	const updates: UpdatedReference[] = [];
 
 	for (const ref of refs) {
 		// Calculate what the import should be from the new location
-		let newSpecifier = calculateNewSpecifier(
-			ref.specifier,
-			newPath, // Calculate from new location
-			ref.resolvedPath,
-			ref.resolvedPath, // Target hasn't moved
-			project
-		);
+		let newSpecifier = preferRelative
+			? calculateRelativeSpecifier(
+					newPath,
+					ref.resolvedPath,
+					ref.specifier
+				)
+			: calculateNewSpecifier(
+					ref.specifier,
+					newPath, // Calculate from new location
+					ref.resolvedPath,
+					ref.resolvedPath, // Target hasn't moved
+					project
+				);
 
 		// #121: an alias/bare import that the move turned into a relative
 		// self-import now points at the destination package barrel. Prefer the

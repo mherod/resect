@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { loadProject } from "../core/project.ts";
+import { captureOutput, runCli } from "./__test-helpers.ts";
 import {
 	aliasCommand,
 	applyChanges,
@@ -213,21 +214,74 @@ describe("renameImportSpecifiers", () => {
 		]);
 	});
 
-	test("dry-run does not write files", async () => {
-		const { srcDir } = await writeAliasProject({
+	test("dry-run edits reproduce the real alias rewrite without writing", async () => {
+		const { projectPath, srcDir } = await writeAliasProject({
 			"src/utils/foo.ts": "export const foo = 1;\n",
 			"src/one.ts": 'import { foo } from "@utils/Foo";\n',
 		});
+		const onePath = path.join(srcDir, "one.ts");
+		const before = await Bun.file(onePath).text();
 
-		await aliasCommand({
-			target: srcDir,
-			renameSpecifiers: ["@utils/Foo=@utils/foo"],
-			dryRun: true,
-			verify: false,
-		});
+		const human = await captureOutput(async () =>
+			aliasCommand({
+				target: srcDir,
+				renameSpecifiers: ["@utils/Foo=@utils/foo"],
+				dryRun: true,
+				verify: false,
+			})
+		);
+		expect(human.stdout).toContain("--- a/src/one.ts");
+		expect(human.stdout).toContain('-import { foo } from "@utils/Foo";');
+		expect(human.stdout).toContain('+import { foo } from "@utils/foo";');
 
-		const result = await Bun.file(path.join(srcDir, "one.ts")).text();
-		expect(result).toContain('from "@utils/Foo"');
+		const json = await runCli([
+			"alias",
+			srcDir,
+			"--rename-specifier=@utils/Foo=@utils/foo",
+			"--dry-run",
+			"--json",
+			"-p",
+			projectPath,
+		]);
+		const payload = JSON.parse(json.stdout) as {
+			edits: Array<{
+				file: string;
+				start: number;
+				end: number;
+				oldText: string;
+				newText: string;
+			}>;
+		};
+		expect(json.exitCode).toBe(0);
+		expect(payload.edits).toEqual([
+			{
+				file: "src/one.ts",
+				start: 0,
+				end: 34,
+				oldText: 'import { foo } from "@utils/Foo";\n',
+				newText: 'import { foo } from "@utils/foo";\n',
+			},
+		]);
+
+		expect(await Bun.file(onePath).text()).toBe(before);
+
+		const edit = payload.edits[0];
+		if (!edit) {
+			throw new Error("Expected an alias edit");
+		}
+		const previewed =
+			before.slice(0, edit.start) + edit.newText + before.slice(edit.end);
+		const applied = await runCli([
+			"alias",
+			srcDir,
+			"--rename-specifier=@utils/Foo=@utils/foo",
+			"--no-verify",
+			"--force",
+			"-p",
+			projectPath,
+		]);
+		expect(applied.exitCode).toBe(0);
+		expect(await Bun.file(onePath).text()).toBe(previewed);
 	});
 
 	test("reports conflicts when the target specifier already exists in a file", async () => {

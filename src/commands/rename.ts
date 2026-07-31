@@ -14,7 +14,10 @@ import { getNameNode, hasExportModifier } from "../core/scanner.ts";
 import { parentOf } from "../core/source-file.ts";
 import {
 	applyTextChanges,
+	createStructuredEdit,
 	deduplicateChanges,
+	serializeStructuredEdits,
+	type StructuredEdit,
 	type TextChange,
 } from "../core/text-changes.ts";
 import {
@@ -31,12 +34,14 @@ export interface RenameOptions extends MutatingCommandOptions {
 	file: string;
 	oldName: string;
 	newName: string;
+	json?: boolean;
 	verify?: boolean;
 }
 
 export interface RenameResult {
 	success: boolean;
 	renamedSymbol: { file: string; oldName: string; newName: string };
+	edits: StructuredEdit[];
 	updatedReferences: UpdatedReference[];
 	errors: { file: string; message: string }[];
 }
@@ -48,6 +53,7 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 		newName,
 		dryRun = false,
 		force = false,
+		json = false,
 		verbose = false,
 		project: projectArg,
 		workspace = false,
@@ -70,15 +76,17 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 		process.exit(1);
 	}
 	const { extraProjects, project } = context;
-	if (verbose && extraProjects.length > 0) {
+	if (!json && verbose && extraProjects.length > 0) {
 		logger.info(
 			`Workspace: scanning ${extraProjects.length} additional package(s)`
 		);
 	}
 
-	logger.info(`\n${dryRun ? "🔍 Dry run:" : "🚀"} Renaming symbol...`);
-	logger.info(`   File: ${absolutePath}`);
-	logger.info(`   ${oldName} → ${newName}\n`);
+	if (!json) {
+		logger.info(`\n${dryRun ? "🔍 Dry run:" : "🚀"} Renaming symbol...`);
+		logger.info(`   File: ${absolutePath}`);
+		logger.info(`   ${oldName} → ${newName}\n`);
+	}
 
 	const runRename = async () =>
 		renameSymbol(
@@ -87,7 +95,7 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 			newName,
 			project,
 			dryRun,
-			verbose,
+			json ? false : verbose,
 			extraProjects,
 			force
 		);
@@ -96,23 +104,49 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 			? await runWithTypecheckGuard(project, runRename)
 			: { result: await runRename(), delta: undefined };
 
-	printCommandResult(
-		result,
-		"rename",
-		"Renamed",
-		dryRun,
-		verbose,
-		project.rootDir
-	);
-
-	if (delta) {
-		printVerificationResults(delta);
-		if (!delta.success) {
-			process.exit(1);
-		}
+	if (json) {
+		const root = project.rootDir;
+		logger.info(
+			JSON.stringify(
+				{
+					...result,
+					renamedSymbol: {
+						...result.renamedSymbol,
+						file: path.relative(root, result.renamedSymbol.file),
+					},
+					edits: serializeStructuredEdits(result.edits, (editFile) =>
+						path.relative(root, editFile)
+					),
+					updatedReferences: result.updatedReferences.map((reference) => ({
+						...reference,
+						file: path.relative(root, reference.file),
+					})),
+					errors: result.errors.map((error) => ({
+						...error,
+						file: path.relative(root, error.file),
+					})),
+					typecheck: delta,
+				},
+				null,
+				2
+			)
+		);
+	} else {
+		printCommandResult(
+			result,
+			"rename",
+			"Renamed",
+			dryRun,
+			verbose,
+			project.rootDir
+		);
 	}
 
-	if (!result.success) {
+	if (delta && !json) {
+		printVerificationResults(delta);
+	}
+
+	if (!result.success || (delta !== undefined && !delta.success)) {
 		process.exit(1);
 	}
 }
@@ -128,6 +162,7 @@ export async function renameSymbol(
 	force = false
 ): Promise<RenameResult> {
 	const errors: { file: string; message: string }[] = [];
+	const edits: StructuredEdit[] = [];
 	const updatedReferences: UpdatedReference[] = [];
 	const rt = getRuntime();
 
@@ -136,6 +171,7 @@ export async function renameSymbol(
 		return {
 			success: false,
 			renamedSymbol: { file: filePath, oldName, newName },
+			edits: [],
 			updatedReferences: [],
 			errors: [{ file: filePath, message: "File does not exist" }],
 		};
@@ -176,6 +212,7 @@ export async function renameSymbol(
 		return {
 			success: false,
 			renamedSymbol: { file: filePath, oldName, newName },
+			edits: [],
 			updatedReferences: [],
 			errors: [{ file: filePath, message: "Could not parse source file" }],
 		};
@@ -187,6 +224,7 @@ export async function renameSymbol(
 		return {
 			success: false,
 			renamedSymbol: { file: filePath, oldName, newName },
+			edits: [],
 			updatedReferences: [],
 			errors: [{ file: filePath, message: `Export "${oldName}" not found` }],
 		};
@@ -257,6 +295,7 @@ export async function renameSymbol(
 			return {
 				success: false,
 				renamedSymbol: { file: filePath, oldName, newName },
+				edits: [],
 				updatedReferences: [],
 				errors: conflicts.map((c) => ({
 					...c,
@@ -273,6 +312,14 @@ export async function renameSymbol(
 		renamedSymbol: renamedSymbol ?? undefined,
 	});
 	if (sourceResult.changes.length > 0) {
+		const edit = createStructuredEdit(
+			filePath,
+			sourceAst.text,
+			sourceResult.newContent
+		);
+		if (edit) {
+			edits.push(edit);
+		}
 		updatedReferences.push(
 			...sourceResult.updates.map((u) => ({ ...u, file: filePath }))
 		);
@@ -308,6 +355,14 @@ export async function renameSymbol(
 				newName
 			);
 			if (result.updates.length > 0) {
+				const edit = createStructuredEdit(
+					importingFile,
+					fileAst.text,
+					result.newContent
+				);
+				if (edit) {
+					edits.push(edit);
+				}
 				updatedReferences.push(
 					...result.updates.map((u) => ({ ...u, file: importingFile }))
 				);
@@ -326,6 +381,7 @@ export async function renameSymbol(
 	return {
 		success: errors.length === 0,
 		renamedSymbol: { file: filePath, oldName, newName },
+		edits,
 		updatedReferences,
 		errors,
 	};
