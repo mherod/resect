@@ -1,7 +1,6 @@
 import path from "node:path";
 import { logger, printCommandResult } from "../cli-logger.ts";
 import ts from "../core/ast-utils.ts";
-import { mapConcurrent } from "../core/concurrency.ts";
 import { checkAllConflicts } from "../core/conflict-detection.ts";
 import {
 	compareDeclarations,
@@ -9,11 +8,7 @@ import {
 } from "../core/duplicate-detection.ts";
 import { ensureCleanWorktree } from "../core/git.ts";
 import { buildDependencyGraph, findAllReferences } from "../core/graph.ts";
-import {
-	createProgram,
-	loadProject,
-	resolveTsConfig,
-} from "../core/project.ts";
+import { createProgram } from "../core/project.ts";
 import { normalizePath } from "../core/resolver.ts";
 import { getNameNode, hasExportModifier } from "../core/scanner.ts";
 import { parentOf } from "../core/source-file.ts";
@@ -26,11 +21,11 @@ import {
 	printVerificationResults,
 	runWithTypecheckGuard,
 } from "../core/verify.ts";
-import { discoverWorkspace } from "../core/workspace.ts";
 import { getRuntime } from "../runtime/index.ts";
 import type { ModuleReference } from "../types/graph.ts";
 import type { UpdatedReference } from "../types/move.ts";
 import type { MutatingCommandOptions, ProjectConfig } from "../types.ts";
+import { setupCommandContext } from "./command-context.ts";
 
 export interface RenameOptions extends MutatingCommandOptions {
 	file: string;
@@ -64,41 +59,21 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 	// Guard: refuse to mutate a dirty worktree unless --force
 	await ensureCleanWorktree(path.dirname(absolutePath), force, dryRun);
 
-	const tsconfigPath = resolveTsConfig(projectArg, path.dirname(absolutePath));
-	if (!tsconfigPath) {
+	const context = await setupCommandContext({
+		project: projectArg,
+		searchPath: path.dirname(absolutePath),
+		targetFile: absolutePath,
+		workspace: workspace ? "projects" : "none",
+	});
+	if (!context) {
 		logger.error("Could not find tsconfig.json");
 		process.exit(1);
 	}
-
-	const project = loadProject(tsconfigPath, absolutePath);
-
-	// When workspace mode is enabled, collect cross-package projects
-	const extraProjects: ProjectConfig[] = [];
-	if (workspace) {
-		const wsDir = projectArg
-			? path.resolve(projectArg)
-			: path.dirname(tsconfigPath);
-		const wsInfo = await discoverWorkspace(wsDir);
-		if (wsInfo && wsInfo.packages.length > 0) {
-			const eligiblePkgs = wsInfo.packages.filter(
-				(pkg) => pkg.tsconfigPath && pkg.tsconfigPath !== tsconfigPath
-			);
-			const loaded = await mapConcurrent(
-				eligiblePkgs,
-				async (pkg) => loadProject(pkg.tsconfigPath as string),
-				{ onError: () => null }
-			);
-			for (const proj of loaded) {
-				if (proj) {
-					extraProjects.push(proj);
-				}
-			}
-			if (verbose && extraProjects.length > 0) {
-				logger.info(
-					`Workspace: scanning ${extraProjects.length} additional package(s)`
-				);
-			}
-		}
+	const { extraProjects, project } = context;
+	if (verbose && extraProjects.length > 0) {
+		logger.info(
+			`Workspace: scanning ${extraProjects.length} additional package(s)`
+		);
 	}
 
 	logger.info(`\n${dryRun ? "🔍 Dry run:" : "🚀"} Renaming symbol...`);

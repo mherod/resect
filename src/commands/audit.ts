@@ -1,16 +1,13 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
 import {
-	buildDependencyGraph,
 	type DependencyGraph,
-	mergeDependencyGraphs,
 	withGraphSourceFile,
 } from "../core/graph.ts";
-import { loadProject, resolveTsConfig } from "../core/project.ts";
 import { normalizePath } from "../core/resolver.ts";
 import { scanExports } from "../core/scanner.ts";
-import { discoverWorkspace } from "../core/workspace.ts";
 import type { ReadOnlyCommandOptions } from "../types/commands.ts";
+import { setupCommandContext } from "./command-context.ts";
 
 export interface AuditOptions extends ReadOnlyCommandOptions {
 	directory: string;
@@ -227,40 +224,21 @@ export async function auditCommand(options: AuditOptions): Promise<void> {
 
 	const absoluteDir = path.resolve(directory);
 
-	const tsconfigPath = resolveTsConfig(projectArg, absoluteDir);
-	if (!tsconfigPath) {
+	const context = await setupCommandContext({
+		project: projectArg,
+		searchPath: absoluteDir,
+		graph: "project",
+		workspace: workspace ? "projects" : "none",
+		workspaceStart: projectArg ? path.resolve(projectArg) : absoluteDir,
+		mergeWorkspaceGraphs: workspace,
+	});
+	if (!context) {
 		logger.error("Could not find tsconfig.json");
 		process.exit(1);
 	}
-
-	const project = loadProject(tsconfigPath);
-	const cachedGraph = await buildDependencyGraph(project);
-
-	// Create a shallow copy so workspace merges never mutate the cached graph
-	let graph = cachedGraph;
-
-	// When workspace mode is enabled, merge graphs from all packages
-	if (workspace) {
-		const wsDir = projectArg ? path.resolve(projectArg) : absoluteDir;
-		const wsInfo = await discoverWorkspace(wsDir);
-		if (wsInfo && wsInfo.packages.length > 0) {
-			const { mapConcurrent } = await import("../core/concurrency.ts");
-			const eligiblePkgs = wsInfo.packages.filter(
-				(pkg) => pkg.tsconfigPath && pkg.tsconfigPath !== tsconfigPath
-			);
-			const pkgGraphs = await mapConcurrent(
-				eligiblePkgs,
-				async (pkg) => {
-					const pkgProject = loadProject(pkg.tsconfigPath as string);
-					return buildDependencyGraph(pkgProject);
-				},
-				{ onError: () => null }
-			);
-			const availablePackageGraphs = pkgGraphs.filter(
-				(pkgGraph): pkgGraph is DependencyGraph => pkgGraph !== null
-			);
-			graph = mergeDependencyGraphs([cachedGraph, ...availablePackageGraphs]);
-		}
+	const { graph } = context;
+	if (!graph) {
+		throw new Error("Dependency graph was not built");
 	}
 
 	const report = buildAuditReport(graph, {

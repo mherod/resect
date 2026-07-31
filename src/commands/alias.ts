@@ -4,11 +4,7 @@ import ts from "../core/ast-utils.ts";
 import { mapConcurrent } from "../core/concurrency.ts";
 import { diffDiagnostics } from "../core/diagnostics.ts";
 import { ensureCleanWorktree, rollbackFiles } from "../core/git.ts";
-import {
-	createProgram,
-	loadProject,
-	resolveTsConfig,
-} from "../core/project.ts";
+import { createProgram, loadProject } from "../core/project.ts";
 import {
 	calculateRelativeSpecifier,
 	findAliasForPath,
@@ -32,6 +28,7 @@ import { getRuntime } from "../runtime/index.ts";
 import type { ModuleReference } from "../types/graph.ts";
 import type { UpdatedReference } from "../types/move.ts";
 import type { MutatingCommandOptions, ProjectConfig } from "../types.ts";
+import { setupCommandContext } from "./command-context.ts";
 
 export interface AliasOptions extends MutatingCommandOptions {
 	target: string;
@@ -193,14 +190,15 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 		return;
 	}
 
-	// Find and load project config
-	const tsconfigPath = resolveTsConfig(projectArg, absoluteTarget);
-	if (!tsconfigPath) {
+	const context = await setupCommandContext({
+		project: projectArg,
+		searchPath: absoluteTarget,
+	});
+	if (!context) {
 		logger.error("Could not find tsconfig.json");
 		process.exit(1);
 	}
-
-	const project = loadProject(tsconfigPath);
+	const { project } = context;
 
 	logger.info(`\n${dryRun ? "🔍 Dry run:" : "🔧"} Normalizing imports...`);
 	logger.info(`   Target: ${absoluteTarget}`);
@@ -255,16 +253,15 @@ async function aliasRenameSpecifierCommand(options: {
 	verbose: boolean;
 	verify: boolean;
 }): Promise<void> {
-	const tsconfigPath = resolveTsConfig(
-		options.projectArg,
-		options.absoluteTarget
-	);
-	if (!tsconfigPath) {
+	const context = await setupCommandContext({
+		project: options.projectArg,
+		searchPath: options.absoluteTarget,
+	});
+	if (!context) {
 		logger.error("Could not find tsconfig.json");
 		process.exit(1);
 	}
-
-	const project = loadProject(tsconfigPath);
+	const { project } = context;
 	logger.info(
 		`\n${options.dryRun ? "🔍 Dry run:" : "🔧"} Renaming import specifiers...`
 	);

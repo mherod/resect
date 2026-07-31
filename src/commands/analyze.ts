@@ -7,11 +7,7 @@ import {
 	findBarrelReExports,
 	mergeDependencyGraphs,
 } from "../core/graph.ts";
-import {
-	createProgram,
-	loadProject,
-	resolveTsConfig,
-} from "../core/project.ts";
+import { createProgram } from "../core/project.ts";
 import {
 	scanBarrelExports,
 	scanExports,
@@ -20,12 +16,10 @@ import {
 } from "../core/scanner.ts";
 import { parseSourceFile } from "../core/source-file.ts";
 import { collectUnresolvableDiagnostics } from "../core/verify.ts";
-import {
-	discoverWorkspace,
-	filterToWorkspaceBoundary,
-} from "../core/workspace.ts";
+import { filterToWorkspaceBoundary } from "../core/workspace.ts";
 import type { AnalysisResult } from "../types/analysis.ts";
 import type { ProjectConfig, ReadOnlyCommandOptions } from "../types.ts";
+import { setupCommandContext } from "./command-context.ts";
 
 export interface AnalyzeOptions extends ReadOnlyCommandOptions {
 	file: string;
@@ -43,49 +37,48 @@ export async function analyzeCommand(options: AnalyzeOptions): Promise<void> {
 
 	const absolutePath = path.resolve(file);
 
-	// Find and load project config
-	const tsconfigPath = resolveTsConfig(projectArg, path.dirname(absolutePath));
-	if (!tsconfigPath) {
+	const context = await setupCommandContext({
+		project: projectArg,
+		searchPath: path.dirname(absolutePath),
+		targetFile: absolutePath,
+		workspace: workspace ? "projects" : "none",
+	});
+	if (!context) {
 		logger.error("Could not find tsconfig.json");
 		process.exit(1);
 	}
 
-	const project = loadProject(tsconfigPath, absolutePath);
+	const { extraProjects, project, workspace: workspaceInfo } = context;
 	const result = await analyze(absolutePath, project);
 
 	// When workspace mode is enabled, find cross-package references
-	if (workspace) {
-		const wsDir = projectArg
-			? path.resolve(projectArg)
-			: path.dirname(tsconfigPath);
-		const wsInfo = await discoverWorkspace(wsDir);
-		if (wsInfo && wsInfo.packages.length > 0) {
-			// Guard: reject if file is outside workspace root
-			if (filterToWorkspaceBoundary([absolutePath], wsInfo.root).length === 0) {
-				logger.error(`File is outside workspace root: ${wsInfo.root}`);
-				process.exit(1);
-			}
-			const { mapConcurrent } = await import("../core/concurrency.ts");
-			const eligiblePkgs = wsInfo.packages.filter(
-				(pkg) => pkg.tsconfigPath && pkg.tsconfigPath !== tsconfigPath
-			);
-			const pkgResults = await mapConcurrent(
-				eligiblePkgs,
-				async (pkg) => {
-					const pkgProject = loadProject(pkg.tsconfigPath as string);
-					const pkgGraph = await buildDependencyGraph(pkgProject);
-					const refs = findAllReferences(absolutePath, pkgGraph);
-					return refs.filter(
-						(r) =>
-							filterToWorkspaceBoundary([r.sourceFile], wsInfo.root).length > 0
-					);
-				},
-				{ onError: () => [] }
-			);
-			const crossRefs = pkgResults.flat();
-			if (crossRefs.length > 0) {
-				result.referencedBy.push(...crossRefs);
-			}
+	if (workspace && workspaceInfo && workspaceInfo.packages.length > 0) {
+		// Guard: reject if file is outside workspace root
+		if (
+			filterToWorkspaceBoundary([absolutePath], workspaceInfo.root).length === 0
+		) {
+			logger.error(`File is outside workspace root: ${workspaceInfo.root}`);
+			process.exit(1);
+		}
+		const { mapConcurrent } = await import("../core/concurrency.ts");
+		const pkgResults = await mapConcurrent(
+			extraProjects,
+			async (pkgProject) => {
+				const pkgGraph = await buildDependencyGraph(pkgProject);
+				const refs = findAllReferences(absolutePath, pkgGraph);
+				return refs.filter(
+					(r) =>
+						filterToWorkspaceBoundary(
+							[r.sourceFile],
+							workspaceInfo.root
+						).length > 0
+				);
+			},
+			{ onError: () => [] }
+		);
+		const crossRefs = pkgResults.flat();
+		if (crossRefs.length > 0) {
+			result.referencedBy.push(...crossRefs);
 		}
 	}
 

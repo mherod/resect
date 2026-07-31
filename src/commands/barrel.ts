@@ -1,15 +1,13 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
 import {
-	buildProjectGraphs,
 	type DependencyGraph,
-	mergeDependencyGraphs,
 	withGraphSourceFile,
 } from "../core/graph.ts";
-import { loadProject, resolveTsConfig } from "../core/project.ts";
+import { loadProject } from "../core/project.ts";
 import { findSubpathExportForFile, normalizePath } from "../core/resolver.ts";
 import { scanBarrelExports } from "../core/scanner.ts";
-import { discoverWorkspace, type WorkspaceInfo } from "../core/workspace.ts";
+import type { WorkspaceInfo } from "../core/workspace.ts";
 import type {
 	BarrelInfo,
 	BarrelReport,
@@ -17,6 +15,7 @@ import type {
 	SubpathShadowing,
 } from "../types/barrel.ts";
 import type { ReadOnlyCommandOptions } from "../types/commands.ts";
+import { setupCommandContext } from "./command-context.ts";
 
 export interface BarrelOptions extends ReadOnlyCommandOptions {
 	directory: string;
@@ -164,35 +163,22 @@ export async function analyzeBarrels(
 	const { directory, project: projectArg, workspace = false } = options;
 
 	const absoluteDir = path.resolve(directory);
-	const tsconfigPath = resolveTsConfig(projectArg, absoluteDir);
-	if (!tsconfigPath) {
+	const context = await setupCommandContext({
+		project: projectArg,
+		searchPath: absoluteDir,
+		graph: "project-configs",
+		workspace: workspace ? "projects" : "discover",
+		workspaceStart: projectArg ? path.resolve(projectArg) : absoluteDir,
+		mergeWorkspaceGraphs: workspace,
+		workspaceProjectErrors: "throw",
+	});
+	if (!context) {
 		throw new Error(`Could not find tsconfig.json for ${absoluteDir}`);
 	}
-
-	// Build per-config graphs (covers sibling tsconfigs) and merge for
-	// cross-config consumer counts, mirroring how `unused` scopes usage.
-	const pairs = await buildProjectGraphs(tsconfigPath);
-
-	// In workspace mode, fold in every other package's graph so barrels across
-	// the monorepo are seen too.
-	const wsDir = projectArg ? path.resolve(projectArg) : absoluteDir;
-	const workspaceInfo = await discoverWorkspace(wsDir);
-	if (workspace && workspaceInfo) {
-		const seenConfigs = new Set(pairs.map((p) => p.tsconfigPath));
-		for (const pkg of workspaceInfo.packages) {
-			if (!pkg.tsconfigPath || seenConfigs.has(pkg.tsconfigPath)) {
-				continue;
-			}
-			seenConfigs.add(pkg.tsconfigPath);
-			const { buildDependencyGraph } = await import("../core/graph.ts");
-			const pkgGraph = await buildDependencyGraph(
-				loadProject(pkg.tsconfigPath)
-			);
-			pairs.push({ tsconfigPath: pkg.tsconfigPath, graph: pkgGraph });
-		}
+	const { graph: merged, graphs: pairs, workspace: workspaceInfo } = context;
+	if (!merged) {
+		throw new Error("Dependency graph was not built");
 	}
-
-	const merged = mergeDependencyGraphs(pairs.map((p) => p.graph));
 	const scans = collectBarrelScans(pairs);
 
 	const report = buildBarrelReport(scans, {
@@ -200,7 +186,7 @@ export async function analyzeBarrels(
 		skippedFiles: merged.skippedFiles,
 		consumersOf: (file) =>
 			(merged.importedBy.get(normalizePath(file)) ?? []).length,
-		subpathExportOf: (file) => subpathExportOf(file, workspaceInfo),
+		subpathExportOf: (file) => subpathExportOf(file, workspaceInfo ?? null),
 	});
 
 	return { report, baseDir: absoluteDir };

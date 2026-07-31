@@ -21,7 +21,6 @@ import {
 	isWithinPath,
 	toRelativePath,
 } from "../core/path-utils.ts";
-import { loadProject, resolveTsConfig } from "../core/project.ts";
 import {
 	collectFunctionsFromFiles,
 	findSimilarGroups,
@@ -51,6 +50,7 @@ import type {
 } from "../types/tidy.ts";
 import type { ProjectConfig } from "../types.ts";
 import { buildAuditReport, type FileMetrics } from "./audit.ts";
+import { setupCommandContext } from "./command-context.ts";
 import {
 	findUnusedExportsFromGraphs,
 	type ProjectGraphResult,
@@ -343,10 +343,15 @@ export async function buildTidyReport(
 	options: TidyOptions
 ): Promise<TidyReport> {
 	const reportDirectory = path.resolve(options.directory);
-	const tsconfigPath = resolveTsConfig(options.project, reportDirectory);
-	if (!tsconfigPath) {
+	const context = await setupCommandContext({
+		project: options.project,
+		searchPath: reportDirectory,
+		targetFile: reportDirectory,
+	});
+	if (!context) {
 		throw new Error(`Could not find tsconfig.json for ${reportDirectory}`);
 	}
+	const { tsconfigPath } = context;
 
 	const { graphs, scanDirectory } = await buildGraphSet({
 		tsconfigPath,
@@ -423,14 +428,20 @@ export function parseTidyFixCategories(
 	return Array.from(new Set(requested)) as TidyFixCategory[];
 }
 
-function resolveTidyProjectContext(options: TidyOptions): TidyProjectContext {
+async function resolveTidyProjectContext(
+	options: TidyOptions
+): Promise<TidyProjectContext> {
 	const reportDirectory = path.resolve(options.directory);
-	const tsconfigPath = resolveTsConfig(options.project, reportDirectory);
-	if (!tsconfigPath) {
+	const context = await setupCommandContext({
+		project: options.project,
+		searchPath: reportDirectory,
+		targetFile: reportDirectory,
+	});
+	if (!context) {
 		throw new Error(`Could not find tsconfig.json for ${reportDirectory}`);
 	}
 	return {
-		project: loadProject(tsconfigPath, reportDirectory),
+		project: context.project,
 		reportDirectory,
 	};
 }
@@ -1063,8 +1074,9 @@ function applyReportMutation(
 export async function applyTidyFixes(
 	report: TidyReport,
 	options: TidyOptions,
-	context = resolveTidyProjectContext(options)
+	providedContext?: TidyProjectContext
 ): Promise<TidyApplyResult> {
+	const context = providedContext ?? (await resolveTidyProjectContext(options));
 	const maxChanges = options.maxChanges ?? DEFAULT_MAX_CHANGES;
 	const dirty = await isWorktreeDirty(context.project.rootDir);
 	await ensureCleanWorktree(context.project.rootDir, options.force);

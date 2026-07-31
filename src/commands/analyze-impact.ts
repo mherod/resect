@@ -1,18 +1,8 @@
 import path from "node:path";
 import ts from "typescript";
 import { logger } from "../cli-logger.ts";
-import {
-	buildDependencyGraph,
-	buildProjectGraphs,
-	type DependencyGraph,
-	findAllReferences,
-	mergeDependencyGraphs,
-} from "../core/graph.ts";
-import {
-	createProgram,
-	loadProject,
-	resolveTsConfig,
-} from "../core/project.ts";
+import { findAllReferences } from "../core/graph.ts";
+import { createProgram } from "../core/project.ts";
 import {
 	findPackageForPath,
 	normalizePath,
@@ -20,10 +10,10 @@ import {
 } from "../core/resolver.ts";
 import { parseSourceFile } from "../core/source-file.ts";
 import type { WorkspaceInfo } from "../core/workspace.ts";
-import { discoverWorkspace } from "../core/workspace.ts";
 import type { BreakingRisk, ImpactReport } from "../types/impact.ts";
 import type { ProjectConfig, ReadOnlyCommandOptions } from "../types.ts";
 import { computeMetrics } from "./audit.ts";
+import { setupCommandContext } from "./command-context.ts";
 
 export interface AnalyzeImpactOptions extends ReadOnlyCommandOptions {
 	/** File proposed to move/rename. */
@@ -53,19 +43,21 @@ export async function analyzeImpact(
 	const source = path.resolve(options.source);
 	const target = path.resolve(options.target);
 
-	const tsconfigPath = resolveTsConfig(options.project, path.dirname(source));
-	if (!tsconfigPath) {
+	const context = await setupCommandContext({
+		project: options.project,
+		searchPath: path.dirname(source),
+		targetFile: source,
+		graph: "project-configs",
+		projectConfigsFrom: "owning",
+		workspace: "discover",
+	});
+	if (!context) {
 		throw new Error(`Could not find tsconfig.json for ${source}`);
 	}
-	const project = loadProject(tsconfigPath, source);
-
-	// Cross-tsconfig graph (mirrors analyze): a consumer living in a sibling
-	// config must still count as an impacted importer. See #59/#66.
-	const projectGraphs = await buildProjectGraphs(project.tsconfigPath);
-	const graph: DependencyGraph =
-		projectGraphs.length > 1
-			? mergeDependencyGraphs(projectGraphs.map((g) => g.graph))
-			: await buildDependencyGraph(project);
+	const { graph, project, workspace } = context;
+	if (!graph) {
+		throw new Error("Dependency graph was not built");
+	}
 
 	// Direct + indirect (barrel-chain) importers — findAllReferences already
 	// walks the re-export chain, so distinct source files = impact radius.
@@ -82,10 +74,6 @@ export async function analyzeImpact(
 		.sort();
 
 	// Workspace package boundaries between source and target.
-	const wsDir = options.project
-		? path.resolve(options.project)
-		: path.dirname(tsconfigPath);
-	const workspace = await discoverWorkspace(wsDir);
 	const sourcePackage = workspace
 		? (findPackageForPath(source, workspace)?.packageName ?? null)
 		: null;

@@ -7,7 +7,6 @@ import {
 	mergeDependencyGraphs,
 	withGraphSourceFile,
 } from "../core/graph.ts";
-import { loadProject, resolveTsConfig } from "../core/project.ts";
 import {
 	calculateRelativeSpecifier,
 	findAliasForPath,
@@ -27,6 +26,7 @@ import {
 	applyChanges,
 	applyChangesWithVerification,
 } from "./alias.ts";
+import { setupCommandContext } from "./command-context.ts";
 
 export type {
 	InlineConflict,
@@ -518,13 +518,16 @@ export async function inlineCommand(options: InlineOptions): Promise<void> {
 	// Guard: refuse to mutate a dirty worktree unless --force or --dry-run
 	await ensureCleanWorktree(path.dirname(absolute), force, dryRun);
 
-	const tsconfigPath = resolveTsConfig(projectArg, absolute);
-	if (!tsconfigPath) {
+	const context = await setupCommandContext({
+		project: projectArg,
+		searchPath: absolute,
+		targetFile: absolute,
+	});
+	if (!context) {
 		logger.error("Could not find tsconfig.json");
 		process.exit(1);
 	}
-
-	const project = loadProject(tsconfigPath, absolute);
+	const { project } = context;
 
 	logger.info(`\n${dryRun ? "🔍 Dry run:" : "🔧"} Inlining barrel...`);
 	logger.info(`   Barrel: ${absolute}`);

@@ -28,11 +28,7 @@ import {
 	serializePackageJson,
 } from "../core/package-deps.ts";
 import { readPackageJson } from "../core/package-json.ts";
-import {
-	createProgram,
-	loadProject,
-	resolveTsConfig,
-} from "../core/project.ts";
+import { createProgram } from "../core/project.ts";
 import {
 	calculateNewSpecifier,
 	calculateRelativeSpecifier,
@@ -63,7 +59,6 @@ import {
 	runWithTypecheckGuard,
 } from "../core/verify.ts";
 import {
-	discoverWorkspace,
 	filterToWorkspaceBoundary,
 	findBuildScript,
 	type WorkspaceInfo,
@@ -81,6 +76,7 @@ import type {
 import type { TransformRewrite, TransformRule } from "../types/transform.ts";
 import type { MutatingCommandOptions, ProjectConfig } from "../types.ts";
 import { applyChanges, normalizeImports } from "./alias.ts";
+import { setupCommandContext } from "./command-context.ts";
 
 export interface MoveOptions extends MutatingCommandOptions {
 	source: string;
@@ -111,20 +107,18 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 	// Guard: refuse to mutate a dirty worktree unless --force
 	await ensureCleanWorktree(path.dirname(absoluteSource), force, dryRun);
 
-	// Find and load project config
-	const tsconfigPath = resolveTsConfig(
-		projectArg,
-		path.dirname(absoluteSource)
-	);
-	if (!tsconfigPath) {
+	const context = await setupCommandContext({
+		project: projectArg,
+		searchPath: path.dirname(absoluteSource),
+		targetFile: absoluteSource,
+		workspace: "discover",
+		workspaceFromProjectRoot: true,
+	});
+	if (!context) {
 		logger.error("Could not find tsconfig.json");
 		process.exit(1);
 	}
-
-	const project = loadProject(tsconfigPath, absoluteSource);
-
-	// Discover workspace for cross-package move support
-	const workspace = await discoverWorkspace(project.rootDir);
+	const { project, workspace } = context;
 	if (verbose && workspace) {
 		logger.info(
 			`Found workspace: ${workspace.type} with ${workspace.packages.length} packages`
