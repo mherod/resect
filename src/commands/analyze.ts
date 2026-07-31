@@ -197,6 +197,7 @@ export async function analyze(
 		unresolvable,
 		unusedExports,
 		noExternalUsage,
+		skippedFiles: graph.skippedFiles,
 	};
 }
 
@@ -271,6 +272,16 @@ function printAnalysis(
 	}
 
 	logger.empty();
+
+	if (result.skippedFiles.length > 0) {
+		logger.warn(
+			`⚠️  Coverage incomplete: ${result.skippedFiles.length} project file(s) could not be scanned. Reference and unused-export verdicts may be incomplete.`
+		);
+		for (const skippedFile of result.skippedFiles) {
+			logger.warn(`   ${path.relative(projectRoot, skippedFile)}`);
+		}
+		logger.empty();
+	}
 
 	if (result.noExternalUsage) {
 		logger.info(

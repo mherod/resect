@@ -234,6 +234,9 @@ async function analyzeTool(
 			internalRefCount: e.internalRefCount,
 		})),
 		noExternalUsage: result.noExternalUsage,
+		skippedFileCount: result.skippedFiles.length,
+		skippedFiles: result.skippedFiles.map((file) => path.relative(root, file)),
+		coverageIncomplete: result.skippedFiles.length > 0,
 	});
 }
 
@@ -354,6 +357,11 @@ async function auditTool(
 	return jsonText({
 		totalFiles: report.totalFiles,
 		thresholds,
+		skippedFileCount: report.skippedFiles.length,
+		skippedFiles: report.skippedFiles.map((file) =>
+			path.relative(absoluteDir, file)
+		),
+		coverageIncomplete: report.skippedFiles.length > 0,
 		cycles: report.cycles.map((c) => ({
 			files: c.files.map((f) => path.relative(absoluteDir, f)),
 		})),
@@ -420,6 +428,11 @@ async function unusedTool(
 			path.relative(absoluteDir, c)
 		),
 		scannedFileCount: report.scannedFileCount,
+		skippedFileCount: report.skippedFileCount,
+		skippedFiles: report.skippedFiles.map((file) =>
+			path.relative(absoluteDir, file)
+		),
+		coverageIncomplete: report.coverageIncomplete,
 		orphanFiles: report.orphanFiles.map((orphan) => ({
 			file: path.relative(absoluteDir, orphan.file),
 			exportNames: orphan.exportNames,

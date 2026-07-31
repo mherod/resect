@@ -14,6 +14,7 @@ import {
 	buildDependencyGraph,
 	type DependencyGraph,
 	findAllReferences,
+	mergeDependencyGraphs,
 } from "./graph";
 import { loadProject } from "./project";
 import { normalizePath } from "./resolver";
@@ -61,6 +62,7 @@ describe("findAllReferences", () => {
 		return {
 			imports: importMap,
 			importedBy,
+			skippedFiles: [],
 			barrelFiles,
 			barrelReExports,
 		};
@@ -149,6 +151,50 @@ describe("findAllReferences", () => {
 		// Should find consumer twice (two different import statements)
 		const consumerRefs = refs.filter((r) => r.sourceFile === "src/consumer.ts");
 		expect(consumerRefs).toHaveLength(2);
+	});
+
+	test("records project files that cannot be scanned", async () => {
+		const dir = await mkdtemp(path.join(tmpdir(), "resect-graph-skipped-"));
+		try {
+			const srcDir = path.join(dir, "src");
+			await mkdir(srcDir, { recursive: true });
+			const tsconfigPath = path.join(dir, "tsconfig.json");
+			await writeFile(
+				tsconfigPath,
+				JSON.stringify({
+					compilerOptions: { strict: true },
+					include: ["src/**/*.ts"],
+				})
+			);
+			const liveFile = path.join(srcDir, "live.ts");
+			const missingFile = path.join(srcDir, "missing.ts");
+			await writeFile(liveFile, "export const live = 1;\n");
+
+			const project = loadProject(tsconfigPath, dir);
+			project.files.push(missingFile);
+
+			const graph = await buildDependencyGraph(project);
+
+			expect(graph.imports.has(normalizePath(liveFile))).toBe(true);
+			expect(graph.imports.has(normalizePath(missingFile))).toBe(false);
+			expect(graph.skippedFiles).toEqual([normalizePath(missingFile)]);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("preserves and deduplicates skipped files when graphs are merged", () => {
+		const first = createMockGraph({}, {});
+		first.skippedFiles = ["/repo/missing.ts"];
+		const second = createMockGraph({}, {});
+		second.skippedFiles = ["/repo/missing.ts", "/repo/unreadable.ts"];
+
+		const merged = mergeDependencyGraphs([first, second]);
+
+		expect(merged.skippedFiles).toEqual([
+			"/repo/missing.ts",
+			"/repo/unreadable.ts",
+		]);
 	});
 
 	test("evicts cached dependency graph when the project file set changes", async () => {

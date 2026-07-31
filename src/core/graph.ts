@@ -45,6 +45,8 @@ export interface DependencyGraph {
 	imports: Map<string, ModuleReference[]>;
 	/** Map from file path to files that import it */
 	importedBy: Map<string, ModuleReference[]>;
+	/** Project files that could not be parsed into the graph. */
+	skippedFiles: string[];
 	/** Set of barrel files (index.ts that re-export) */
 	barrelFiles: Set<string>;
 	/** Map from barrel file to the files it actually re-exports (export ... from) */
@@ -57,11 +59,19 @@ export interface DependencyGraph {
 	programs?: ts.Program[];
 }
 
-interface FileScanResult {
+interface SuccessfulFileScan {
+	skipped: false;
 	normalizedFile: string;
 	refs: ModuleReference[];
 	barrels: BarrelExport[];
 }
+
+interface SkippedFileScan {
+	skipped: true;
+	normalizedFile: string;
+}
+
+type FileScanResult = SuccessfulFileScan | SkippedFileScan;
 
 /** Per-invocation cache for dependency graphs, keyed by tsconfig path */
 const graphCache = new Map<string, DependencyGraph>();
@@ -84,11 +94,14 @@ function isCacheValid(
 	cachedMtimes: Map<string, number>,
 	currentFiles: readonly string[]
 ): boolean {
-	if (cached.imports.size !== currentFiles.length) {
+	if (
+		cached.imports.size + cached.skippedFiles.length !==
+		currentFiles.length
+	) {
 		return false;
 	}
 	for (const file of currentFiles) {
-		if (!cached.imports.has(file)) {
+		if (!cached.imports.has(file) && !cached.skippedFiles.includes(file)) {
 			return false;
 		}
 	}
@@ -117,27 +130,35 @@ export async function buildDependencyGraph(
 	const scanResults = await mapConcurrent(
 		files,
 		async (file) =>
-			withSourceFile(
+			withSourceFile<FileScanResult>(
 				program,
 				file,
-				(sourceFile): FileScanResult => ({
+				(sourceFile): SuccessfulFileScan => ({
+					skipped: false,
 					normalizedFile: normalizePath(file),
 					refs: scanModuleReferences(sourceFile, project),
 					barrels: scanBarrelExports(sourceFile, project),
 				}),
-				null
+				{ skipped: true, normalizedFile: normalizePath(file) }
 			),
-		{ onError: () => null }
+		{
+			onError: (file): SkippedFileScan => ({
+				skipped: true,
+				normalizedFile: normalizePath(file),
+			}),
+		}
 	);
 
 	// Merge results sequentially (shared mutable maps)
 	const imports = new Map<string, ModuleReference[]>();
 	const importedBy = new Map<string, ModuleReference[]>();
+	const skippedFiles: string[] = [];
 	const barrelFiles = new Set<string>();
 	const barrelReExports = new Map<string, string[]>();
 
 	for (const result of scanResults) {
-		if (!result) {
+		if (result.skipped) {
+			skippedFiles.push(result.normalizedFile);
 			continue;
 		}
 		const { normalizedFile, refs, barrels } = result;
@@ -160,6 +181,7 @@ export async function buildDependencyGraph(
 	const result: DependencyGraph = {
 		imports,
 		importedBy,
+		skippedFiles,
 		barrelFiles,
 		barrelReExports,
 		program,
@@ -325,6 +347,7 @@ export function mergeDependencyGraphs(
 ): DependencyGraph {
 	const imports = new Map<string, ModuleReference[]>();
 	const importedBy = new Map<string, ModuleReference[]>();
+	const skippedFiles = new Set<string>();
 	const barrelFiles = new Set<string>();
 	const barrelReExports = new Map<string, string[]>();
 	const programs: ts.Program[] = [];
@@ -356,6 +379,9 @@ export function mergeDependencyGraphs(
 	for (const g of graphs) {
 		mergeRefMap(imports, g.imports);
 		mergeRefMap(importedBy, g.importedBy);
+		for (const file of g.skippedFiles) {
+			skippedFiles.add(file);
+		}
 		for (const b of g.barrelFiles) {
 			barrelFiles.add(b);
 		}
@@ -380,6 +406,7 @@ export function mergeDependencyGraphs(
 	return {
 		imports,
 		importedBy,
+		skippedFiles: [...skippedFiles].sort(),
 		barrelFiles,
 		barrelReExports,
 		program: primary,

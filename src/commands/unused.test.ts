@@ -24,6 +24,56 @@ describe("unused command", () => {
 		expect(serverSource).toContain(
 			"orphanFileCount: report.orphanFiles.length"
 		);
+		expect(serverSource).toContain(
+			"skippedFileCount: report.skippedFileCount"
+		);
+		expect(serverSource).toContain(
+			"coverageIncomplete: report.coverageIncomplete"
+		);
+		expect(serverSource).toContain(
+			"skippedFileCount: result.skippedFiles.length"
+		);
+		expect(serverSource).toContain(
+			"skippedFileCount: report.skippedFiles.length"
+		);
+	});
+
+	test("reports incomplete coverage in JSON and human output", async () => {
+		const dir = await makeFixture("skipped-file", {
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: { strict: true },
+				files: ["live.ts", "missing.ts"],
+			}),
+			"live.ts": "export const live = 1;\n",
+		});
+
+		const jsonProc = Bun.spawn([...CLI, "unused", dir, "--json"], {
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		const jsonStdout = await new Response(jsonProc.stdout).text();
+		await new Response(jsonProc.stderr).text();
+		await jsonProc.exited;
+		expect(jsonProc.exitCode).toBe(0);
+		const report = JSON.parse(jsonStdout);
+		expect(report.skippedFileCount).toBe(1);
+		expect(report.coverageIncomplete).toBe(true);
+		expect(report.skippedFiles).toEqual([path.join(dir, "missing.ts")]);
+
+		const humanProc = Bun.spawn([...CLI, "unused", dir], {
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		await new Response(humanProc.stdout).text();
+		const humanStderr = await new Response(humanProc.stderr).text();
+		await humanProc.exited;
+		expect(humanProc.exitCode).toBe(0);
+		expect(humanStderr).toContain("Coverage incomplete: 1 file(s)");
+		expect(humanStderr).toContain(
+			"Unused and dead-code verdicts may be false positives"
+		);
+
+		await cleanup(dir);
 	});
 
 	test("reports no unused exports when all are consumed", async () => {

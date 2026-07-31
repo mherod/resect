@@ -13,6 +13,8 @@ export interface AnalysisResult {
 	}>;
 	unusedExports: UnusedExportInfo[];
 	noExternalUsage: boolean;
+	/** Project files omitted from graph-backed verdicts because they could not be parsed. */
+	skippedFiles: string[];
 }
 
 export interface ExportInfo {

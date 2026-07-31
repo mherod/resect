@@ -111,6 +111,12 @@ export interface UnusedReport {
 	scannedConfigs: string[];
 	/** Total number of files (across all scanned configs) contributing to the usage graph. */
 	scannedFileCount: number;
+	/** Absolute paths that could not be parsed while building or consuming the graph. */
+	skippedFiles: string[];
+	/** Number of files omitted from analysis because they could not be parsed. */
+	skippedFileCount: number;
+	/** True when unused/dead verdicts may be false positives due to omitted files. */
+	coverageIncomplete: boolean;
 }
 
 export interface ProjectGraphResult {
@@ -144,6 +150,9 @@ export async function findUnusedExports(
 			internalOnlyCount: 0,
 			scannedConfigs: [],
 			scannedFileCount: 0,
+			skippedFiles: [],
+			skippedFileCount: 0,
+			coverageIncomplete: false,
 		};
 	}
 
@@ -187,6 +196,9 @@ export async function findUnusedExportsFromGraphs(
 			internalOnlyCount: 0,
 			scannedConfigs: [],
 			scannedFileCount: 0,
+			skippedFiles: [],
+			skippedFileCount: 0,
+			coverageIncomplete: false,
 		};
 	}
 
@@ -216,6 +228,7 @@ export async function findUnusedExportsFromGraphs(
 	const unused: UnusedExport[] = [];
 	const exportedFiles = new Map<string, ExportInfo[]>();
 	const entrypointFiles = await collectPackageEntrypointFiles(absoluteDir);
+	const skippedFiles = new Set(graph.skippedFiles);
 	let totalExports = 0;
 
 	for (const file of candidateFiles) {
@@ -279,11 +292,22 @@ export async function findUnusedExportsFromGraphs(
 			false
 		);
 		if (!didCollect) {
-			withSourceFile(file, collect, undefined);
+			const didParseFromDisk = withSourceFile(
+				file,
+				(sourceFile) => {
+					collect(sourceFile);
+					return true;
+				},
+				false
+			);
+			if (!didParseFromDisk) {
+				skippedFiles.add(normalizePath(file));
+			}
 		}
 	}
 
 	const internalOnlyCount = unused.filter((u) => u.internalUsage).length;
+	const sortedSkippedFiles = [...skippedFiles].sort();
 	const orphanFiles = computeOrphanFiles(graph, exportedFiles, {
 		entrypointFiles,
 		entrypointGlobs: entrypointGlobPatterns,
@@ -299,6 +323,9 @@ export async function findUnusedExportsFromGraphs(
 		internalOnlyCount,
 		scannedConfigs,
 		scannedFileCount: graph.imports.size,
+		skippedFiles: sortedSkippedFiles,
+		skippedFileCount: sortedSkippedFiles.length,
+		coverageIncomplete: sortedSkippedFiles.length > 0,
 	};
 }
 
@@ -833,6 +860,18 @@ export async function unusedCommand(options: UnusedOptions): Promise<void> {
 	logger.info(
 		`📊 Scanned ${report.totalExports} export(s) across ${report.totalFiles} file(s)\n`
 	);
+
+	if (report.coverageIncomplete) {
+		logger.warn(
+			`⚠️  Coverage incomplete: ${report.skippedFileCount} file(s) could not be scanned. Unused and dead-code verdicts may be false positives.`
+		);
+		if (verbose) {
+			for (const file of report.skippedFiles) {
+				logger.warn(`   ${path.relative(absoluteDir, file)}`);
+			}
+		}
+		logger.empty();
+	}
 
 	if (report.unused.length === 0 && report.orphanFiles.length === 0) {
 		logger.info("✅ No unused exports found.");

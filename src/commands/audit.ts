@@ -3,6 +3,7 @@ import { logger } from "../cli-logger.ts";
 import {
 	buildDependencyGraph,
 	type DependencyGraph,
+	mergeDependencyGraphs,
 	withGraphSourceFile,
 } from "../core/graph.ts";
 import { loadProject, resolveTsConfig } from "../core/project.ts";
@@ -36,6 +37,7 @@ export interface Cycle {
 
 export interface AuditReport {
 	totalFiles: number;
+	skippedFiles: string[];
 	metrics: FileMetrics[];
 	cycles: Cycle[];
 	highFanOut: FileMetrics[];
@@ -203,6 +205,7 @@ export function buildAuditReport(
 
 	return {
 		totalFiles: metrics.length,
+		skippedFiles: graph.skippedFiles,
 		metrics,
 		cycles,
 		highFanOut,
@@ -253,51 +256,10 @@ export async function auditCommand(options: AuditOptions): Promise<void> {
 				},
 				{ onError: () => null }
 			);
-			// Build a fresh merged graph — never mutate the cached object.
-			// Collect each package's program into `programs` so source-file
-			// lookups in computeMetrics can find files from any package
-			// without falling back to a disk read.
-			const extraPrograms = pkgGraphs
-				.map((g) => g?.program)
-				.filter((p): p is NonNullable<typeof p> => p !== undefined);
-			const mergedGraph: DependencyGraph = {
-				imports: new Map(cachedGraph.imports),
-				importedBy: new Map(cachedGraph.importedBy),
-				barrelFiles: new Set(cachedGraph.barrelFiles),
-				barrelReExports: new Map(cachedGraph.barrelReExports),
-				program: cachedGraph.program,
-				programs: extraPrograms,
-			};
-			for (const pkgGraph of pkgGraphs) {
-				if (!pkgGraph) {
-					continue;
-				}
-				for (const [file, refs] of pkgGraph.imports) {
-					if (!mergedGraph.imports.has(file)) {
-						mergedGraph.imports.set(file, refs);
-					}
-				}
-				for (const [file, refs] of pkgGraph.importedBy) {
-					if (mergedGraph.importedBy.has(file)) {
-						// Append only refs not already present to avoid double-counting
-						const existing = mergedGraph.importedBy.get(file) as typeof refs;
-						const existingSet = new Set(existing);
-						const newRefs = refs.filter((r) => !existingSet.has(r));
-						if (newRefs.length > 0) {
-							mergedGraph.importedBy.set(file, [...existing, ...newRefs]);
-						}
-					} else {
-						mergedGraph.importedBy.set(file, refs);
-					}
-				}
-				for (const barrel of pkgGraph.barrelFiles) {
-					mergedGraph.barrelFiles.add(barrel);
-				}
-				for (const [barrel, files] of pkgGraph.barrelReExports) {
-					mergedGraph.barrelReExports.set(barrel, files);
-				}
-			}
-			graph = mergedGraph;
+			const availablePackageGraphs = pkgGraphs.filter(
+				(pkgGraph): pkgGraph is DependencyGraph => pkgGraph !== null
+			);
+			graph = mergeDependencyGraphs([cachedGraph, ...availablePackageGraphs]);
 		}
 	}
 
@@ -310,6 +272,10 @@ export async function auditCommand(options: AuditOptions): Promise<void> {
 	if (json) {
 		const jsonReport = {
 			totalFiles: report.totalFiles,
+			skippedFileCount: report.skippedFiles.length,
+			skippedFiles: report.skippedFiles.map((file) =>
+				path.relative(absoluteDir, file)
+			),
 			cycles: report.cycles.map((c) => ({
 				files: c.files.map((f) => path.relative(absoluteDir, f)),
 			})),
@@ -347,6 +313,16 @@ function printReport(
 	}
 ): void {
 	logger.info(`\n📊 Module Health Report (${report.totalFiles} files)\n`);
+
+	if (report.skippedFiles.length > 0) {
+		logger.warn(
+			`⚠️  Coverage incomplete: ${report.skippedFiles.length} file(s) could not be scanned.`
+		);
+		for (const file of report.skippedFiles) {
+			logger.warn(`   ${path.relative(baseDir, file)}`);
+		}
+		logger.empty();
+	}
 
 	// Circular dependencies
 	if (report.cycles.length > 0) {

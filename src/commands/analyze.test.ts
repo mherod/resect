@@ -14,6 +14,30 @@ async function makeFixture(name: string, files: Record<string, string>) {
 }
 
 describe("analyze command", () => {
+	test("warns when project graph coverage is incomplete", async () => {
+		const dir = await makeFixture("skipped-file", {
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: { strict: true, baseUrl: "." },
+				files: ["live.ts", "missing.ts"],
+			}),
+			"live.ts": "export const live = 1;\n",
+		});
+
+		const proc = Bun.spawn([...CLI, "analyze", path.join(dir, "live.ts")], {
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		await new Response(proc.stdout).text();
+		const stderr = await new Response(proc.stderr).text();
+		await proc.exited;
+
+		expect(proc.exitCode).toBe(0);
+		expect(stderr).toContain("Coverage incomplete: 1 project file(s)");
+		expect(stderr).toContain("missing.ts");
+
+		await cleanup(dir);
+	});
+
 	test("shows exports and imports for a file", async () => {
 		const dir = await makeFixture("basic", {
 			"utils.ts": 'export function helper() { return "ok"; }',

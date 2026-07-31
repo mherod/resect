@@ -56,6 +56,8 @@ export interface SubpathShadowing {
 export interface BarrelReport {
 	/** Total barrel files found */
 	totalBarrels: number;
+	/** Project files omitted from the report because they could not be parsed. */
+	skippedFiles: string[];
 	/** Every barrel, sorted by total entries descending */
 	barrels: BarrelInfo[];
 	/** Barrels containing at least one wildcard (`export *`) re-export */

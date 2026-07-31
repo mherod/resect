@@ -30,6 +30,8 @@ export interface BarrelOptions extends ReadOnlyCommandOptions {
 export interface BarrelReportContext {
 	/** Set of all barrel file paths (to detect re-export chains) */
 	barrelFiles: Set<string>;
+	/** Project files omitted because they could not be parsed. */
+	skippedFiles: readonly string[];
 	/** Number of files importing the given barrel */
 	consumersOf: (file: string) => number;
 	/** Dedicated sub-path export for a file, or null (issue #93 shadowing) */
@@ -103,6 +105,7 @@ export function buildBarrelReport(
 
 	return {
 		totalBarrels: barrels.length,
+		skippedFiles: [...new Set(context.skippedFiles)].sort(),
 		barrels,
 		wildcardBarrels: barrels.filter((b) => b.wildcardCount > 0),
 		chainedBarrels: barrels.filter((b) => b.reExportsBarrels.length > 0),
@@ -194,6 +197,7 @@ export async function analyzeBarrels(
 
 	const report = buildBarrelReport(scans, {
 		barrelFiles: merged.barrelFiles,
+		skippedFiles: merged.skippedFiles,
 		consumersOf: (file) =>
 			(merged.importedBy.get(normalizePath(file)) ?? []).length,
 		subpathExportOf: (file) => subpathExportOf(file, workspaceInfo),
@@ -238,6 +242,8 @@ export function barrelReportToJson(report: BarrelReport, baseDir: string) {
 	});
 	return {
 		totalBarrels: report.totalBarrels,
+		skippedFileCount: report.skippedFiles.length,
+		skippedFiles: report.skippedFiles.map(rel),
 		barrels: report.barrels.map(mapInfo),
 		wildcardBarrels: report.wildcardBarrels.map(mapInfo),
 		chainedBarrels: report.chainedBarrels.map(mapInfo),
@@ -252,6 +258,16 @@ export function barrelReportToJson(report: BarrelReport, baseDir: string) {
 
 function printReport(report: BarrelReport, baseDir: string): void {
 	logger.info(`\n🛢️  Barrel Report (${report.totalBarrels} barrels)\n`);
+
+	if (report.skippedFiles.length > 0) {
+		logger.warn(
+			`⚠️  Coverage incomplete: ${report.skippedFiles.length} file(s) could not be scanned.`
+		);
+		for (const file of report.skippedFiles) {
+			logger.warn(`   ${path.relative(baseDir, file)}`);
+		}
+		logger.empty();
+	}
 
 	if (report.totalBarrels === 0) {
 		logger.info("🟢 No barrel files found.");

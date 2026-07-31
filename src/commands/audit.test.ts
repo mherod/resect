@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { DependencyGraph } from "../core/graph.ts";
 import type { ModuleReference } from "../types/graph.ts";
-import { detectCycles } from "./audit.ts";
+import { CLI, cleanup, makeFixture } from "./__test-helpers.ts";
+import { buildAuditReport, detectCycles } from "./audit.ts";
 
 function makeRef(sourceFile: string, resolvedPath: string): ModuleReference {
 	return {
@@ -31,7 +32,13 @@ function makeGraph(edges: [string, string][]): DependencyGraph {
 		importedBy.set(to, rev);
 	}
 
-	return { imports, importedBy, barrelFiles, barrelReExports };
+	return {
+		imports,
+		importedBy,
+		skippedFiles: [],
+		barrelFiles,
+		barrelReExports,
+	};
 }
 
 describe("detectCycles", () => {
@@ -94,5 +101,58 @@ describe("detectCycles", () => {
 		const cycles = detectCycles(graph);
 		expect(cycles.length).toBe(1);
 		expect(cycles.at(0)?.files).toEqual(["/a.ts"]);
+	});
+});
+
+describe("buildAuditReport", () => {
+	test("exposes files omitted from graph coverage", () => {
+		const graph = makeGraph([]);
+		graph.skippedFiles = ["/repo/unreadable.ts"];
+
+		const report = buildAuditReport(graph, {
+			fanOutThreshold: 10,
+			fanInThreshold: 10,
+			exportThreshold: 8,
+		});
+
+		expect(report.skippedFiles).toEqual(["/repo/unreadable.ts"]);
+		expect(report.totalFiles).toBe(0);
+	});
+});
+
+describe("audit command coverage", () => {
+	test("surfaces skipped files in JSON and human output", async () => {
+		const dir = await makeFixture("audit-skipped-file", {
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: { strict: true },
+				files: ["live.ts", "missing.ts"],
+			}),
+			"live.ts": "export const live = 1;\n",
+		});
+
+		const jsonProc = Bun.spawn([...CLI, "audit", dir, "--json"], {
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		const jsonStdout = await new Response(jsonProc.stdout).text();
+		await new Response(jsonProc.stderr).text();
+		await jsonProc.exited;
+		expect(jsonProc.exitCode).toBe(0);
+		const report = JSON.parse(jsonStdout);
+		expect(report.skippedFileCount).toBe(1);
+		expect(report.skippedFiles).toEqual(["missing.ts"]);
+
+		const humanProc = Bun.spawn([...CLI, "audit", dir], {
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		await new Response(humanProc.stdout).text();
+		const humanStderr = await new Response(humanProc.stderr).text();
+		await humanProc.exited;
+		expect(humanProc.exitCode).toBe(0);
+		expect(humanStderr).toContain("Coverage incomplete: 1 file(s)");
+		expect(humanStderr).toContain("missing.ts");
+
+		await cleanup(dir);
 	});
 });

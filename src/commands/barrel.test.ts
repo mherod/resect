@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { BarrelScan } from "../types/barrel.ts";
-import { type BarrelReportContext, buildBarrelReport } from "./barrel.ts";
+import { CLI, cleanup, makeFixture } from "./__test-helpers.ts";
+import {
+	type BarrelReportContext,
+	barrelReportToJson,
+	buildBarrelReport,
+} from "./barrel.ts";
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -9,6 +14,7 @@ function makeContext(
 ): BarrelReportContext {
 	return {
 		barrelFiles: new Set<string>(),
+		skippedFiles: [],
 		consumersOf: () => 1,
 		subpathExportOf: () => null,
 		...overrides,
@@ -171,5 +177,55 @@ describe("buildBarrelReport", () => {
 			"/repo/src/big.ts",
 			"/repo/src/small.ts",
 		]);
+	});
+
+	test("exposes skipped-file coverage in reports and JSON", () => {
+		const report = buildBarrelReport(
+			[],
+			makeContext({ skippedFiles: ["/repo/src/unreadable.ts"] })
+		);
+		const json = barrelReportToJson(report, "/repo");
+
+		expect(report.skippedFiles).toEqual(["/repo/src/unreadable.ts"]);
+		expect(json.skippedFileCount).toBe(1);
+		expect(json.skippedFiles).toEqual(["src/unreadable.ts"]);
+	});
+});
+
+describe("barrel command coverage", () => {
+	test("surfaces skipped files in JSON and human output", async () => {
+		const dir = await makeFixture("barrel-skipped-file", {
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: { strict: true },
+				files: ["index.ts", "live.ts", "missing.ts"],
+			}),
+			"index.ts": 'export * from "./live";\n',
+			"live.ts": "export const live = 1;\n",
+		});
+
+		const jsonProc = Bun.spawn([...CLI, "barrel", dir, "--json"], {
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		const jsonStdout = await new Response(jsonProc.stdout).text();
+		await new Response(jsonProc.stderr).text();
+		await jsonProc.exited;
+		expect(jsonProc.exitCode).toBe(0);
+		const report = JSON.parse(jsonStdout);
+		expect(report.skippedFileCount).toBe(1);
+		expect(report.skippedFiles).toEqual(["missing.ts"]);
+
+		const humanProc = Bun.spawn([...CLI, "barrel", dir], {
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		await new Response(humanProc.stdout).text();
+		const humanStderr = await new Response(humanProc.stderr).text();
+		await humanProc.exited;
+		expect(humanProc.exitCode).toBe(0);
+		expect(humanStderr).toContain("Coverage incomplete: 1 file(s)");
+		expect(humanStderr).toContain("missing.ts");
+
+		await cleanup(dir);
 	});
 });
