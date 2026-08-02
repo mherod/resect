@@ -1504,6 +1504,7 @@ async function moveTool(args: {
 	verify: boolean;
 	verbose: boolean;
 	transform?: string;
+	prefer?: PreferStrategy;
 }): Promise<CallToolResult> {
 	const absoluteSource = path.resolve(args.source);
 	const absoluteTarget = path.resolve(args.target);
@@ -1547,9 +1548,10 @@ async function moveTool(args: {
 			workspace,
 			// MCP gates force at the worktree layer above; moveModule's conflict
 			// force stays at its default (unchanged behaviour). The 8th arg threads
-			// the loaded transform rules (#123).
+			// the loaded transform rules (#123), the 9th the specifier style (#173).
 			false,
-			transformRules
+			transformRules,
+			args.prefer
 		);
 
 	const shouldVerify = args.verify && !args.dryRun;
@@ -1719,9 +1721,7 @@ async function aliasTool(args: {
 			? renameImportSpecifiers(absoluteTarget, renames, project)
 			: normalizeImports(absoluteTarget, args.prefer ?? "alias", project);
 	result.edits =
-		result.conflicts.length === 0
-			? await planAliasEdits(result.changes)
-			: [];
+		result.conflicts.length === 0 ? await planAliasEdits(result.changes) : [];
 
 	let delta: VerificationResult | undefined;
 	let rolledBack = false;
@@ -1839,6 +1839,12 @@ server.registerTool(
 				.describe(
 					"Path to a declarative `.resect/transforms.js` config (epic #103), resolved relative to the project root. Parsed/validated before the move; a missing or malformed config fails the move and writes nothing"
 				),
+			prefer: z
+				.enum(PREFER_STRATEGIES)
+				.optional()
+				.describe(
+					"Import-specifier style for rewritten references (#173). Omit to preserve each importer's existing style (relative stays relative, aliased stays aliased). 'relative' forces relative paths — needed when the output must run under `node --experimental-strip-types`, which does not resolve tsconfig paths"
+				),
 		},
 	},
 	async ({
@@ -1850,6 +1856,7 @@ server.registerTool(
 		verify,
 		verbose,
 		transform,
+		prefer,
 	}) => {
 		return withErrorHandling(async () => {
 			return moveTool({
@@ -1861,6 +1868,7 @@ server.registerTool(
 				verify: verify ?? true,
 				verbose: verbose ?? false,
 				transform,
+				prefer,
 			});
 		});
 	}

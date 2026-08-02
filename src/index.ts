@@ -218,6 +218,18 @@ export type {
 	SimilarityFilterOptions,
 } from "./core/similarity.ts";
 export { analyzeSimilarity } from "./core/similarity.ts";
+// ── Core types ──────────────────────────────────────────────────────
+export type {
+	SerializedEdit,
+	StructuredEdit,
+	TextChange,
+} from "./core/text-changes.ts";
+export {
+	applyStructuredEdits,
+	createStructuredEdit,
+	formatUnifiedDiff,
+	serializeStructuredEdits,
+} from "./core/text-changes.ts";
 // ── Core: transform config (epic #103) ─────────────────────────────
 export {
 	DEFAULT_TRANSFORM_CONFIG_PATH,
@@ -341,16 +353,4 @@ export type {
 	TransformRewrite,
 	TransformRule,
 } from "./types/transform.ts";
-// ── Core types ──────────────────────────────────────────────────────
-export type {
-	SerializedEdit,
-	StructuredEdit,
-	TextChange,
-} from "./core/text-changes.ts";
-export {
-	applyStructuredEdits,
-	createStructuredEdit,
-	formatUnifiedDiff,
-	serializeStructuredEdits,
-} from "./core/text-changes.ts";
 export type { ProjectConfig, ProjectReference } from "./types.ts";

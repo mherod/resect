@@ -101,7 +101,7 @@ function isCacheValid(
 		return false;
 	}
 	for (const file of currentFiles) {
-		if (!cached.imports.has(file) && !cached.skippedFiles.includes(file)) {
+		if (!(cached.imports.has(file) || cached.skippedFiles.includes(file))) {
 			return false;
 		}
 	}

@@ -1,9 +1,6 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
-import {
-	type DependencyGraph,
-	withGraphSourceFile,
-} from "../core/graph.ts";
+import { type DependencyGraph, withGraphSourceFile } from "../core/graph.ts";
 import { normalizePath } from "../core/resolver.ts";
 import { scanExports } from "../core/scanner.ts";
 import type { ReadOnlyCommandOptions } from "../types/commands.ts";

@@ -1,11 +1,11 @@
 import path from "node:path";
+import { mapConcurrent } from "../core/concurrency.ts";
 import {
 	buildDependencyGraph,
 	buildProjectGraphs,
 	type DependencyGraph,
 	mergeDependencyGraphs,
 } from "../core/graph.ts";
-import { mapConcurrent } from "../core/concurrency.ts";
 import { loadProject, resolveTsConfig } from "../core/project.ts";
 import {
 	discoverWorkspace,
@@ -155,9 +155,7 @@ const mergeExtraProjectGraphs = async (
 					onError: () => null,
 				});
 	const availableGraphs = graphs.filter(
-		(
-			graph
-		): graph is { tsconfigPath: string; graph: DependencyGraph } =>
+		(graph): graph is { tsconfigPath: string; graph: DependencyGraph } =>
 			graph !== null
 	);
 	return {

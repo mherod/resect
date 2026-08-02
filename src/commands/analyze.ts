@@ -68,10 +68,8 @@ export async function analyzeCommand(options: AnalyzeOptions): Promise<void> {
 				const refs = findAllReferences(absolutePath, pkgGraph);
 				return refs.filter(
 					(r) =>
-						filterToWorkspaceBoundary(
-							[r.sourceFile],
-							workspaceInfo.root
-						).length > 0
+						filterToWorkspaceBoundary([r.sourceFile], workspaceInfo.root)
+							.length > 0
 				);
 			},
 			{ onError: () => [] }

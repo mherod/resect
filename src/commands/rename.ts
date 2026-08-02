@@ -16,8 +16,8 @@ import {
 	applyTextChanges,
 	createStructuredEdit,
 	deduplicateChanges,
-	serializeStructuredEdits,
 	type StructuredEdit,
+	serializeStructuredEdits,
 	type TextChange,
 } from "../core/text-changes.ts";
 import {

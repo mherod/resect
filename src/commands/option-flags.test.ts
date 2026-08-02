@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { parseArgs } from "node:util";
 import type { CliValues } from "./option-flags.ts";
-import { OPTION_FLAGS, PARSE_ARGS_OPTIONS } from "./option-flags.ts";
+import {
+	OPTION_FLAGS,
+	PARSE_ARGS_OPTIONS,
+	preprocessArgs,
+} from "./option-flags.ts";
 
 /**
  * Drift guard: ensures the OPTION_FLAGS table always contains exactly the
@@ -207,5 +212,132 @@ describe("option-flags", () => {
 		const _withArray: CliValues = { "entrypoint-globs": ["src/**/*.ts"] };
 		expect(_withString["entrypoint-globs"]).toBe("src/**/*.ts");
 		expect(_withArray["entrypoint-globs"]).toEqual(["src/**/*.ts"]);
+	});
+});
+
+describe("preprocessArgs (#173)", () => {
+	test("drops a boolean flag given a falsy equals value", () => {
+		expect(preprocessArgs(["move", "a.ts", "b.ts", "--dry-run=false"])).toEqual(
+			["move", "a.ts", "b.ts"]
+		);
+		expect(preprocessArgs(["move", "a.ts", "b.ts", "-n=false"])).toEqual([
+			"move",
+			"a.ts",
+			"b.ts",
+		]);
+	});
+
+	test("treats every falsy spelling as off", () => {
+		for (const value of ["false", "FALSE", "0", "no", "off"]) {
+			expect(preprocessArgs(["move", `--dry-run=${value}`])).toEqual(["move"]);
+		}
+	});
+
+	test("normalizes a truthy equals value to the bare flag", () => {
+		expect(preprocessArgs(["move", "-n=true"])).toEqual(["move", "-n"]);
+		expect(preprocessArgs(["move", "--dry-run=true"])).toEqual([
+			"move",
+			"--dry-run",
+		]);
+		expect(preprocessArgs(["move", "--force=1"])).toEqual(["move", "--force"]);
+	});
+
+	test("leaves bare boolean flags and string flags untouched", () => {
+		expect(
+			preprocessArgs(["move", "-n", "--project=/tmp/x", "--prefer=relative"])
+		).toEqual(["move", "-n", "--project=/tmp/x", "--prefer=relative"]);
+	});
+
+	test("still expands the tidy --fix=<category> shorthand", () => {
+		expect(preprocessArgs(["tidy", "src", "--fix=dead-exports"])).toEqual([
+			"tidy",
+			"src",
+			"--fix",
+			"--fix-category",
+			"dead-exports",
+		]);
+	});
+
+	test("parseArgs accepts -n=false once preprocessed (regression #173)", () => {
+		// Raw `-n=false` makes parseArgs throw `Unknown option '='`.
+		expect(() =>
+			parseArgs({
+				args: ["move", "a.ts", "b.ts", "-n=false"],
+				options: PARSE_ARGS_OPTIONS,
+				allowPositionals: true,
+				strict: true,
+			})
+		).toThrow();
+
+		const { values, positionals } = parseArgs({
+			args: preprocessArgs(["move", "a.ts", "b.ts", "-n=false"]),
+			options: PARSE_ARGS_OPTIONS,
+			allowPositionals: true,
+			strict: true,
+		});
+		expect(values["dry-run"]).toBeUndefined();
+		expect(positionals).toEqual(["move", "a.ts", "b.ts"]);
+	});
+
+	test("parseArgs sees -n=true as dry-run enabled", () => {
+		const { values } = parseArgs({
+			args: preprocessArgs(["move", "a.ts", "b.ts", "-n=true"]),
+			options: PARSE_ARGS_OPTIONS,
+			allowPositionals: true,
+			strict: true,
+		});
+		expect(values["dry-run"]).toBe(true);
+	});
+
+	// PR #174 review (P2): an unrecognised value must not silently enable the
+	// flag — `--force=fales` would otherwise bypass the dirty-worktree guard.
+	test("leaves an unrecognised boolean value untouched so parseArgs rejects it", () => {
+		expect(preprocessArgs(["move", "--force=fales"])).toEqual([
+			"move",
+			"--force=fales",
+		]);
+		expect(preprocessArgs(["move", "--force="])).toEqual(["move", "--force="]);
+		expect(preprocessArgs(["move", "-n=maybe"])).toEqual(["move", "-n=maybe"]);
+	});
+
+	test("a typo'd boolean value is a parse error, not an enabled flag", () => {
+		expect(() =>
+			parseArgs({
+				args: preprocessArgs(["move", "a.ts", "b.ts", "--force=fales"]),
+				options: PARSE_ARGS_OPTIONS,
+				allowPositionals: true,
+				strict: true,
+			})
+		).toThrow();
+	});
+
+	// PR #174 review (P2): parseArgs treats everything after `--` as positional.
+	test("stops normalizing after the -- separator", () => {
+		expect(
+			preprocessArgs(["move", "--", "--dry-run=false", "target.ts"])
+		).toEqual(["move", "--", "--dry-run=false", "target.ts"]);
+		expect(preprocessArgs(["move", "--", "-n=false"])).toEqual([
+			"move",
+			"--",
+			"-n=false",
+		]);
+	});
+
+	test("a dash-prefixed path after -- survives as a positional", () => {
+		const { positionals } = parseArgs({
+			args: preprocessArgs(["move", "--", "--dry-run=false", "target.ts"]),
+			options: PARSE_ARGS_OPTIONS,
+			allowPositionals: true,
+			strict: true,
+		});
+		expect(positionals).toEqual(["move", "--dry-run=false", "target.ts"]);
+	});
+
+	test("still normalizes flags before the separator", () => {
+		expect(preprocessArgs(["move", "-n=false", "--", "-n=false"])).toEqual([
+			"move",
+			"--",
+			"-n=false",
+		]);
 	});
 });

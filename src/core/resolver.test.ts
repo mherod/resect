@@ -785,3 +785,100 @@ describe("calculateNewSpecifier alias slash/extension normalization (#160)", () 
 		expect(result).toBe("@my-org/shared-schemas/types/audit-log");
 	});
 });
+
+// ─── calculateNewSpecifier specifier-style preservation (#173) ─────────────
+
+describe("calculateNewSpecifier specifier style (#173)", () => {
+	// Mirrors the issue repro: a project with a tsconfig `paths` alias, where a
+	// relative import rewritten to an alias breaks `node --experimental-strip-types`
+	// (which does not resolve tsconfig paths).
+	const project = makeProject("/repo", { "@/*": ["src/*"] });
+	const oldTarget = "/repo/src/lib/locale.ts";
+	const newTarget = "/repo/src/lib/i18n/locale.ts";
+	const sibling = "/repo/src/lib/i18n/config.ts";
+	const distant = "/repo/src/app/page.ts";
+
+	test("keeps a relative specifier relative even when an alias covers the target", () => {
+		// Regression: this used to return "@/lib/i18n/locale" because a relative
+		// import fell through to findAliasForPath().
+		const result = calculateNewSpecifier(
+			"../locale",
+			sibling,
+			oldTarget,
+			newTarget,
+			project
+		);
+
+		expect(isRelativeImport(result)).toBe(true);
+		expect(result).toBe("./locale");
+	});
+
+	test("keeps an aliased specifier aliased", () => {
+		const result = calculateNewSpecifier(
+			"@/lib/locale",
+			distant,
+			oldTarget,
+			newTarget,
+			project
+		);
+
+		expect(result).toBe("@/lib/i18n/locale");
+	});
+
+	test("prefer 'relative' rewrites an aliased specifier to a relative path", () => {
+		const result = calculateNewSpecifier(
+			"@/lib/locale",
+			distant,
+			oldTarget,
+			newTarget,
+			project,
+			"relative"
+		);
+
+		expect(isRelativeImport(result)).toBe(true);
+		expect(result).toBe("../lib/i18n/locale");
+	});
+
+	test("prefer 'alias' rewrites a relative specifier to an alias", () => {
+		const result = calculateNewSpecifier(
+			"../locale",
+			sibling,
+			oldTarget,
+			newTarget,
+			project,
+			"alias"
+		);
+
+		expect(result).toBe("@/lib/i18n/locale");
+	});
+
+	test("prefer 'shortest' picks the relative form for a near importer", () => {
+		const result = calculateNewSpecifier(
+			"../locale",
+			sibling,
+			oldTarget,
+			newTarget,
+			project,
+			"shortest"
+		);
+
+		// "./locale" is shorter than "@/lib/i18n/locale"
+		expect(result).toBe("./locale");
+	});
+
+	test("prefer 'shortest' picks the alias form for a deeply nested importer", () => {
+		const deep = "/repo/src/features/a/b/c/deep.ts";
+
+		const result = calculateNewSpecifier(
+			"../../../../locale",
+			deep,
+			oldTarget,
+			newTarget,
+			project,
+			"shortest"
+		);
+
+		// "@/lib/i18n/locale" is shorter than "../../../../lib/i18n/locale"
+		expect(result).toBe("@/lib/i18n/locale");
+	});
+});

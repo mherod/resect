@@ -1,6 +1,7 @@
 import path from "node:path";
 import ts from "typescript";
 import { logger } from "../cli-logger.ts";
+import type { PreferStrategy } from "../commands/option-domains.ts";
 import type { ExportInfo } from "../types/analysis.ts";
 import type { ImportBinding, ModuleReference } from "../types/graph.ts";
 import type { UpdatedReference } from "../types/move.ts";
@@ -39,6 +40,10 @@ export interface CrossPackageMoveContext {
  *
  * When imports go through a barrel and only some bindings come from the moved file,
  * this will split the import into two: one for moved exports, one for remaining exports.
+ *
+ * `prefer` overrides the default specifier style for same-package rewrites
+ * (issue #173). Left undefined, a relative import stays relative and an aliased
+ * import stays aliased.
  */
 export function updateFileReferences(
 	sourceFile: ts.SourceFile,
@@ -47,7 +52,8 @@ export function updateFileReferences(
 	newPath: string,
 	project: ProjectConfig,
 	workspace?: WorkspaceInfo,
-	movedFileExports?: ExportInfo[]
+	movedFileExports?: ExportInfo[],
+	prefer?: PreferStrategy
 ): { newContent: string; updates: UpdatedReference[] } {
 	const changes: TextChange[] = [];
 	const updates: UpdatedReference[] = [];
@@ -203,7 +209,8 @@ export function updateFileReferences(
 					ref.sourceFile,
 					oldPath,
 					newPath,
-					project
+					project,
+					prefer
 				);
 		} else {
 			newSpecifier = calculateNewSpecifier(
@@ -211,7 +218,8 @@ export function updateFileReferences(
 				ref.sourceFile,
 				oldPath,
 				newPath,
-				project
+				project,
+				prefer
 			);
 		}
 
@@ -551,7 +559,8 @@ export function updateBarrelExports(
 	oldPath: string,
 	newPath: string,
 	project: ProjectConfig,
-	workspace?: WorkspaceInfo
+	workspace?: WorkspaceInfo,
+	prefer?: PreferStrategy
 ): { newContent: string; updates: UpdatedReference[] } {
 	const changes: TextChange[] = [];
 	const removals: { start: number; end: number }[] = [];
@@ -622,7 +631,8 @@ export function updateBarrelExports(
 				sourceFile.fileName,
 				oldPath,
 				newPath,
-				project
+				project,
+				prefer
 			);
 
 			if (newSpecifier !== specifier) {
