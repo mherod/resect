@@ -181,6 +181,16 @@ resect move src/utils/old.ts src/helpers/new.ts --dry-run
 - Case-only renames on case-insensitive filesystems
 - Declarative AST rewrites via `--transform` (see [AST Transform Pipelines](#ast-transform-pipelines-move---transform))
 
+**Import style is preserved by default.** A relative import stays relative and an aliased import stays aliased, so a move never silently promotes `./locale` to `@/lib/i18n/locale`. That matters for code run by `node --experimental-strip-types`, which does not resolve tsconfig `paths`. Override per move with `--prefer`:
+
+```bash
+resect move lib/locale.ts lib/i18n/locale.ts --prefer=relative  # force relative paths
+resect move src/a.ts src/nested/a.ts --prefer=alias             # force tsconfig aliases
+resect move src/a.ts src/nested/a.ts --prefer=shortest          # pick whichever is shorter
+```
+
+Cross-package moves are unaffected — they still resolve to the destination package's import specifier.
+
 ### `rename <file> <oldName> <newName>`
 
 Rename an exported symbol and update all imports.
@@ -619,7 +629,7 @@ Under Bun the default runtime works out of the box; subpath entry points `@mhero
 | `--fix` | | Apply suggested fixes (mock-cleanup, test-relocation, naming, tidy) |
 | `--transform` | | Apply AST rewrites from a config during a move; takes a value: `--transform=.resect/transforms.js` |
 | `--type` | `-t` | Filter find results by type: `file`, `export`, or `all` |
-| `--prefer` | | Alias strategy: `alias`, `relative`, or `shortest` |
+| `--prefer` | | Import-specifier strategy: `alias`, `relative`, or `shortest`. Required by `alias`; optional on `move`, where omitting it preserves each importer's existing style |
 | `--rename-specifier` | | Exact alias rewrite pair `<from>=<to>`; repeat for batch rewrites |
 | `--json` | | Output in JSON format (workspace/similar) |
 | `--threshold` | | Similarity threshold 0.0–1.0 (similar/extract-common) |
