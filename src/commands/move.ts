@@ -531,6 +531,29 @@ async function planCrossPackageDependencies(
 	return { additions, targetPkg, destJson };
 }
 
+class MoveWriteFailure extends Error {
+	constructor(cause: unknown) {
+		super(cause instanceof Error ? cause.message : String(cause), { cause });
+		this.name = "MoveWriteFailure";
+	}
+}
+
+async function writeMoveFile(
+	rt: Runtime,
+	filePath: string,
+	content: string | Uint8Array
+): Promise<void> {
+	try {
+		await rt.fs.writeFile(filePath, content);
+	} catch (error) {
+		throw new MoveWriteFailure(error);
+	}
+}
+
+function isRecoverableMoveFailure(error: unknown): boolean {
+	return !(error instanceof MoveWriteFailure);
+}
+
 /**
  * Apply a previously-computed cross-package dependency plan to the destination
  * package.json (issues #118/#119). Writes nothing on `dryRun` or when there is
@@ -549,7 +572,8 @@ async function applyCrossPackageDependencyPlan(
 
 	if (!dryRun) {
 		const updated = applyDependencyAdditions(plan.destJson, plan.additions);
-		await rt.fs.writeFile(
+		await writeMoveFile(
+			rt,
 			plan.targetPkg.packageJsonPath,
 			serializePackageJson(updated)
 		);
@@ -913,14 +937,14 @@ export async function moveModule(
 				}
 				updatedReferences.push(...updates);
 				if (!dryRun) {
-					await rt.fs.writeFile(filePath, newContent);
+					await writeMoveFile(rt, filePath, newContent);
 				}
 			}
 		} catch (error) {
 			errors.push({
 				file: filePath,
 				message: error instanceof Error ? error.message : String(error),
-				recoverable: true,
+				recoverable: isRecoverableMoveFailure(error),
 			});
 		}
 	}
@@ -963,14 +987,14 @@ export async function moveModule(
 				}
 				updatedReferences.push(...updates);
 				if (!dryRun) {
-					await rt.fs.writeFile(barrelPath, newContent);
+					await writeMoveFile(rt, barrelPath, newContent);
 				}
 			}
 		} catch (error) {
 			errors.push({
 				file: barrelPath,
 				message: error instanceof Error ? error.message : String(error),
-				recoverable: true,
+				recoverable: isRecoverableMoveFailure(error),
 			});
 		}
 	}
@@ -999,7 +1023,7 @@ export async function moveModule(
 						}
 						updatedReferences.push(update);
 						if (!dryRun) {
-							await rt.fs.writeFile(destBarrelPath, newContent);
+							await writeMoveFile(rt, destBarrelPath, newContent);
 						}
 						if (verbose) {
 							logger.info(
@@ -1012,7 +1036,7 @@ export async function moveModule(
 				errors.push({
 					file: destBarrelPath,
 					message: `Could not update destination barrel: ${error instanceof Error ? error.message : String(error)}`,
-					recoverable: true,
+					recoverable: isRecoverableMoveFailure(error),
 				});
 			}
 		}
@@ -1059,7 +1083,7 @@ export async function moveModule(
 			errors.push({
 				file: targetPath,
 				message: `Could not sync dependencies: ${error instanceof Error ? error.message : String(error)}`,
-				recoverable: true,
+				recoverable: isRecoverableMoveFailure(error),
 			});
 		}
 	}

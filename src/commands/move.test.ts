@@ -1,8 +1,11 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { buildDependencyGraph } from "../core/graph.ts";
+import { loadProject } from "../core/project.ts";
+import { bunRuntime, setRuntime } from "../runtime/index.ts";
 import { captureOutput, makeTempDir, runCli } from "./__test-helpers.ts";
-import { moveCommand } from "./move.ts";
+import { moveCommand, moveModule } from "./move.ts";
 
 const tempDirs: string[] = [];
 
@@ -151,6 +154,82 @@ afterAll(async () => {
 });
 
 describe("moveModule", () => {
+	test("reports importer write failures as fatal", async () => {
+		const { consumerPath, sourcePath, targetPath, tsconfigPath } =
+			await makeMoveCliProject();
+		const project = loadProject(tsconfigPath);
+		const consumerBefore = await Bun.file(consumerPath).text();
+
+		setRuntime({
+			...bunRuntime,
+			fs: {
+				...bunRuntime.fs,
+				writeFile: async (filePath, content) => {
+					if (path.resolve(filePath) === path.resolve(consumerPath)) {
+						throw new Error("simulated importer write failure");
+					}
+					await bunRuntime.fs.writeFile(filePath, content);
+				},
+			},
+		});
+
+		try {
+			const result = await moveModule(
+				sourcePath,
+				targetPath,
+				project,
+				false,
+				false
+			);
+
+			expect(result.success).toBe(false);
+			expect(result.errors).toContainEqual({
+				file: consumerPath,
+				message: "simulated importer write failure",
+				recoverable: false,
+			});
+			expect(await Bun.file(targetPath).exists()).toBe(true);
+			expect(await Bun.file(consumerPath).text()).toBe(consumerBefore);
+		} finally {
+			setRuntime(bunRuntime);
+		}
+	});
+
+	test("keeps importer analysis warnings recoverable", async () => {
+		const { consumerPath, sourcePath, targetPath, tsconfigPath } =
+			await makeMoveCliProject();
+		const project = loadProject(tsconfigPath);
+		const graph = await buildDependencyGraph(project);
+		const program = graph.program;
+		if (!program) {
+			throw new Error("Expected the dependency graph to retain its TS program");
+		}
+		const getSourceFile = program.getSourceFile.bind(program);
+		program.getSourceFile = (filePath) =>
+			path.resolve(filePath) === path.resolve(consumerPath)
+				? undefined
+				: getSourceFile(filePath);
+
+		try {
+			const result = await moveModule(
+				sourcePath,
+				targetPath,
+				project,
+				false,
+				false
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.errors).toContainEqual({
+				file: consumerPath,
+				message: "Could not parse file",
+				recoverable: true,
+			});
+		} finally {
+			program.getSourceFile = getSourceFile;
+		}
+	});
+
 	test("handles same-directory case-only renames and updates importers", async () => {
 		const dir = await tempDir();
 		const srcDir = path.join(dir, "src", "utils");
