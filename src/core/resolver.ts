@@ -1,5 +1,6 @@
 import path from "node:path";
 import ts from "typescript";
+import type { PreferStrategy } from "../commands/option-domains.ts";
 import type { ProjectConfig } from "../types.ts";
 import {
 	removeExtension,
@@ -94,10 +95,71 @@ export function calculateNewSpecifier(
 	fromFile: string,
 	oldTargetPath: string,
 	newTargetPath: string,
-	project: ProjectConfig
+	project: ProjectConfig,
+	prefer?: PreferStrategy
 ): string {
-	// If it's a path alias, check if we should preserve it or update it
+	if (prefer === "relative") {
+		return calculateRelativeSpecifier(fromFile, newTargetPath, oldSpecifier);
+	}
+
 	const aliasMatch = matchPathAlias(oldSpecifier, project);
+
+	if (prefer === "alias") {
+		if (aliasMatch) {
+			const updated = updateAliasedSpecifier(
+				oldSpecifier,
+				aliasMatch,
+				oldTargetPath,
+				newTargetPath,
+				fromFile,
+				project
+			);
+			if (updated.startsWith("../") || updated.startsWith("./")) {
+				const crossPackageAlias = findAliasForPath(newTargetPath, project);
+				if (crossPackageAlias) {
+					return crossPackageAlias;
+				}
+			}
+			return updated;
+		}
+		const alias = findAliasForPath(newTargetPath, project);
+		if (alias) {
+			return alias;
+		}
+		return calculateRelativeSpecifier(fromFile, newTargetPath, oldSpecifier);
+	}
+
+	if (prefer === "shortest") {
+		let aliasedSpecifier: string | null = null;
+		if (aliasMatch) {
+			aliasedSpecifier = updateAliasedSpecifier(
+				oldSpecifier,
+				aliasMatch,
+				oldTargetPath,
+				newTargetPath,
+				fromFile,
+				project
+			);
+		}
+		if (!aliasedSpecifier || aliasedSpecifier.startsWith(".")) {
+			aliasedSpecifier = findAliasForPath(newTargetPath, project);
+		}
+		const relativeSpecifier = calculateRelativeSpecifier(
+			fromFile,
+			newTargetPath,
+			oldSpecifier
+		);
+		if (
+			aliasedSpecifier &&
+			aliasedSpecifier.length < relativeSpecifier.length
+		) {
+			return aliasedSpecifier;
+		}
+		return relativeSpecifier;
+	}
+
+	// Default behavior (prefer === undefined):
+	// If the old specifier was a path alias: update aliased specifier
 	if (aliasMatch) {
 		const updated = updateAliasedSpecifier(
 			oldSpecifier,
@@ -118,12 +180,8 @@ export function calculateNewSpecifier(
 		return updated;
 	}
 
-	// For relative imports, try to find an alias first (for cross-package moves)
+	// For relative imports: preserve relative import style
 	if (isRelativeImport(oldSpecifier)) {
-		const crossPackageAlias = findAliasForPath(newTargetPath, project);
-		if (crossPackageAlias) {
-			return crossPackageAlias;
-		}
 		return calculateRelativeSpecifier(fromFile, newTargetPath, oldSpecifier);
 	}
 

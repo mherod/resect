@@ -74,6 +74,70 @@ async function makeMoveCliProject(): Promise<{
 	return { consumerPath, sourcePath, targetPath, tsconfigPath };
 }
 
+/**
+ * Fixture for issue #173: a project with a tsconfig `paths` alias, one importer
+ * that reaches the moved file relatively and one that reaches it via the alias.
+ */
+async function makeAliasedMoveProject(): Promise<{
+	aliasConsumerPath: string;
+	relativeConsumerPath: string;
+	sourcePath: string;
+	targetPath: string;
+	tsconfigPath: string;
+}> {
+	const dir = await tempDir();
+	const libDir = path.join(dir, "src", "lib");
+	const i18nDir = path.join(libDir, "i18n");
+	const appDir = path.join(dir, "src", "app");
+	await mkdir(i18nDir, { recursive: true });
+	await mkdir(appDir, { recursive: true });
+
+	const tsconfigPath = path.join(dir, "tsconfig.json");
+	await writeFile(
+		tsconfigPath,
+		JSON.stringify(
+			{
+				compilerOptions: {
+					baseUrl: ".",
+					module: "ESNext",
+					moduleResolution: "Bundler",
+					noEmit: true,
+					paths: { "@/*": ["src/*"] },
+					strict: true,
+					target: "ESNext",
+					types: [],
+				},
+				include: ["src/**/*.ts"],
+			},
+			null,
+			2
+		)
+	);
+
+	const sourcePath = path.join(libDir, "locale.ts");
+	const targetPath = path.join(i18nDir, "locale.ts");
+	const relativeConsumerPath = path.join(i18nDir, "config.ts");
+	const aliasConsumerPath = path.join(appDir, "page.ts");
+
+	await writeFile(sourcePath, 'export const locale = "en";\n');
+	await writeFile(
+		relativeConsumerPath,
+		'import { locale } from "../locale";\nexport const config = { locale };\n'
+	);
+	await writeFile(
+		aliasConsumerPath,
+		'import { locale } from "@/lib/locale";\nexport const page = locale;\n'
+	);
+
+	return {
+		aliasConsumerPath,
+		relativeConsumerPath,
+		sourcePath,
+		targetPath,
+		tsconfigPath,
+	};
+}
+
 afterAll(async () => {
 	for (const dir of tempDirs) {
 		await rm(dir, { recursive: true, force: true });
@@ -238,5 +302,154 @@ describe("move CLI verification", () => {
 		expect(await Bun.file(sourcePath).exists()).toBe(false);
 		expect(await Bun.file(targetPath).exists()).toBe(true);
 		expect(await Bun.file(consumerPath).text()).toContain("./nested/source");
+	});
+});
+
+describe("move specifier style (#173)", () => {
+	test("preserves each importer's existing specifier style by default", async () => {
+		const {
+			aliasConsumerPath,
+			relativeConsumerPath,
+			sourcePath,
+			targetPath,
+			tsconfigPath,
+		} = await makeAliasedMoveProject();
+
+		const result = await runCli([
+			"move",
+			sourcePath,
+			targetPath,
+			"--force",
+			"-p",
+			tsconfigPath,
+		]);
+
+		expect(result.exitCode).toBe(0);
+		expect(await Bun.file(sourcePath).exists()).toBe(false);
+		expect(await Bun.file(targetPath).exists()).toBe(true);
+
+		// The relative importer must stay relative — an alias here breaks
+		// `node --experimental-strip-types`, which does not resolve tsconfig paths.
+		const relativeConsumer = await Bun.file(relativeConsumerPath).text();
+		expect(relativeConsumer).toContain('from "./locale"');
+		expect(relativeConsumer).not.toContain("@/lib");
+
+		// The aliased importer keeps its alias.
+		expect(await Bun.file(aliasConsumerPath).text()).toContain(
+			'from "@/lib/i18n/locale"'
+		);
+	});
+
+	test("--prefer=relative rewrites aliased importers to relative paths", async () => {
+		const {
+			aliasConsumerPath,
+			relativeConsumerPath,
+			sourcePath,
+			targetPath,
+			tsconfigPath,
+		} = await makeAliasedMoveProject();
+
+		const result = await runCli([
+			"move",
+			sourcePath,
+			targetPath,
+			"--prefer=relative",
+			"--force",
+			"-p",
+			tsconfigPath,
+		]);
+
+		expect(result.exitCode).toBe(0);
+		expect(await Bun.file(targetPath).exists()).toBe(true);
+
+		const aliasConsumer = await Bun.file(aliasConsumerPath).text();
+		expect(aliasConsumer).toContain('from "../lib/i18n/locale"');
+		expect(aliasConsumer).not.toContain("@/lib");
+
+		expect(await Bun.file(relativeConsumerPath).text()).toContain(
+			'from "./locale"'
+		);
+	});
+
+	test("--prefer=alias rewrites relative importers to aliases", async () => {
+		const { relativeConsumerPath, sourcePath, targetPath, tsconfigPath } =
+			await makeAliasedMoveProject();
+
+		const result = await runCli([
+			"move",
+			sourcePath,
+			targetPath,
+			"--prefer=alias",
+			"--force",
+			"-p",
+			tsconfigPath,
+		]);
+
+		expect(result.exitCode).toBe(0);
+		expect(await Bun.file(relativeConsumerPath).text()).toContain(
+			'from "@/lib/i18n/locale"'
+		);
+	});
+
+	test("rejects an unknown --prefer strategy", async () => {
+		const { sourcePath, targetPath, tsconfigPath } =
+			await makeAliasedMoveProject();
+
+		const result = await runCli([
+			"move",
+			sourcePath,
+			targetPath,
+			"--prefer=sideways",
+			"--force",
+			"-p",
+			tsconfigPath,
+		]);
+
+		expect(result.exitCode).not.toBe(0);
+		expect(result.stderr).toContain("--prefer must be");
+		// Nothing was written.
+		expect(await Bun.file(sourcePath).exists()).toBe(true);
+		expect(await Bun.file(targetPath).exists()).toBe(false);
+	});
+
+	test("accepts -n=false and performs the move (regression #173)", async () => {
+		const { sourcePath, targetPath, tsconfigPath } =
+			await makeAliasedMoveProject();
+
+		// Raw `-n=false` used to abort with `TypeError: Unknown option '='`.
+		const result = await runCli([
+			"move",
+			sourcePath,
+			targetPath,
+			"-n=false",
+			"--force",
+			"-p",
+			tsconfigPath,
+		]);
+
+		expect(result.exitCode).toBe(0);
+		expect(result.stderr).not.toContain("Unknown option");
+		expect(await Bun.file(sourcePath).exists()).toBe(false);
+		expect(await Bun.file(targetPath).exists()).toBe(true);
+	});
+
+	test("accepts -n=true and leaves the tree untouched", async () => {
+		const { sourcePath, targetPath, tsconfigPath } =
+			await makeAliasedMoveProject();
+
+		const result = await runCli([
+			"move",
+			sourcePath,
+			targetPath,
+			"-n=true",
+			"--force",
+			"-p",
+			tsconfigPath,
+		]);
+
+		expect(result.exitCode).toBe(0);
+		expect(result.stderr).not.toContain("Unknown option");
+		expect(await Bun.file(sourcePath).exists()).toBe(true);
+		expect(await Bun.file(targetPath).exists()).toBe(false);
 	});
 });

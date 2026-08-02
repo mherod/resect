@@ -4,17 +4,12 @@ import { parseArgs } from "node:util";
 import { version } from "../package.json";
 import { logger } from "./cli-logger.ts";
 import { CLI_NAME, formatCommandList } from "./commands/command-spec.ts";
-import { PARSE_ARGS_OPTIONS } from "./commands/option-flags.ts";
+import { PARSE_ARGS_OPTIONS, preprocessArgs } from "./commands/option-flags.ts";
 import type { CliValues } from "./commands/registry.ts";
 import { COMMANDS } from "./commands/registry.ts";
 
 const cliArgs = Bun.argv.slice(2);
-const rawArgs = cliArgs.flatMap((arg) => {
-	if (cliArgs[0] === "tidy" && arg.startsWith("--fix=")) {
-		return ["--fix", "--fix-category", arg.slice("--fix=".length)];
-	}
-	return [arg];
-});
+const rawArgs = preprocessArgs(cliArgs);
 
 const { values, positionals } = parseArgs({
 	args: rawArgs,

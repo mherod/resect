@@ -63,6 +63,63 @@ export const PARSE_ARGS_OPTIONS = OPTION_FLAGS as NonNullable<
 	ParseArgsConfig["options"]
 >;
 
+const BOOLEAN_FLAGS = new Set<string>();
+const SHORT_BOOLEAN_FLAGS = new Map<string, string>();
+
+for (const [name, spec] of Object.entries(OPTION_FLAGS) as [
+	string,
+	FlagSpec,
+][]) {
+	if (spec.type === "boolean") {
+		BOOLEAN_FLAGS.add(name);
+		if (spec.short) {
+			SHORT_BOOLEAN_FLAGS.set(spec.short, name);
+		}
+	}
+}
+
+const FALSY_VALUES = new Set(["false", "0", "no", "off"]);
+
+/**
+ * Preprocess CLI arguments to normalize special flags before passing to parseArgs.
+ * Standardizes boolean flags passed with equals syntax (e.g. -n=false, --dry-run=false).
+ */
+export function preprocessArgs(cliArgs: string[]): string[] {
+	return cliArgs.flatMap((arg) => {
+		if (cliArgs[0] === "tidy" && arg.startsWith("--fix=")) {
+			return ["--fix", "--fix-category", arg.slice("--fix=".length)];
+		}
+
+		if (arg.startsWith("--")) {
+			const eqIndex = arg.indexOf("=");
+			if (eqIndex !== -1) {
+				const flagName = arg.slice(2, eqIndex);
+				if (BOOLEAN_FLAGS.has(flagName)) {
+					const value = arg.slice(eqIndex + 1).toLowerCase();
+					if (FALSY_VALUES.has(value)) {
+						return [];
+					}
+					return [`--${flagName}`];
+				}
+			}
+		} else if (arg.startsWith("-") && arg.length > 1) {
+			const eqIndex = arg.indexOf("=");
+			if (eqIndex !== -1) {
+				const shortFlag = arg.slice(1, eqIndex);
+				if (SHORT_BOOLEAN_FLAGS.has(shortFlag)) {
+					const value = arg.slice(eqIndex + 1).toLowerCase();
+					if (FALSY_VALUES.has(value)) {
+						return [];
+					}
+					return [`-${shortFlag}`];
+				}
+			}
+		}
+
+		return [arg];
+	});
+}
+
 type FlagValue<F extends FlagSpec> = F extends { type: "boolean" }
 	? boolean
 	: F extends { type: "string"; multiple: true }

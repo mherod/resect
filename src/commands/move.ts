@@ -47,8 +47,8 @@ import { createSourceFileFromText } from "../core/source-file.ts";
 import {
 	applyTextChanges,
 	createStructuredEdit,
-	serializeStructuredEdits,
 	type StructuredEdit,
+	serializeStructuredEdits,
 } from "../core/text-changes.ts";
 import { loadTransformConfig } from "../core/transform-config.ts";
 import { applyTransformRules } from "../core/transform-visitor.ts";
@@ -81,6 +81,7 @@ import type {
 import type { TransformRewrite, TransformRule } from "../types/transform.ts";
 import type { MutatingCommandOptions, ProjectConfig } from "../types.ts";
 import { setupCommandContext } from "./command-context.ts";
+import type { PreferStrategy } from "./option-domains.ts";
 
 export interface MoveOptions extends MutatingCommandOptions {
 	source: string;
@@ -93,6 +94,15 @@ export interface MoveOptions extends MutatingCommandOptions {
 	 * A missing/malformed config fails the move and writes nothing.
 	 */
 	transform?: string;
+	/**
+	 * Import-specifier style for rewritten references (issue #173). Omitted, the
+	 * move preserves each importer's existing style — a relative specifier stays
+	 * relative, an aliased one stays aliased. `relative` forces relative paths so
+	 * the result runs under `node --experimental-strip-types`, which does not
+	 * resolve tsconfig `paths`; `alias` forces aliases; `shortest` picks whichever
+	 * specifier is shorter.
+	 */
+	prefer?: PreferStrategy;
 }
 
 export async function moveCommand(options: MoveOptions): Promise<void> {
@@ -105,6 +115,7 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 		verbose = false,
 		verify = true,
 		project: projectArg,
+		prefer,
 	} = options;
 
 	const absoluteSource = path.resolve(source);
@@ -191,7 +202,8 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 			json ? false : verbose,
 			workspace ?? undefined,
 			force,
-			transformRules
+			transformRules,
+			prefer
 		);
 
 		// For cross-package moves, run build scripts to update dist/. Keep this
@@ -557,7 +569,8 @@ export async function moveModule(
 	verbose: boolean,
 	workspace?: WorkspaceInfo,
 	force = false,
-	transformRules: TransformRule[] = []
+	transformRules: TransformRule[] = [],
+	prefer?: PreferStrategy
 ): Promise<MoveResult> {
 	const errors: MoveError[] = [];
 	const edits: StructuredEdit[] = [];
@@ -597,8 +610,8 @@ export async function moveModule(
 	const originalSourceContent = await rt.fs.readFile(sourcePath);
 	const shouldNormalizeMovedImports =
 		transformRules.length > 0 &&
-		applyTransformRules(originalSourceContent, targetPath, transformRules).rewrites
-			.length > 0;
+		applyTransformRules(originalSourceContent, targetPath, transformRules)
+			.rewrites.length > 0;
 
 	// Check target doesn't exist. On case-insensitive filesystems, the target
 	// path for a same-directory case-only rename aliases the source path.
@@ -888,15 +901,12 @@ export async function moveModule(
 				targetPath,
 				project,
 				workspace,
-				movedFileExports
+				movedFileExports,
+				prefer
 			);
 
 			if (updates.length > 0) {
-				const edit = createStructuredEdit(
-					filePath,
-					fileAst.text,
-					newContent
-				);
+				const edit = createStructuredEdit(filePath, fileAst.text, newContent);
 				if (edit) {
 					edits.push(edit);
 				}
@@ -937,7 +947,8 @@ export async function moveModule(
 				sourcePath,
 				targetPath,
 				project,
-				workspace
+				workspace,
+				prefer
 			);
 
 			if (updates.length > 0) {
@@ -1120,11 +1131,7 @@ function updateInternalImports(
 	for (const ref of refs) {
 		// Calculate what the import should be from the new location
 		let newSpecifier = preferRelative
-			? calculateRelativeSpecifier(
-					newPath,
-					ref.resolvedPath,
-					ref.specifier
-				)
+			? calculateRelativeSpecifier(newPath, ref.resolvedPath, ref.specifier)
 			: calculateNewSpecifier(
 					ref.specifier,
 					newPath, // Calculate from new location

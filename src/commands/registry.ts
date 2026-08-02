@@ -54,6 +54,13 @@ export const COMMANDS: CommandDef[] = [
 				logger.error(`Run '${CLI_NAME} move --help' for usage`);
 				process.exit(1);
 			}
+			const prefer = values.prefer;
+			if (prefer !== undefined && !isInDomain(PREFER_STRATEGIES, prefer)) {
+				logger.error(
+					"Error: --prefer must be 'alias', 'relative', or 'shortest'"
+				);
+				process.exit(1);
+			}
 			await moveCommand({
 				source,
 				target,
@@ -65,6 +72,7 @@ export const COMMANDS: CommandDef[] = [
 				project: values.project,
 				workspace: values.workspace,
 				transform: values.transform,
+				prefer,
 			});
 		},
 	},
