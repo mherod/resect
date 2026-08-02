@@ -1,9 +1,6 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
-import {
-	type DependencyGraph,
-	withGraphSourceFile,
-} from "../core/graph.ts";
+import { type DependencyGraph, withGraphSourceFile } from "../core/graph.ts";
 import { loadProject } from "../core/project.ts";
 import { findSubpathExportForFile, normalizePath } from "../core/resolver.ts";
 import { scanBarrelExports } from "../core/scanner.ts";

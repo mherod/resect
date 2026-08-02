@@ -1381,11 +1381,19 @@ export function formatTidyReport(report: TidyReport): string {
 export async function tidyCommand(options: TidyOptions): Promise<void> {
 	assertExperimental(options.experimental);
 	const report = await buildTidyReport(options);
-	const result = options.fix
-		? options.dryRun
+	let result: TidyApplyResult;
+	if (options.fix) {
+		result = options.dryRun
 			? await previewTidyFixes(report, options)
-			: await applyTidyFixes(report, options)
-		: { report, success: true, errors: [] };
+			: await applyTidyFixes(report, options);
+	} else {
+		result = {
+			report,
+			success: true,
+			errors: [],
+			worktreeDirtyRollbackDisabled: false,
+		};
+	}
 	const output = options.json
 		? `${JSON.stringify(result.report, null, 2)}\n`
 		: formatTidyReport(result.report);

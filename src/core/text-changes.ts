@@ -98,8 +98,7 @@ export function createStructuredEdit(
 	let commonSuffixLength = 0;
 	while (
 		commonSuffixLength < sharedLength - commonPrefixLength &&
-		before[before.length - commonSuffixLength - 1] ===
-			after[after.length - commonSuffixLength - 1]
+		before.at(-commonSuffixLength - 1) === after.at(-commonSuffixLength - 1)
 	) {
 		commonSuffixLength += 1;
 	}

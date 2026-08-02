@@ -1,8 +1,5 @@
 import path from "node:path";
-import {
-	formatUnifiedDiff,
-	type StructuredEdit,
-} from "./core/text-changes.ts";
+import { formatUnifiedDiff, type StructuredEdit } from "./core/text-changes.ts";
 
 /**
  * CLI Logger - Structured logging for user interface output

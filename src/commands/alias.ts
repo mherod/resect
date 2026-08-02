@@ -23,8 +23,8 @@ import {
 	createStructuredEdit,
 	deduplicateChanges,
 	formatUnifiedDiff,
-	serializeStructuredEdits,
 	type StructuredEdit,
+	serializeStructuredEdits,
 } from "../core/text-changes.ts";
 import { specifierEditsToTextChanges } from "../core/updater.ts";
 import {

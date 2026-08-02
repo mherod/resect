@@ -24,9 +24,7 @@ describe("unused command", () => {
 		expect(serverSource).toContain(
 			"orphanFileCount: report.orphanFiles.length"
 		);
-		expect(serverSource).toContain(
-			"skippedFileCount: report.skippedFileCount"
-		);
+		expect(serverSource).toContain("skippedFileCount: report.skippedFileCount");
 		expect(serverSource).toContain(
 			"coverageIncomplete: report.coverageIncomplete"
 		);

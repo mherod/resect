@@ -1721,9 +1721,7 @@ async function aliasTool(args: {
 			? renameImportSpecifiers(absoluteTarget, renames, project)
 			: normalizeImports(absoluteTarget, args.prefer ?? "alias", project);
 	result.edits =
-		result.conflicts.length === 0
-			? await planAliasEdits(result.changes)
-			: [];
+		result.conflicts.length === 0 ? await planAliasEdits(result.changes) : [];
 
 	let delta: VerificationResult | undefined;
 	let rolledBack = false;

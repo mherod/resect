@@ -5,8 +5,8 @@ import {
 	createStructuredEdit,
 	deduplicateChanges,
 	formatUnifiedDiff,
-	serializeStructuredEdits,
 	type StructuredEdit,
+	serializeStructuredEdits,
 	type TextChange,
 } from "./text-changes.ts";
 
@@ -173,7 +173,9 @@ describe("structured edit previews", () => {
 	});
 
 	test("returns no edit when the content is unchanged", () => {
-		expect(createStructuredEdit("src/example.ts", "same", "same")).toBeUndefined();
+		expect(
+			createStructuredEdit("src/example.ts", "same", "same")
+		).toBeUndefined();
 	});
 
 	test("rejects a structured edit when its old text is stale", () => {
