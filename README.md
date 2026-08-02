@@ -213,6 +213,24 @@ resect move src/a.ts src/nested/a.ts --prefer=shortest          # pick whichever
 
 Cross-package moves are unaffected — they still resolve to the destination package's import specifier.
 
+#### Batch moves
+
+Use one JSON manifest when many files need to move. Resect loads the project and dependency graph once, checks the worktree once, applies each move sequentially, and runs one before/after typecheck gate for the whole batch.
+
+```json
+[
+  { "source": "src/components/OldCard.tsx", "target": "src/components/old-card.tsx" },
+  { "source": "src/components/OldList.tsx", "target": "src/components/old-list.tsx" }
+]
+```
+
+```bash
+resect move --batch moves.json --dry-run
+resect move --batch moves.json
+```
+
+Manifest paths are resolved from the current working directory. Each entry must contain exactly one non-empty `source` and `target`. CLI options such as `--prefer`, `--transform`, `--force`, and `--no-verify` apply to the whole batch. A failed move is reported alongside successful moves, and the command exits non-zero if any move or the closing verification fails.
+
 ### `rename <file> <oldName> <newName>`
 
 Rename an exported symbol and update all imports.
@@ -651,6 +669,7 @@ Under Bun the default runtime works out of the box; subpath entry points `@mhero
 | `--force` | | Proceed past the dirty-worktree guard and similarity/conflict blocks (mutating commands) |
 | `--fix` | | Apply suggested fixes (mock-cleanup, test-relocation, naming, tidy) |
 | `--transform` | | Apply AST rewrites from a config during a move; takes a value: `--transform=.resect/transforms.js` |
+| `--batch` | | Apply move pairs from a JSON manifest using one shared project context |
 | `--type` | `-t` | Filter find results by type: `file`, `export`, or `all` |
 | `--prefer` | | Import-specifier strategy: `alias`, `relative`, or `shortest`. Required by `alias`; optional on `move`, where omitting it preserves each importer's existing style |
 | `--rename-specifier` | | Exact alias rewrite pair `<from>=<to>`; repeat for batch rewrites |

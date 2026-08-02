@@ -119,6 +119,19 @@ export {
 	moveModule,
 	rollbackTransformMove,
 } from "./commands/move.ts";
+export type {
+	MoveBatchEntry,
+	MoveBatchItemResult,
+	MoveBatchOptions,
+	MoveBatchResult,
+} from "./commands/move-batch.ts";
+export {
+	loadMoveBatchFile,
+	moveBatch,
+	moveBatchCommand,
+	serializeMoveBatchResult,
+	validateMoveBatch,
+} from "./commands/move-batch.ts";
 // ── Commands: naming ───────────────────────────────────────────────
 export {
 	buildNamingReport,

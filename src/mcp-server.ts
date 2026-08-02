@@ -63,6 +63,11 @@ import {
 	buildMockCleanupReport,
 } from "./commands/mock-cleanup.ts";
 import { moveModule, rollbackTransformMove } from "./commands/move.ts";
+import {
+	type MoveBatchEntry,
+	moveBatchWithDependencies,
+	serializeMoveBatchResult,
+} from "./commands/move-batch.ts";
 import { buildNamingReport } from "./commands/naming.ts";
 import {
 	FIND_TYPES,
@@ -1515,6 +1520,41 @@ server.registerTool(
 
 // ── Mutating tool implementations ──────────────────────────────────
 
+async function moveBatchTool(args: {
+	batch: MoveBatchEntry[];
+	project?: string;
+	dryRun: boolean;
+	force: boolean;
+	verify: boolean;
+	verbose: boolean;
+	transform?: string;
+	prefer?: PreferStrategy;
+}): Promise<CallToolResult> {
+	const result = await moveBatchWithDependencies(
+		{
+			moves: args.batch,
+			project: args.project,
+			dryRun: args.dryRun,
+			force: false,
+			verify: args.verify,
+			verbose: args.verbose,
+			transform: args.transform,
+			prefer: args.prefer,
+		},
+		{
+			ensureCleanWorktree: async (directory, _force, dryRun) => {
+				if (args.force || dryRun) {
+					return;
+				}
+				if (await isWorktreeDirty(directory)) {
+					throw new Error(WORKTREE_BLOCKED_MESSAGE);
+				}
+			},
+		}
+	);
+	return jsonText(serializeMoveBatchResult(result));
+}
+
 async function moveTool(args: {
 	source: string;
 	target: string;
@@ -1817,13 +1857,27 @@ server.registerTool(
 		inputSchema: {
 			source: z
 				.string()
+				.optional()
 				.describe(
-					"Absolute or cwd-relative path to the existing file to move (e.g. 'src/old/foo.ts')"
+					"Absolute or cwd-relative path to one existing file. Required with target when batch is omitted"
 				),
 			target: z
 				.string()
+				.optional()
 				.describe(
-					"Absolute or cwd-relative path the file should be moved to (e.g. 'src/new/foo.ts'). Must not already exist"
+					"Absolute or cwd-relative destination for source. Required with source when batch is omitted"
+				),
+			batch: z
+				.array(
+					z.object({
+						source: z.string().min(1),
+						target: z.string().min(1),
+					})
+				)
+				.min(1)
+				.optional()
+				.describe(
+					"Sequential source/target pairs executed with one project graph, worktree check, and typecheck gate. Supply instead of source+target"
 				),
 			project: z
 				.string()
@@ -1870,6 +1924,7 @@ server.registerTool(
 	async ({
 		source,
 		target,
+		batch,
 		project,
 		dryRun,
 		force,
@@ -1880,6 +1935,26 @@ server.registerTool(
 	}) => {
 		return withErrorHandling(async () => {
 			const defaults = await mcpConfig("move");
+			if (batch) {
+				if (source || target) {
+					return errorText(
+						"Provide either batch or source+target for move, not both."
+					);
+				}
+				return moveBatchTool({
+					batch,
+					project,
+					dryRun: dryRun ?? true,
+					force: force ?? false,
+					verify: verify ?? defaults.verify ?? true,
+					verbose: verbose ?? false,
+					transform: transform ?? defaults.transformConfigPath,
+					prefer: prefer ?? defaults.prefer,
+				});
+			}
+			if (!(source && target)) {
+				return errorText("Move requires source+target or a non-empty batch.");
+			}
 			return moveTool({
 				source,
 				target,

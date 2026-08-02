@@ -43,6 +43,7 @@ Options:
   -t, --type        Filter type for find command (file, export, all)
   --prefer          Strategy for alias command (alias, relative, shortest)
   --rename-specifier  Rewrite exact import specifier pairs: <from>=<to> (repeatable)
+  --batch           Move pairs from a JSON manifest using one shared project context
   --verify          Enable type checking verification, overriding project config
   --no-verify       Disable type checking verification (enabled by default)
   --verbose         Enable verbose output

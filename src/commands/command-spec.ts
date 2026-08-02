@@ -297,6 +297,7 @@ Examples:
 		summary: "Move a module and update all references",
 		cliHelp: `
 Usage: ${CLI_NAME} move <source> <target> [options]
+       ${CLI_NAME} move --batch <moves.json> [options]
 
 Move a TypeScript/JavaScript module to a new location and update all references.
 
@@ -310,6 +311,8 @@ Options:
   --force           Allow operation when git worktree has uncommitted changes
   --verbose         Show detailed information about each change
   --workspace       Scan across all workspace packages
+  --batch=PATH      Apply an array of { source, target } moves from a JSON file
+                    with one project load, worktree check, and verify gate
   --prefer=STRATEGY Import style for rewritten specifiers: alias, relative, or
                     shortest. Omit to keep each importer's existing style
                     (relative stays relative, aliased stays aliased). Use
@@ -332,9 +335,10 @@ Examples:
   ${CLI_NAME} move src/components/Button.tsx src/ui/Button.tsx --dry-run
   ${CLI_NAME} move lib/locale.ts lib/i18n/locale.ts --prefer=relative
   ${CLI_NAME} move src/config.ts packages/shared/src/config.ts --transform=.resect/transforms.js
+  ${CLI_NAME} move --batch moves.json --dry-run
 `,
 		mcpDescription:
-			"Move a TypeScript/JavaScript file to a new path and rewrite every import that referenced it. Updates relative and alias specifiers, splits mixed barrel imports when only some bindings moved, updates barrel re-exports for same-package moves, and rewrites cross-package imports to use the destination package name (adding a barrel export at the destination when needed). Same-package rewrites preserve each importer's existing specifier style — a relative import stays relative, an aliased one stays aliased — and `prefer` overrides that with 'alias', 'relative', or 'shortest'. Defaults to `dryRun: true` so callers preview the change first; when `dryRun: false` and `verify: true` (both default) the tool runs `tsc --noEmit` before AND after the move and returns the diagnostic delta in `typecheck` — `newErrors` lists any errors the move introduced. A dirty worktree is returned as an error unless `force: true`. Returns success flag, updated reference list, errors, worktree-dirty flag, and (when verified) the typecheck delta.",
+			"Move one TypeScript/JavaScript file, or a batch of source/target pairs, and rewrite every affected import. Batch mode reuses one project graph, checks the worktree once, applies moves sequentially, and runs one before/after typecheck gate. Updates relative and alias specifiers, barrel re-exports, and cross-package imports. Same-package rewrites preserve each importer's existing style unless `prefer` is 'alias', 'relative', or 'shortest'. Defaults to `dryRun: true`. Supply either source+target or batch, never both.",
 	},
 	{
 		name: "rename",

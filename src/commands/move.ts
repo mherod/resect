@@ -15,6 +15,7 @@ import {
 import { ensureCleanWorktree } from "../core/git.ts";
 import {
 	buildDependencyGraph,
+	type DependencyGraph,
 	findAllReferences,
 	findBarrelReExports,
 } from "../core/graph.ts";
@@ -356,7 +357,7 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 	}
 }
 
-async function runPackageBuilds(
+export async function runPackageBuilds(
 	sourcePath: string,
 	targetPath: string,
 	workspace: WorkspaceInfo,
@@ -590,6 +591,17 @@ async function applyCrossPackageDependencyPlan(
 	}));
 }
 
+/**
+ * Shared, incrementally updated analysis state for a sequence of moves.
+ * Single-move callers omit this and retain the regular graph-cache path.
+ */
+export interface MoveModuleContext {
+	graph: DependencyGraph;
+	readFile: (filePath: string) => Promise<string>;
+	exists: (filePath: string) => Promise<boolean>;
+	getSourceFile: (filePath: string) => Promise<ts.SourceFile | undefined>;
+}
+
 export async function moveModule(
 	sourcePath: string,
 	targetPath: string,
@@ -599,7 +611,8 @@ export async function moveModule(
 	workspace?: WorkspaceInfo,
 	force = false,
 	transformRules: TransformRule[] = [],
-	prefer?: PreferStrategy
+	prefer?: PreferStrategy,
+	context?: MoveModuleContext
 ): Promise<MoveResult> {
 	const errors: MoveError[] = [];
 	const edits: StructuredEdit[] = [];
@@ -607,6 +620,10 @@ export async function moveModule(
 	const dependencyChanges: DependencyChange[] = [];
 	const transformRewrites: TransformRewrite[] = [];
 	const rt = getRuntime();
+	const readFile =
+		context?.readFile ?? (async (filePath) => rt.fs.readFile(filePath));
+	const fileExists =
+		context?.exists ?? (async (filePath) => rt.fs.exists(filePath));
 
 	// Apply the configured accessor rewrites (#103 B) to the moved file's content
 	// just before it is written. Positional edits only — no AST reserialize. A
@@ -621,7 +638,7 @@ export async function moveModule(
 	};
 
 	// Validate source exists
-	if (!(await rt.fs.exists(sourcePath))) {
+	if (!(await fileExists(sourcePath))) {
 		return {
 			success: false,
 			movedFile: { from: sourcePath, to: targetPath },
@@ -636,7 +653,7 @@ export async function moveModule(
 			],
 		};
 	}
-	const originalSourceContent = await rt.fs.readFile(sourcePath);
+	const originalSourceContent = await readFile(sourcePath);
 	const shouldNormalizeMovedImports =
 		transformRules.length > 0 &&
 		applyTransformRules(originalSourceContent, targetPath, transformRules)
@@ -647,7 +664,7 @@ export async function moveModule(
 	const targetAliasesSource =
 		isSameDirectoryCaseOnlyRename(sourcePath, targetPath) &&
 		(await shouldUseSafeCaseRename(sourcePath, targetPath));
-	if ((await rt.fs.exists(targetPath)) && !targetAliasesSource) {
+	if ((await fileExists(targetPath)) && !targetAliasesSource) {
 		return {
 			success: false,
 			movedFile: { from: sourcePath, to: targetPath },
@@ -667,7 +684,7 @@ export async function moveModule(
 	if (verbose) {
 		logger.info("Building dependency graph...");
 	}
-	const graph = await buildDependencyGraph(project);
+	const graph = context?.graph ?? (await buildDependencyGraph(project));
 
 	// Determine if this is a cross-package move early (needed for ref collection strategy)
 	const crossPackage = workspace
@@ -705,7 +722,9 @@ export async function moveModule(
 	// sets it for project-loaded graphs, so the fallback only fires for
 	// test-constructed graphs that bypass buildDependencyGraph.
 	const program = graph.program ?? createProgram(project);
-	const sourceAst = program.getSourceFile(sourcePath);
+	const getSourceFile =
+		context?.getSourceFile ?? ((file) => program.getSourceFile(file));
+	const sourceAst = await getSourceFile(sourcePath);
 
 	// Scan exports from the source file for cross-package move handling
 	const movedFileExports = sourceAst ? scanExports(sourceAst) : [];
@@ -720,8 +739,8 @@ export async function moveModule(
 		let targetBarrelAst: ts.SourceFile | undefined;
 		if (workspace) {
 			const destBarrelPath = findDestinationBarrel(targetPath, workspace);
-			if (destBarrelPath && (await rt.fs.exists(destBarrelPath))) {
-				const barrelContent = await rt.fs.readFile(destBarrelPath);
+			if (destBarrelPath && (await fileExists(destBarrelPath))) {
+				const barrelContent = await readFile(destBarrelPath);
 				targetBarrelAst = createSourceFileFromText(
 					destBarrelPath,
 					barrelContent
@@ -741,7 +760,7 @@ export async function moveModule(
 			if (!ref.bindings) {
 				continue;
 			}
-			const importingAst = program.getSourceFile(ref.sourceFile);
+			const importingAst = await getSourceFile(ref.sourceFile);
 			if (!importingAst) {
 				continue;
 			}
@@ -866,7 +885,9 @@ export async function moveModule(
 
 	let movedContent = originalSourceContent;
 	if (sourceAst) {
-		const internalRefs = scanModuleReferences(sourceAst, project);
+		const internalRefs = context
+			? (graph.imports.get(normalizePath(sourcePath)) ?? [])
+			: scanModuleReferences(sourceAst, project);
 		if (internalRefs.length > 0) {
 			// Calculate updated internal imports
 			const { newContent, updates } = updateInternalImports(
@@ -914,7 +935,7 @@ export async function moveModule(
 		}
 
 		try {
-			const fileAst = program.getSourceFile(filePath);
+			const fileAst = await getSourceFile(filePath);
 			if (!fileAst) {
 				errors.push({
 					file: filePath,
@@ -962,7 +983,7 @@ export async function moveModule(
 		}
 
 		try {
-			const barrelAst = program.getSourceFile(barrelPath);
+			const barrelAst = await getSourceFile(barrelPath);
 			if (!barrelAst) {
 				errors.push({
 					file: barrelPath,
@@ -1009,8 +1030,8 @@ export async function moveModule(
 		const destBarrelPath = findDestinationBarrel(targetPath, workspace);
 		if (destBarrelPath) {
 			try {
-				if (await rt.fs.exists(destBarrelPath)) {
-					const barrelContent = await rt.fs.readFile(destBarrelPath);
+				if (await fileExists(destBarrelPath)) {
+					const barrelContent = await readFile(destBarrelPath);
 					const { newContent, update } = addExportToDestinationBarrel(
 						barrelContent,
 						targetPath,
@@ -1053,7 +1074,7 @@ export async function moveModule(
 	if (dependencyPlan) {
 		try {
 			if (dependencyPlan.additions.length > 0) {
-				const packageJsonContent = await rt.fs.readFile(
+				const packageJsonContent = await readFile(
 					dependencyPlan.targetPkg.packageJsonPath
 				);
 				const updatedPackageJson = serializePackageJson(

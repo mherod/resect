@@ -58,6 +58,7 @@ const EXPECTED_FLAGS = [
 	"ignore",
 	"entrypoint-globs",
 	"transform",
+	"batch",
 ] as const;
 
 describe("option-flags", () => {
@@ -123,6 +124,7 @@ describe("option-flags", () => {
 			"convention-threshold",
 			"ignore",
 			"transform",
+			"batch",
 		] as const;
 
 		for (const flag of stringFlags) {
@@ -203,6 +205,7 @@ describe("option-flags", () => {
 			ignore: "**/*.test.ts",
 			"entrypoint-globs": ["src/**/*.ts"],
 			transform: ".resect/transforms.js",
+			batch: "moves.json",
 		};
 		expect(_fixture.help).toBe(true);
 	});

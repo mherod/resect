@@ -13,6 +13,7 @@ import { findCommand } from "./find.ts";
 import { inlineCommand } from "./inline.ts";
 import { mockCleanupCommand } from "./mock-cleanup.ts";
 import { moveCommand } from "./move.ts";
+import { moveBatchCommand } from "./move-batch.ts";
 import { namingCommand } from "./naming.ts";
 import { FIND_TYPES, isInDomain, PREFER_STRATEGIES } from "./option-domains.ts";
 import type { CliValues } from "./option-flags.ts";
@@ -49,8 +50,15 @@ export const COMMANDS: CommandDef[] = [
 		name: "move",
 		helpText: cliHelp("move"),
 		run: async ([source, target], values) => {
-			if (!(source && target)) {
+			if (values.batch && (source || target)) {
+				logger.error(
+					"Error: move accepts either <source> <target> or --batch <moves.json>, not both"
+				);
+				process.exit(1);
+			}
+			if (!(values.batch || (source && target))) {
 				logger.error("Error: move requires <source> and <target> arguments");
+				logger.error("       or provide --batch <moves.json>");
 				logger.error(`Run '${CLI_NAME} move --help' for usage`);
 				process.exit(1);
 			}
@@ -61,6 +69,23 @@ export const COMMANDS: CommandDef[] = [
 				);
 				process.exit(1);
 			}
+			if (values.batch) {
+				await moveBatchCommand({
+					batch: values.batch,
+					dryRun: values["dry-run"],
+					force: values.force,
+					json: values.json,
+					verbose: values.verbose,
+					verify: !values["no-verify"],
+					project: values.project,
+					workspace: values.workspace,
+					transform: values.transform,
+					prefer,
+				});
+				return;
+			}
+			requireArg("move", "<source>", source);
+			requireArg("move", "<target>", target);
 			await moveCommand({
 				source,
 				target,

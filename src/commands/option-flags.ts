@@ -57,6 +57,7 @@ export const OPTION_FLAGS = {
 	ignore: { type: "string" },
 	"entrypoint-globs": { type: "string", multiple: true },
 	transform: { type: "string" },
+	batch: { type: "string" },
 } as const satisfies Record<string, FlagSpec>;
 
 /** The exact object shape `parseArgs({ options })` expects. */
