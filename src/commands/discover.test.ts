@@ -28,6 +28,32 @@ describe("discover command", () => {
 		await cleanup(dir);
 	});
 
+	test("surfaces resolved project config", async () => {
+		const dir = await makeFixture("config", {
+			".resect/config.json": JSON.stringify({
+				prefer: "alias",
+				verify: true,
+				commands: { move: { prefer: "relative" } },
+			}),
+			"tsconfig.json": JSON.stringify({ include: ["src/**/*.ts"] }),
+			"src/index.ts": "export const x = 1;",
+		});
+
+		const proc = Bun.spawn([...CLI, "discover", dir], {
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		const stdout = await new Response(proc.stdout).text();
+		await proc.exited;
+		expect(proc.exitCode).toBe(0);
+		expect(stdout).toContain("Resect config: .resect/config.json");
+		expect(stdout).toContain("Global: prefer=alias");
+		expect(stdout).toContain("move: prefer=relative");
+		expect(stdout).toContain("verify=true");
+
+		await cleanup(dir);
+	});
+
 	test("reports no tsconfig files when none exist", async () => {
 		const dir = await makeFixture("empty", {
 			"src/index.ts": "export const x = 1;",

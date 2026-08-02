@@ -85,6 +85,11 @@ import { findUnusedExports } from "./commands/unused.ts";
 import { isWorktreeDirty } from "./core/git.ts";
 import { buildDependencyGraph } from "./core/graph.ts";
 import { loadProject, resolveTsConfig } from "./core/project.ts";
+import {
+	loadResectConfig,
+	type ResolvedResectConfig,
+	resolveResectConfig,
+} from "./core/project-config.ts";
 import { analyzeSimilarity } from "./core/similarity.ts";
 import { serializeStructuredEdits } from "./core/text-changes.ts";
 import { loadTransformConfig } from "./core/transform-config.ts";
@@ -160,6 +165,10 @@ function tsconfigNotFound(targetPath: string): CallToolResult {
 /** Error message returned by mutating tools when the worktree is dirty and force is off. */
 const WORKTREE_BLOCKED_MESSAGE =
 	"Working tree has uncommitted changes. Commit/stash first, or rerun with force=true.";
+
+async function mcpConfig(command: string): Promise<ResolvedResectConfig> {
+	return resolveResectConfig(await loadResectConfig(), command);
+}
 
 // ── Tool implementations ────────────────────────────────────────────
 
@@ -1077,7 +1086,12 @@ server.registerTool(
 	},
 	async ({ directory, project, ignore, entrypointGlobs }) => {
 		return withErrorHandling(async () => {
-			return unusedTool(directory, { project, ignore, entrypointGlobs });
+			const defaults = await mcpConfig("unused");
+			return unusedTool(directory, {
+				project,
+				ignore: ignore ?? defaults.ignore,
+				entrypointGlobs,
+			});
 		});
 	}
 );
@@ -1262,6 +1276,7 @@ server.registerTool(
 		exportThreshold,
 	}) => {
 		return withErrorHandling(async () => {
+			const defaults = await mcpConfig("tidy");
 			return tidyTool(directory, {
 				experimental,
 				project,
@@ -1270,7 +1285,7 @@ server.registerTool(
 				dryRun,
 				force,
 				fixCategories,
-				aliasPrefer,
+				aliasPrefer: aliasPrefer ?? defaults.prefer,
 				maxChanges,
 				fanOutThreshold,
 				fanInThreshold,
@@ -1386,7 +1401,11 @@ server.registerTool(
 	},
 	async ({ directory, project, ignore }) => {
 		return withErrorHandling(async () => {
-			return organiseTool(directory, { project, ignore });
+			const defaults = await mcpConfig("organise");
+			return organiseTool(directory, {
+				project,
+				ignore: ignore ?? defaults.ignore,
+			});
 		});
 	}
 );
@@ -1483,11 +1502,12 @@ server.registerTool(
 	},
 	async ({ directory, project, dryRun, force, verify }) => {
 		return withErrorHandling(async () => {
+			const defaults = await mcpConfig("mock-cleanup");
 			return mockCleanupTool(directory, {
 				project,
 				dryRun,
 				force,
-				verify,
+				verify: verify ?? defaults.verify,
 			});
 		});
 	}
@@ -1859,16 +1879,17 @@ server.registerTool(
 		prefer,
 	}) => {
 		return withErrorHandling(async () => {
+			const defaults = await mcpConfig("move");
 			return moveTool({
 				source,
 				target,
 				project,
 				dryRun: dryRun ?? true,
 				force: force ?? false,
-				verify: verify ?? true,
+				verify: verify ?? defaults.verify ?? true,
 				verbose: verbose ?? false,
-				transform,
-				prefer,
+				transform: transform ?? defaults.transformConfigPath,
+				prefer: prefer ?? defaults.prefer,
 			});
 		});
 	}
@@ -1935,6 +1956,7 @@ server.registerTool(
 		verbose,
 	}) => {
 		return withErrorHandling(async () => {
+			const defaults = await mcpConfig("rename");
 			return renameTool({
 				file,
 				oldName,
@@ -1942,7 +1964,7 @@ server.registerTool(
 				project,
 				dryRun: dryRun ?? true,
 				force: force ?? false,
-				verify: verify ?? true,
+				verify: verify ?? defaults.verify ?? true,
 				verbose: verbose ?? false,
 			});
 		});
@@ -2007,14 +2029,15 @@ server.registerTool(
 		verify,
 	}) => {
 		return withErrorHandling(async () => {
+			const defaults = await mcpConfig("alias");
 			return aliasTool({
 				target,
-				prefer,
+				prefer: prefer ?? defaults.prefer,
 				renameSpecifiers,
 				project,
 				dryRun: dryRun ?? true,
 				force: force ?? false,
-				verify: verify ?? true,
+				verify: verify ?? defaults.verify ?? true,
 			});
 		});
 	}
@@ -2237,6 +2260,7 @@ server.registerTool(
 		strict,
 	}) => {
 		return withErrorHandling(async () => {
+			const defaults = await mcpConfig("extract-common");
 			return extractCommonTool({
 				directory,
 				project,
@@ -2246,7 +2270,7 @@ server.registerTool(
 				workspace: workspace ?? false,
 				dryRun: dryRun ?? true,
 				force: force ?? false,
-				verify: verify ?? true,
+				verify: verify ?? defaults.verify ?? true,
 				nameThreshold,
 				sameNameOnly,
 				skipSameFile,
@@ -2364,12 +2388,13 @@ server.registerTool(
 	},
 	async ({ barrelFile, project, dryRun, force, verify }) => {
 		return withErrorHandling(async () => {
+			const defaults = await mcpConfig("inline");
 			return inlineTool({
 				barrelFile,
 				project,
 				dryRun: dryRun ?? true,
 				force: force ?? false,
-				verify: verify ?? true,
+				verify: verify ?? defaults.verify ?? true,
 			});
 		});
 	}

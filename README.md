@@ -161,6 +161,28 @@ A missing or malformed config fails fast with a clear error and writes nothing �
 
 The same option is available on the MCP `move` tool (pass `transform: "<path>"`) and the library `moveModule()`, which accepts the parsed `TransformRule[]` directly.
 
+## Project-wide defaults
+
+Put shared command defaults in `resect.config.ts` or `.resect/config.json`. Resect searches upward from the current working directory; when both files exist at the same level, `resect.config.ts` wins.
+
+```ts
+// resect.config.ts
+export default {
+  prefer: "alias",
+  ignore: "**/*.generated.ts",
+  verify: true,
+  transformConfigPath: ".resect/transforms.js",
+  commands: {
+    move: { prefer: "relative" },
+    unused: { ignore: "**/*.test.ts" },
+  },
+};
+```
+
+The equivalent JSON shape is supported in `.resect/config.json`. `transformConfigPath` is resolved relative to the directory containing the config.
+
+Precedence is: explicit CLI flag or MCP argument → command-specific default → global default → built-in behavior. Use `--verify` to override `verify: false`, or `--no-verify` to override `verify: true`. The `prefer`, `ignore`, and `verify` defaults are used by commands that expose those options; `transformConfigPath` supplies `move`'s transform config when `--transform` is omitted. `resect discover <directory>` prints the config it found and the resolved global and per-command values.
+
 ## Commands
 
 ### `move <source> <target>`
@@ -624,6 +646,7 @@ Under Bun the default runtime works out of the box; subpath entry points `@mhero
 | `--dry-run` | `-n` | Preview changes without modifying files |
 | `--project` | `-p` | Path to project directory or tsconfig.json |
 | `--verbose` | | Enable detailed output |
+| `--verify` | | Enable type checking verification, overriding project config |
 | `--no-verify` | | Skip type checking verification (not recommended) |
 | `--force` | | Proceed past the dirty-worktree guard and similarity/conflict blocks (mutating commands) |
 | `--fix` | | Apply suggested fixes (mock-cleanup, test-relocation, naming, tidy) |

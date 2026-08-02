@@ -4,9 +4,14 @@ import { parseArgs } from "node:util";
 import { version } from "../package.json";
 import { logger } from "./cli-logger.ts";
 import { CLI_NAME, formatCommandList } from "./commands/command-spec.ts";
+import { applyResectConfigToCliValues } from "./commands/config-defaults.ts";
 import { PARSE_ARGS_OPTIONS, preprocessArgs } from "./commands/option-flags.ts";
 import type { CliValues } from "./commands/registry.ts";
 import { COMMANDS } from "./commands/registry.ts";
+import {
+	loadResectConfig,
+	resolveResectConfig,
+} from "./core/project-config.ts";
 
 const cliArgs = Bun.argv.slice(2);
 const rawArgs = preprocessArgs(cliArgs);
@@ -38,6 +43,7 @@ Options:
   -t, --type        Filter type for find command (file, export, all)
   --prefer          Strategy for alias command (alias, relative, shortest)
   --rename-specifier  Rewrite exact import specifier pairs: <from>=<to> (repeatable)
+  --verify          Enable type checking verification, overriding project config
   --no-verify       Disable type checking verification (enabled by default)
   --verbose         Enable verbose output
   --json            Output results as JSON
@@ -121,7 +127,12 @@ async function main() {
 		process.exit(1);
 	}
 
-	await cmd.run(args, values as CliValues);
+	const loadedConfig = await loadResectConfig();
+	const configuredValues = applyResectConfigToCliValues(
+		values as CliValues,
+		resolveResectConfig(loadedConfig, command)
+	);
+	await cmd.run(args, configuredValues);
 }
 
 main().catch((error) => {

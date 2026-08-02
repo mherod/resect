@@ -1,10 +1,7 @@
-import { createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { getRuntime } from "../runtime/index.ts";
 import type { TransformRule } from "../types/transform.ts";
+import { loadConfigModule } from "./config-module.ts";
 
 /**
  * Loader + validator for a declarative `.resect/transforms.js` config (epic
@@ -23,12 +20,6 @@ import type { TransformRule } from "../types/transform.ts";
 
 /** The conventional default config location, relative to the project root. */
 export const DEFAULT_TRANSFORM_CONFIG_PATH = ".resect/transforms.js";
-
-/**
- * Per-path cache of validated rules keyed by content hash, so an unchanged
- * config is not re-imported on every call while an edited one always is (#145).
- */
-const configCache = new Map<string, { hash: string; rules: TransformRule[] }>();
 
 /**
  * Resolve `configPath` against `rootDir` (absolute paths pass through), load the
@@ -61,34 +52,9 @@ export async function loadTransformConfig(
 		);
 	}
 
-	const source = await rt.fs.readFile(absPath);
-	const hash = createHash("sha256").update(source).digest("hex");
-	const cached = configCache.get(absPath);
-	if (cached?.hash === hash) {
-		return cached.rules;
-	}
-
-	let mod: unknown;
-	let loadDir: string | undefined;
-	try {
-		loadDir = await mkdtemp(path.join(tmpdir(), "resect-transform-load-"));
-		const ext = path.extname(absPath) || ".js";
-		const loadPath = path.join(loadDir, `transforms${ext}`);
-		await rt.fs.writeFile(loadPath, source);
-		mod = await import(pathToFileURL(loadPath).href);
-	} catch (error) {
-		const detail = error instanceof Error ? error.message : String(error);
-		throw new Error(`Failed to load transform config ${absPath}: ${detail}`);
-	} finally {
-		if (loadDir) {
-			await rm(loadDir, { recursive: true, force: true }).catch(
-				() => undefined
-			);
-		}
-	}
+	const mod = await loadConfigModule(absPath, "transform config");
 
 	const rules = validateTransformConfig(unwrapModule(mod), absPath);
-	configCache.set(absPath, { hash, rules });
 	return rules;
 }
 

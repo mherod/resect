@@ -1,6 +1,11 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
 import {
+	loadResectConfig,
+	type ResectConfigDefaults,
+	resolveResectConfig,
+} from "../core/project-config.ts";
+import {
 	discoverProject,
 	type ProjectDiscovery,
 	type TsConfigInfo,
@@ -19,6 +24,7 @@ export interface DiscoverOptions extends ReadOnlyCommandOptions {
 export async function discoverCommand(options: DiscoverOptions): Promise<void> {
 	const { directory, verbose, workspace = false, onlyRelatedTo } = options;
 	const absoluteDir = path.resolve(directory);
+	await printResectConfig(absoluteDir);
 
 	if (workspace) {
 		const wsInfo = await discoverWorkspace(absoluteDir);
@@ -96,6 +102,38 @@ export async function discoverCommand(options: DiscoverOptions): Promise<void> {
 	} else {
 		printDiscovery(discovery, absoluteDir, verbose);
 	}
+}
+
+async function printResectConfig(baseDir: string): Promise<void> {
+	const loaded = await loadResectConfig(baseDir);
+	if (!loaded) {
+		logger.info("⚙️  Resect config: none (built-in defaults)\n");
+		return;
+	}
+
+	const relativePath =
+		path.relative(baseDir, loaded.path) || path.basename(loaded.path);
+	logger.info(`⚙️  Resect config: ${relativePath}`);
+	logger.info(
+		`   Global: ${formatResectDefaults(resolveResectConfig(loaded, ""))}`
+	);
+
+	const commands = Object.keys(loaded.config.commands ?? {}).sort();
+	for (const command of commands) {
+		logger.info(
+			`   ${command}: ${formatResectDefaults(resolveResectConfig(loaded, command))}`
+		);
+	}
+	logger.empty();
+}
+
+function formatResectDefaults(defaults: ResectConfigDefaults): string {
+	return [
+		`prefer=${defaults.prefer ?? "<built-in>"}`,
+		`ignore=${defaults.ignore ?? "<built-in>"}`,
+		`verify=${defaults.verify ?? "<built-in>"}`,
+		`transformConfigPath=${defaults.transformConfigPath ?? "<built-in>"}`,
+	].join(", ");
 }
 
 function printDiscovery(
