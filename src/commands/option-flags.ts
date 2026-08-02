@@ -79,45 +79,89 @@ for (const [name, spec] of Object.entries(OPTION_FLAGS) as [
 }
 
 const FALSY_VALUES = new Set(["false", "0", "no", "off"]);
+const TRUTHY_VALUES = new Set(["true", "1", "yes", "on"]);
+
+/**
+ * Normalize `<flag>=<value>` for a boolean flag into the bare-flag form
+ * `parseArgs` accepts. Only explicit truthy/falsy spellings are recognised:
+ * returning `null` for anything else leaves the token untouched so `parseArgs`
+ * raises its own strict error, rather than turning a typo like `--force=fales`
+ * into an enabled `--force` that would silently bypass the worktree guard.
+ */
+function normalizeBooleanFlag(
+	bareFlag: string,
+	rawValue: string
+): string[] | null {
+	const value = rawValue.toLowerCase();
+	if (FALSY_VALUES.has(value)) {
+		return [];
+	}
+	if (TRUTHY_VALUES.has(value)) {
+		return [bareFlag];
+	}
+	return null;
+}
 
 /**
  * Preprocess CLI arguments to normalize special flags before passing to parseArgs.
  * Standardizes boolean flags passed with equals syntax (e.g. -n=false, --dry-run=false).
+ *
+ * Everything after a bare `--` is left verbatim: `parseArgs` treats those tokens
+ * as positionals, so rewriting them would drop dash-prefixed paths such as
+ * `move -- --dry-run=false target.ts`.
  */
 export function preprocessArgs(cliArgs: string[]): string[] {
-	return cliArgs.flatMap((arg) => {
-		if (cliArgs[0] === "tidy" && arg.startsWith("--fix=")) {
-			return ["--fix", "--fix-category", arg.slice("--fix=".length)];
+	const out: string[] = [];
+	let sawSeparator = false;
+
+	for (const arg of cliArgs) {
+		if (sawSeparator) {
+			out.push(arg);
+			continue;
+		}
+		if (arg === "--") {
+			sawSeparator = true;
+			out.push(arg);
+			continue;
 		}
 
-		if (arg.startsWith("--")) {
-			const eqIndex = arg.indexOf("=");
-			if (eqIndex !== -1) {
+		if (cliArgs[0] === "tidy" && arg.startsWith("--fix=")) {
+			out.push("--fix", "--fix-category", arg.slice("--fix=".length));
+			continue;
+		}
+
+		const eqIndex = arg.indexOf("=");
+		let normalized: string[] | null = null;
+
+		if (eqIndex !== -1) {
+			if (arg.startsWith("--")) {
 				const flagName = arg.slice(2, eqIndex);
 				if (BOOLEAN_FLAGS.has(flagName)) {
-					const value = arg.slice(eqIndex + 1).toLowerCase();
-					if (FALSY_VALUES.has(value)) {
-						return [];
-					}
-					return [`--${flagName}`];
+					normalized = normalizeBooleanFlag(
+						`--${flagName}`,
+						arg.slice(eqIndex + 1)
+					);
 				}
-			}
-		} else if (arg.startsWith("-") && arg.length > 1) {
-			const eqIndex = arg.indexOf("=");
-			if (eqIndex !== -1) {
+			} else if (arg.startsWith("-") && arg.length > 1) {
 				const shortFlag = arg.slice(1, eqIndex);
-				if (SHORT_BOOLEAN_FLAGS.has(shortFlag)) {
-					const value = arg.slice(eqIndex + 1).toLowerCase();
-					if (FALSY_VALUES.has(value)) {
-						return [];
-					}
-					return [`-${shortFlag}`];
+				const longName = SHORT_BOOLEAN_FLAGS.get(shortFlag);
+				if (longName !== undefined) {
+					normalized = normalizeBooleanFlag(
+						`-${shortFlag}`,
+						arg.slice(eqIndex + 1)
+					);
 				}
 			}
 		}
 
-		return [arg];
-	});
+		if (normalized === null) {
+			out.push(arg);
+		} else {
+			out.push(...normalized);
+		}
+	}
+
+	return out;
 }
 
 type FlagValue<F extends FlagSpec> = F extends { type: "boolean" }
