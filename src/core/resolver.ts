@@ -386,7 +386,14 @@ export function calculateRelativeSpecifier(
 		: path.resolve(fromFile);
 	const absToFile = path.isAbsolute(toFile) ? toFile : path.resolve(toFile);
 	const fromDir = path.dirname(absFromFile);
-	let relativePath = path.relative(fromDir, absToFile);
+	// `path.relative` yields platform separators, so on Windows this is
+	// `..\lib\locale`. A module specifier is a string literal: backslashes read
+	// as escapes, not separators, and the `/index` collapse below would miss.
+	// Module specifiers are always POSIX-style.
+	let relativePath = path
+		.relative(fromDir, absToFile)
+		.split(path.sep)
+		.join("/");
 
 	// Preserve the original specifier's extension style:
 	// if the old specifier had a .ts/.tsx/etc extension, keep it;
