@@ -6,7 +6,8 @@
       "Bash(bun run typecheck:*)",
       "Bash(bun test:*)",
       "Skill(update-memory)",
-      "Skill(commit)"
+      "Skill(commit)",
+      "Bash(gh issue *)"
     ]
   }
 }
