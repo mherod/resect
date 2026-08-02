@@ -847,7 +847,8 @@ export async function moveModule(
 				targetPath,
 				project,
 				program,
-				shouldNormalizeMovedImports
+				shouldNormalizeMovedImports,
+				prefer
 			);
 
 			if (updates.length > 0) {
@@ -1123,13 +1124,18 @@ function updateInternalImports(
 	newPath: string,
 	project: ProjectConfig,
 	program: ts.Program,
-	preferRelative = false
+	preferRelative = false,
+	prefer?: PreferStrategy
 ): { newContent: string; updates: UpdatedReference[] } {
 	const changes: { start: number; end: number; newText: string }[] = [];
 	const updates: UpdatedReference[] = [];
 
 	for (const ref of refs) {
-		// Calculate what the import should be from the new location
+		// Calculate what the import should be from the new location.
+		// `preferRelative` is the transform-gated normalisation (#103 C);
+		// `prefer` is the user's explicit `--prefer` strategy (#173), which must
+		// reach the moved file's own imports too — otherwise `--prefer=relative`
+		// converts external importers but leaves aliases inside the moved file.
 		let newSpecifier = preferRelative
 			? calculateRelativeSpecifier(newPath, ref.resolvedPath, ref.specifier)
 			: calculateNewSpecifier(
@@ -1137,7 +1143,8 @@ function updateInternalImports(
 					newPath, // Calculate from new location
 					ref.resolvedPath,
 					ref.resolvedPath, // Target hasn't moved
-					project
+					project,
+					prefer
 				);
 
 		// #121: an alias/bare import that the move turned into a relative

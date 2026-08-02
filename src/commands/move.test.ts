@@ -119,7 +119,13 @@ async function makeAliasedMoveProject(): Promise<{
 	const relativeConsumerPath = path.join(i18nDir, "config.ts");
 	const aliasConsumerPath = path.join(appDir, "page.ts");
 
-	await writeFile(sourcePath, 'export const locale = "en";\n');
+	// The moved file itself imports a sibling via the alias, so tests can assert
+	// that --prefer reaches the moved module's own imports too (PR #174 review).
+	await writeFile(path.join(libDir, "util.ts"), "export const util = 1;\n");
+	await writeFile(
+		sourcePath,
+		'import { util } from "@/lib/util";\nexport const locale = "en";\nexport const revision = util;\n'
+	);
 	await writeFile(
 		relativeConsumerPath,
 		'import { locale } from "../locale";\nexport const config = { locale };\n'
@@ -369,6 +375,46 @@ describe("move specifier style (#173)", () => {
 		expect(await Bun.file(relativeConsumerPath).text()).toContain(
 			'from "./locale"'
 		);
+	});
+
+	test("--prefer=relative also converts imports inside the moved file", async () => {
+		// PR #174 review (P1): --prefer was applied to external importers but not
+		// to the moved module's own imports, so an alias survived inside the very
+		// file the strip-types use case is about.
+		const { sourcePath, targetPath, tsconfigPath } =
+			await makeAliasedMoveProject();
+
+		const result = await runCli([
+			"move",
+			sourcePath,
+			targetPath,
+			"--prefer=relative",
+			"--force",
+			"-p",
+			tsconfigPath,
+		]);
+
+		expect(result.exitCode).toBe(0);
+		const moved = await Bun.file(targetPath).text();
+		expect(moved).toContain('from "../util"');
+		expect(moved).not.toContain("@/lib/util");
+	});
+
+	test("default preserves the moved file's own alias import", async () => {
+		const { sourcePath, targetPath, tsconfigPath } =
+			await makeAliasedMoveProject();
+
+		const result = await runCli([
+			"move",
+			sourcePath,
+			targetPath,
+			"--force",
+			"-p",
+			tsconfigPath,
+		]);
+
+		expect(result.exitCode).toBe(0);
+		expect(await Bun.file(targetPath).text()).toContain('from "@/lib/util"');
 	});
 
 	test("--prefer=alias rewrites relative importers to aliases", async () => {
