@@ -1166,6 +1166,71 @@ function markRolledBack(applied: TidyAppliedFix[]): TidyAppliedFix[] {
 	return applied.map((fix) => ({ ...fix, wasRolledBack: true }));
 }
 
+async function rollbackAppliedTidyChanges(options: {
+	applyResult: AppliedTidyChanges;
+	planned: PlannedTidyChange[];
+	projectRoot: string;
+}): Promise<void> {
+	if (options.applyResult.moveRenames.length > 0) {
+		await rollbackMoves(
+			options.projectRoot,
+			options.applyResult.moveRenames,
+			options.applyResult.importerFiles
+		);
+	}
+	const textFiles = Array.from(
+		new Set(
+			options.planned
+				.filter((item): item is PlannedTextChange => item.kind === "text")
+				.map((item) => path.relative(options.projectRoot, item.file))
+		)
+	);
+	if (textFiles.length > 0) {
+		await rollbackFiles(options.projectRoot, textFiles);
+	}
+}
+
+async function failedTidyVerificationResult(options: {
+	applyResult: AppliedTidyChanges;
+	delta: TypecheckDelta;
+	planned: PlannedTidyChange[];
+	projectRoot: string;
+	reason: string;
+	report: TidyReport;
+	rollbackEnabled: boolean;
+}): Promise<TidyApplyResult> {
+	let applied = options.applyResult.applied;
+	if (options.rollbackEnabled) {
+		await rollbackAppliedTidyChanges(options);
+		applied = markRolledBack(applied);
+	}
+	const error = options.rollbackEnabled
+		? `tidy rolled back because ${options.reason}.`
+		: `tidy verification failed; rollback was disabled (--force on dirty tree) — ${applied.length} change(s) remain applied. Reason: ${options.reason}.`;
+
+	return {
+		report: applyReportMutation(options.report, applied, options.delta),
+		success: false,
+		errors: [error],
+		worktreeDirtyRollbackDisabled: !options.rollbackEnabled,
+	};
+}
+
+function typecheckExceptionDelta(
+	before: Awaited<ReturnType<typeof runTypeCheckDetailed>>,
+	error: unknown
+): TypecheckDelta {
+	const message = error instanceof Error ? error.message : String(error);
+	return {
+		errorsBefore: before.errors.length,
+		errorsAfter: before.errors.length,
+		newErrors: [],
+		fixedCount: 0,
+		verificationIncomplete: true,
+		incompleteReason: [message],
+	};
+}
+
 function applyReportMutation(
 	report: TidyReport,
 	applied: TidyAppliedFix[],
@@ -1238,48 +1303,41 @@ export async function applyTidyFixes(
 		context.reportDirectory,
 		context.project
 	);
-	let applied = applyResult.applied;
-	const after = await runTypeCheckDetailed(context.project);
+	let after: Awaited<ReturnType<typeof runTypeCheckDetailed>>;
+	try {
+		after = await runTypeCheckDetailed(context.project);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return failedTidyVerificationResult({
+			applyResult,
+			delta: typecheckExceptionDelta(before, error),
+			planned,
+			projectRoot: context.project.rootDir,
+			reason: `type checking failed: ${message}`,
+			report: reportWithEdits,
+			rollbackEnabled,
+		});
+	}
 	const delta = typecheckDelta({ before, after });
 	const shouldRollback =
 		delta.verificationIncomplete || delta.newErrors.length > 0;
 	if (shouldRollback) {
-		if (rollbackEnabled) {
-			// Move-aware rollback: reverse renames + created targets via the move
-			// pipeline's inverse, then git-restore the text-edited files. Both are
-			// safe here — the worktree was clean before apply (rollbackEnabled).
-			if (applyResult.moveRenames.length > 0) {
-				await rollbackMoves(
-					context.project.rootDir,
-					applyResult.moveRenames,
-					applyResult.importerFiles
-				);
-			}
-			const textFiles = Array.from(
-				new Set(
-					planned
-						.filter((item): item is PlannedTextChange => item.kind === "text")
-						.map((item) => path.relative(context.project.rootDir, item.file))
-				)
-			);
-			if (textFiles.length > 0) {
-				await rollbackFiles(context.project.rootDir, textFiles);
-			}
-			applied = markRolledBack(applied);
-		}
 		const reason = delta.verificationIncomplete
 			? "type checking did not complete"
 			: "type checking introduced new errors";
-		return {
-			report: applyReportMutation(reportWithEdits, applied, delta),
-			success: false,
-			errors: [`tidy rolled back because ${reason}.`],
-			worktreeDirtyRollbackDisabled: !rollbackEnabled,
-		};
+		return failedTidyVerificationResult({
+			applyResult,
+			delta,
+			planned,
+			projectRoot: context.project.rootDir,
+			reason,
+			report: reportWithEdits,
+			rollbackEnabled,
+		});
 	}
 
 	return {
-		report: applyReportMutation(reportWithEdits, applied, delta),
+		report: applyReportMutation(reportWithEdits, applyResult.applied, delta),
 		success: true,
 		errors: [],
 		worktreeDirtyRollbackDisabled: !rollbackEnabled,

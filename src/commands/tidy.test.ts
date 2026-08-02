@@ -1,7 +1,10 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { loadProject } from "../core/project.ts";
+import { bunRuntime, setRuntime } from "../runtime/index.ts";
 import { CLI, cleanup, makeFixture as makeFixtureBase } from "./__test-helpers";
+import { applyTidyFixes, buildTidyReport } from "./tidy.ts";
 
 // These tests spawn the CLI subprocess and run tsc --noEmit before+after a fix,
 // which can exceed bun's 5s default under full-suite CPU contention. Match the
@@ -395,6 +398,131 @@ export function usedInternal() {
 		expect(content).not.toContain("export function helper()");
 
 		await cleanup(dir);
+	});
+
+	test("--force reports that failed verification leaves changes applied", async () => {
+		const dir = await makeGitFixture("force-dirty-verification-failure", {
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: {
+					strict: true,
+					types: ["missing-resect-test-types"],
+				},
+				include: ["**/*.ts"],
+			}),
+			"src/util.ts": `
+export function helper() {
+	return 1;
+}
+
+export function usedInternal() {
+	return helper();
+}
+`,
+			"src/dirty.ts": "export const dirty = true;\n",
+		});
+		const utilFile = path.join(dir, "src/util.ts");
+		await writeFile(
+			path.join(dir, "src/dirty.ts"),
+			"export const dirty = false;\n"
+		);
+
+		const proc = Bun.spawn(
+			[
+				...CLI,
+				"tidy",
+				path.join(dir, "src"),
+				"--experimental",
+				"--fix",
+				"--force",
+				"--json",
+			],
+			{ stdout: "pipe", stderr: "pipe" }
+		);
+		const [stdout, stderr] = await Promise.all([
+			new Response(proc.stdout).text(),
+			new Response(proc.stderr).text(),
+		]);
+		await proc.exited;
+
+		expect(proc.exitCode).toBe(1);
+		expect(stderr).toContain(
+			"verification failed; rollback was disabled (--force on dirty tree) — 1 change(s) remain applied"
+		);
+		const report = JSON.parse(stdout);
+		expect(report.applied).toContainEqual(
+			expect.objectContaining({
+				target: "helper",
+				wasRolledBack: false,
+			})
+		);
+		expect(await readFile(utilFile, "utf8")).not.toContain(
+			"export function helper"
+		);
+
+		await cleanup(dir);
+	});
+
+	test("rolls back when post-apply verification throws", async () => {
+		const dir = await makeGitFixture("verification-exception", {
+			"src/util.ts": `
+export function helper() {
+	return 1;
+}
+
+export function usedInternal() {
+	return helper();
+}
+`,
+		});
+		const directory = path.join(dir, "src");
+		const utilFile = path.join(directory, "util.ts");
+		const options = {
+			directory,
+			experimental: true,
+			fix: true,
+		};
+		const report = await buildTidyReport(options);
+		const project = loadProject(path.join(dir, "tsconfig.json"));
+		const execProcess = bunRuntime.process.exec.bind(bunRuntime.process);
+		let typecheckRuns = 0;
+		setRuntime({
+			...bunRuntime,
+			process: {
+				exec: async (command, processOptions) => {
+					if (path.basename(command[0] ?? "") === "tsc") {
+						typecheckRuns += 1;
+						if (typecheckRuns === 2) {
+							throw new Error("simulated post-apply spawn failure");
+						}
+					}
+					return execProcess(command, processOptions);
+				},
+			},
+		});
+
+		try {
+			const result = await applyTidyFixes(report, options, {
+				project,
+				reportDirectory: directory,
+			});
+
+			expect(result.success).toBe(false);
+			expect(result.errors).toContain(
+				"tidy rolled back because type checking failed: simulated post-apply spawn failure."
+			);
+			expect(result.report.applied).toContainEqual(
+				expect.objectContaining({
+					target: "helper",
+					wasRolledBack: true,
+				})
+			);
+			expect(await readFile(utilFile, "utf8")).toContain(
+				"export function helper"
+			);
+		} finally {
+			setRuntime(bunRuntime);
+			await cleanup(dir);
+		}
 	});
 
 	test("--max-changes aborts before writing", async () => {
