@@ -1155,14 +1155,14 @@ function updateInternalImports(
 ): { newContent: string; updates: UpdatedReference[] } {
 	const changes: { start: number; end: number; newText: string }[] = [];
 	const updates: UpdatedReference[] = [];
+	const useTransformRelativeDefault = preferRelative && prefer === undefined;
 
 	for (const ref of refs) {
 		// Calculate what the import should be from the new location.
-		// `preferRelative` is the transform-gated normalisation (#103 C);
+		// `preferRelative` is the transform-gated default (#103 C);
 		// `prefer` is the user's explicit `--prefer` strategy (#173), which must
-		// reach the moved file's own imports too — otherwise `--prefer=relative`
-		// converts external importers but leaves aliases inside the moved file.
-		let newSpecifier = preferRelative
+		// override that default for the moved file's own imports too (#148).
+		let newSpecifier = useTransformRelativeDefault
 			? calculateRelativeSpecifier(newPath, ref.resolvedPath, ref.specifier)
 			: calculateNewSpecifier(
 					ref.specifier,

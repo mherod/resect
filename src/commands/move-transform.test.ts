@@ -5,6 +5,7 @@ import { loadTransformConfig } from "../core/transform-config.ts";
 import type { TransformRule } from "../types/transform.ts";
 import { cleanup, makeFixture } from "./__test-helpers.ts";
 import { moveModule } from "./move.ts";
+import type { PreferStrategy } from "./option-domains.ts";
 
 // Track every fixture and clean up once at the end: an afterEach that drained a
 // shared list would delete a fixture another test is still using under
@@ -21,13 +22,20 @@ const TRANSFORMS_JS =
 
 const SOURCE_WITH_ACCESSOR =
 	"export const apiUrl = import.meta.env.VITE_API_URL;\n";
+const API_TRANSFORM_RULES: TransformRule[] = [
+	{
+		from: "import.meta.env.VITE_API_URL",
+		to: "process.env.NEXT_PUBLIC_API_URL",
+	},
+];
 
 async function moveWithTransform(
 	dir: string,
 	source: string,
 	target: string,
 	rules: TransformRule[],
-	dryRun = false
+	dryRun = false,
+	prefer?: PreferStrategy
 ) {
 	const absSource = path.join(dir, source);
 	const tsconfigPath = resolveTsConfig(dir, path.dirname(absSource));
@@ -43,8 +51,35 @@ async function moveWithTransform(
 		false,
 		undefined,
 		false,
-		rules
+		rules,
+		prefer
 	);
+}
+
+async function makeAliasedTransformFixture(
+	name: string,
+	importSpecifier: string
+): Promise<string> {
+	const dir = await makeFixture(name, {
+		"tsconfig.json": JSON.stringify({
+			compilerOptions: {
+				baseUrl: ".",
+				module: "ESNext",
+				moduleResolution: "Bundler",
+				paths: { "@/*": ["src/*"] },
+				target: "ESNext",
+			},
+			include: ["src/**/*.ts"],
+		}),
+		"src/config.ts": [
+			`import { format } from "${importSpecifier}";`,
+			"export const apiUrl = format(import.meta.env.VITE_API_URL);",
+			"",
+		].join("\n"),
+		"src/utils.ts": "export const format = (value: string) => value;\n",
+	});
+	dirs.push(dir);
+	return dir;
 }
 
 describe("move --transform application (#124)", () => {
@@ -126,5 +161,45 @@ describe("move --transform application (#124)", () => {
 		);
 		const original = await Bun.file(path.join(dir, "src/config.ts")).text();
 		expect(original).toBe(SOURCE_WITH_ACCESSOR);
+	});
+
+	test("--prefer=alias normalizes the transformed file to a matching alias", async () => {
+		const dir = await makeAliasedTransformFixture(
+			"move-transform-alias",
+			"./utils"
+		);
+
+		const result = await moveWithTransform(
+			dir,
+			"src/config.ts",
+			"src/env/config.ts",
+			API_TRANSFORM_RULES,
+			false,
+			"alias"
+		);
+
+		expect(result.success).toBe(true);
+		const moved = await Bun.file(path.join(dir, "src/env/config.ts")).text();
+		expect(moved).toContain('from "@/utils"');
+		expect(moved).toContain("process.env.NEXT_PUBLIC_API_URL");
+	});
+
+	test("a transform without --prefer keeps the relative default", async () => {
+		const dir = await makeAliasedTransformFixture(
+			"move-transform-relative-default",
+			"@/utils"
+		);
+
+		const result = await moveWithTransform(
+			dir,
+			"src/config.ts",
+			"src/env/config.ts",
+			API_TRANSFORM_RULES
+		);
+
+		expect(result.success).toBe(true);
+		const moved = await Bun.file(path.join(dir, "src/env/config.ts")).text();
+		expect(moved).toContain('from "../utils"');
+		expect(moved).not.toContain('from "@/utils"');
 	});
 });
