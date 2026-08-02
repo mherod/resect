@@ -12,7 +12,7 @@ import {
 	safeCaseRename,
 	shouldUseSafeCaseRename,
 } from "../core/filesystem-case.ts";
-import { ensureCleanWorktree, rollbackMoves } from "../core/git.ts";
+import { ensureCleanWorktree } from "../core/git.ts";
 import {
 	buildDependencyGraph,
 	findAllReferences,
@@ -37,6 +37,11 @@ import {
 	isRelativeImport,
 	normalizePath,
 } from "../core/resolver.ts";
+import {
+	createMoveRollbackStrategy,
+	createRollbackCheckpoint,
+	tryRestoreRollback,
+} from "../core/rollback.ts";
 import {
 	scanBarrelExports,
 	scanExports,
@@ -1112,17 +1117,14 @@ export async function rollbackTransformMove(
 	project: ProjectConfig,
 	result: MoveResult
 ): Promise<boolean> {
-	try {
-		const importerFiles = new Set(result.updatedReferences.map((r) => r.file));
-		await rollbackMoves(
+	const checkpoint = await createRollbackCheckpoint(
+		createMoveRollbackStrategy(
 			project.rootDir,
 			[{ from: result.movedFile.from, to: result.movedFile.to }],
-			importerFiles
-		);
-		return true;
-	} catch {
-		return false;
-	}
+			result.updatedReferences.map((reference) => reference.file)
+		)
+	);
+	return tryRestoreRollback(checkpoint);
 }
 
 async function moveFileWithContent(

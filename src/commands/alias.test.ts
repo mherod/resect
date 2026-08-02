@@ -2,10 +2,11 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { loadProject } from "../core/project.ts";
-import { captureOutput, runCli } from "./__test-helpers.ts";
+import { captureOutput, runCli, runGitCommand } from "./__test-helpers.ts";
 import {
 	aliasCommand,
 	applyChanges,
+	applyChangesWithVerification,
 	parseSpecifierRenames,
 	renameImportSpecifiers,
 } from "./alias.ts";
@@ -158,6 +159,40 @@ describe("applyChanges — AST-targeted specifier replacement", () => {
 
 		const result = await Bun.file(filePath).text();
 		expect(result).toContain('import("@/utils")');
+	});
+});
+
+describe("applyChangesWithVerification", () => {
+	test("restores import edits when verification introduces an error", async () => {
+		const { dir, projectPath, srcDir } = await writeAliasProject({
+			"src/utils/foo.ts": "export const foo = 1;\n",
+			"src/consumer.ts": 'import { foo } from "@utils/foo";\nexport { foo };\n',
+		});
+		await runGitCommand(dir, ["init", "-b", "main"]);
+		await runGitCommand(dir, ["config", "user.email", "resect-test"]);
+		await runGitCommand(dir, ["config", "user.name", "Resect Test"]);
+		await runGitCommand(dir, ["add", "."]);
+		await runGitCommand(dir, ["commit", "-m", "fixture"]);
+		const consumerPath = path.join(srcDir, "consumer.ts");
+		const before = await Bun.file(consumerPath).text();
+		const project = loadProject(projectPath);
+
+		const result = await applyChangesWithVerification(
+			[
+				{
+					file: consumerPath,
+					line: 1,
+					oldSpecifier: "@utils/foo",
+					newSpecifier: "@utils/missing",
+					strategy: "alias",
+				},
+			],
+			project
+		);
+
+		expect(result.success).toBe(false);
+		expect(result.newErrors.length).toBeGreaterThan(0);
+		expect(await Bun.file(consumerPath).text()).toBe(before);
 	});
 });
 

@@ -8,6 +8,25 @@ import { moveModule } from "./move.ts";
 
 export const CLI = ["bun", path.resolve(import.meta.dir, "../cli.ts")];
 
+export async function runGitCommand(
+	cwd: string,
+	args: string[]
+): Promise<void> {
+	const proc = Bun.spawn(["git", ...args], {
+		cwd,
+		stdout: "pipe",
+		stderr: "pipe",
+	});
+	const [stdout, stderr] = await Promise.all([
+		new Response(proc.stdout).text(),
+		new Response(proc.stderr).text(),
+	]);
+	await proc.exited;
+	if (proc.exitCode !== 0) {
+		throw new Error(`git ${args.join(" ")} failed: ${stdout}${stderr}`);
+	}
+}
+
 /**
  * Run `moveModule` against a fixture directory, resolving its tsconfig and
  * (optional) workspace the way the cross-package move suites need. Shared by

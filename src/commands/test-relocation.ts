@@ -3,7 +3,7 @@ import path from "node:path";
 import { logger } from "../cli-logger.ts";
 import { mapConcurrent } from "../core/concurrency.ts";
 import { TS_JS_VUE_EXTENSIONS } from "../core/constants.ts";
-import { ensureCleanWorktree, rollbackFiles } from "../core/git.ts";
+import { ensureCleanWorktree } from "../core/git.ts";
 import {
 	buildProjectGraphs,
 	type DependencyGraph,
@@ -12,10 +12,13 @@ import {
 import { isWithinPath, toRelativePath } from "../core/path-utils.ts";
 import { loadProject, resolveTsConfig } from "../core/project.ts";
 import { normalizePath } from "../core/resolver.ts";
+import {
+	createMoveRollbackStrategy,
+	createRollbackCheckpoint,
+} from "../core/rollback.ts";
 import { isTestFile } from "../core/test-files.ts";
 import { runTypeCheckDetailed } from "../core/verify.ts";
 import { discoverWorkspace } from "../core/workspace.ts";
-import { getRuntime } from "../runtime/index.ts";
 import type { MoveResult } from "../types/move.ts";
 import type {
 	TestRelocation,
@@ -328,25 +331,6 @@ export async function buildTestRelocationReport(
 	});
 }
 
-async function rollbackRelocations(
-	reportDirectory: string,
-	relocations: TestRelocation[]
-): Promise<void> {
-	const paths = relocations.flatMap((relocation) => {
-		const { source, target } = absoluteRelocation(relocation, reportDirectory);
-		return [source, target];
-	});
-	await rollbackFiles(reportDirectory, paths);
-
-	const rt = getRuntime();
-	for (const relocation of relocations) {
-		const { target } = absoluteRelocation(relocation, reportDirectory);
-		if (await rt.fs.exists(target)) {
-			await rt.fs.deleteFile(target);
-		}
-	}
-}
-
 async function ensureTargetDirectories(
 	reportDirectory: string,
 	relocations: TestRelocation[]
@@ -436,7 +420,22 @@ export async function applyRelocations(
 	const verificationIncomplete =
 		before?.incomplete === true || after.incomplete;
 	if (newErrors.length > 0 || verificationIncomplete) {
-		await rollbackRelocations(options.reportDirectory, report.findings);
+		const rollback = await createRollbackCheckpoint(
+			createMoveRollbackStrategy(
+				options.project.rootDir,
+				report.findings.map((relocation) => {
+					const { source, target } = absoluteRelocation(
+						relocation,
+						options.reportDirectory
+					);
+					return { from: source, to: target };
+				}),
+				moves.flatMap((move) =>
+					move.updatedReferences.map((reference) => reference.file)
+				)
+			)
+		);
+		await rollback.restore();
 		return {
 			dryRun: false,
 			success: false,

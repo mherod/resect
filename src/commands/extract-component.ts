@@ -10,6 +10,10 @@ import {
 	resolveTsConfig,
 } from "../core/project.ts";
 import { calculateRelativeSpecifier } from "../core/resolver.ts";
+import {
+	createFileContentsRollbackStrategy,
+	createRollbackCheckpoint,
+} from "../core/rollback.ts";
 import { parseSourceFile } from "../core/source-file.ts";
 import { applyTextChanges, type TextChange } from "../core/text-changes.ts";
 import { runTypeCheckDetailed } from "../core/verify.ts";
@@ -931,26 +935,6 @@ export function planExtractComponentWrites(params: {
 	};
 }
 
-interface FileSnapshot {
-	file: string;
-	existed: boolean;
-	original: string | null;
-}
-
-/** Restore snapshotted files: rewrite originals back, delete files we created. */
-async function rollbackExtractComponent(
-	snapshots: FileSnapshot[]
-): Promise<void> {
-	const rt = getRuntime();
-	await mapConcurrent(snapshots, async (snapshot) => {
-		if (snapshot.existed && snapshot.original !== null) {
-			await rt.fs.writeFile(snapshot.file, snapshot.original);
-		} else if (await rt.fs.exists(snapshot.file)) {
-			await rt.fs.deleteFile(snapshot.file);
-		}
-	});
-}
-
 /**
  * Apply an extraction end-to-end: locate + classify + codegen, then write the
  * new module and rewrite the original call site, guarded by the dirty-worktree
@@ -1062,14 +1046,9 @@ export async function executeExtractComponent(
 
 	await ensureCleanWorktree(path.dirname(absolutePath), force, dryRun);
 
-	const snapshots = await mapConcurrent(plan.writes, async (write) => {
-		const existed = await rt.fs.exists(write.file);
-		return {
-			file: write.file,
-			existed,
-			original: existed ? await rt.fs.readFile(write.file) : null,
-		};
-	});
+	const rollback = await createRollbackCheckpoint(
+		createFileContentsRollbackStrategy(plan.writes.map((write) => write.file))
+	);
 
 	const before = await runTypeCheckDetailed(project);
 	await mapConcurrent(plan.writes, async (write) =>
@@ -1091,7 +1070,7 @@ export async function executeExtractComponent(
 	};
 
 	if (newErrors.length > 0 || verificationIncomplete) {
-		await rollbackExtractComponent(snapshots);
+		await rollback.restore();
 		return {
 			...planned,
 			success: false,

@@ -3,7 +3,12 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { loadProject } from "../core/project.ts";
 import { bunRuntime, setRuntime } from "../runtime/index.ts";
-import { CLI, cleanup, makeFixture as makeFixtureBase } from "./__test-helpers";
+import {
+	CLI,
+	cleanup,
+	makeFixture as makeFixtureBase,
+	runGitCommand,
+} from "./__test-helpers";
 import { applyTidyFixes, buildTidyReport } from "./tidy.ts";
 
 // These tests spawn the CLI subprocess and run tsc --noEmit before+after a fix,
@@ -22,28 +27,12 @@ async function makeGitFixture(name: string, files: Record<string, string>) {
 		tsconfig: true,
 		outsideRepo: true,
 	});
-	await gitCommand(dir, ["init", "-b", "main"]);
-	await gitCommand(dir, ["config", "user.email", "resect-test"]);
-	await gitCommand(dir, ["config", "user.name", "Test User"]);
-	await gitCommand(dir, ["add", "."]);
-	await gitCommand(dir, ["commit", "-m", "initial"]);
+	await runGitCommand(dir, ["init", "-b", "main"]);
+	await runGitCommand(dir, ["config", "user.email", "resect-test"]);
+	await runGitCommand(dir, ["config", "user.name", "Test User"]);
+	await runGitCommand(dir, ["add", "."]);
+	await runGitCommand(dir, ["commit", "-m", "initial"]);
 	return dir;
-}
-
-async function gitCommand(cwd: string, args: string[]): Promise<void> {
-	const proc = Bun.spawn(["git", ...args], {
-		cwd,
-		stdout: "pipe",
-		stderr: "pipe",
-	});
-	const [stdout, stderr] = await Promise.all([
-		new Response(proc.stdout).text(),
-		new Response(proc.stderr).text(),
-	]);
-	await proc.exited;
-	if (proc.exitCode !== 0) {
-		throw new Error(`git ${args.join(" ")} failed: ${stdout}${stderr}`);
-	}
 }
 
 const DUPLICATE_A = `

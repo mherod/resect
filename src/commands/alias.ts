@@ -3,7 +3,7 @@ import { logger } from "../cli-logger.ts";
 import ts from "../core/ast-utils.ts";
 import { mapConcurrent } from "../core/concurrency.ts";
 import { diffDiagnostics } from "../core/diagnostics.ts";
-import { ensureCleanWorktree, rollbackFiles } from "../core/git.ts";
+import { ensureCleanWorktree } from "../core/git.ts";
 import { createProgram, loadProject } from "../core/project.ts";
 import {
 	calculateRelativeSpecifier,
@@ -12,6 +12,10 @@ import {
 	normalizePath,
 	resolveModuleSpecifier,
 } from "../core/resolver.ts";
+import {
+	createGitFilesRollbackStrategy,
+	createRollbackCheckpoint,
+} from "../core/rollback.ts";
 import { scanModuleReferences } from "../core/scanner.ts";
 import {
 	createSourceFileFromText,
@@ -659,6 +663,12 @@ export async function applyChangesWithVerification(
 	changes: AliasChange[],
 	project: ProjectConfig
 ): Promise<VerificationResult> {
+	const rollback = await createRollbackCheckpoint(
+		createGitFilesRollbackStrategy(
+			project.rootDir,
+			changes.map((change) => change.file)
+		)
+	);
 	const before = await runTypeCheckDetailed(project);
 	await applyChanges(changes);
 	const after = await runTypeCheckDetailed(project);
@@ -678,20 +688,10 @@ export async function applyChangesWithVerification(
 	};
 
 	if (!result.success) {
-		await rollbackChanges(project.rootDir, changes);
+		await rollback.restore();
 	}
 
 	return result;
-}
-
-async function rollbackChanges(
-	rootDir: string,
-	changes: readonly AliasChange[]
-): Promise<void> {
-	const files = [...new Set(changes.map((change) => change.file))].map((file) =>
-		path.relative(rootDir, file)
-	);
-	await rollbackFiles(rootDir, files);
 }
 
 export async function applyChanges(changes: AliasChange[]): Promise<void> {
