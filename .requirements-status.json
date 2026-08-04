@@ -2,26 +2,26 @@
   "schemaVersion": 2,
   "projectId": "mherod/resect",
   "requirementsFile": "REQUIREMENTS.md",
-  "requirementsSha256": "f024fa44456f25ae9c2ebf68b52b8b3cd803aab7f977360001c7e442b3bb17e0",
-  "sourceCommit": "25a550694c510eceb4d9d8afdb1bfb2d91be6f57",
-  "generatedAt": "2026-08-02T20:05:51Z",
+  "requirementsSha256": "da20eeae1600b8164492da41d2d37415b5f09c4c33da98cf787391855130dbb0",
+  "sourceCommit": "c9f20b2ff4bc9f66947a2110aafcbc064e399c38",
+  "generatedAt": "2026-08-04T16:33:48Z",
   "validator": {
     "name": "generate-requirements",
     "version": "2.0.0",
-    "command": "bun $HOME/.codex/skills/generate-requirements/scripts/validate-bdd.js REQUIREMENTS.md --status-log .requirements-status.json"
+    "command": "bun $HOME/.agents/skills/generate-requirements/scripts/validate-bdd.js REQUIREMENTS.md --status-log .requirements-status.json"
   },
   "validation": {
     "structure": {
       "status": "PASS",
-      "receiptId": "STRUCT-20260802-001",
+      "receiptId": "STRUCT-20260804-001",
       "validator": "validate-bdd",
       "validatorVersion": "2.0.0",
-      "command": "bun $HOME/.codex/skills/generate-requirements/scripts/validate-bdd.js REQUIREMENTS.md --status-log .requirements-status.json",
-      "requirementsSha256": "f024fa44456f25ae9c2ebf68b52b8b3cd803aab7f977360001c7e442b3bb17e0",
-      "sourceCommit": "25a550694c510eceb4d9d8afdb1bfb2d91be6f57",
-      "generatedAt": "2026-08-02T20:05:51Z",
+      "command": "bun $HOME/.agents/skills/generate-requirements/scripts/validate-bdd.js REQUIREMENTS.md --status-log .requirements-status.json",
+      "requirementsSha256": "da20eeae1600b8164492da41d2d37415b5f09c4c33da98cf787391855130dbb0",
+      "sourceCommit": "c9f20b2ff4bc9f66947a2110aafcbc064e399c38",
+      "generatedAt": "2026-08-04T16:33:48Z",
       "counts": {
-        "checked": 21,
+        "checked": 25,
         "errors": 0,
         "warnings": 1
       },
@@ -31,70 +31,71 @@
     },
     "documentQuality": {
       "status": "PASS",
-      "receiptId": "QUALITY-20260802-001",
+      "receiptId": "QUALITY-20260804-001",
       "validator": "generate-requirements-manual-review",
       "validatorVersion": "2.0.0",
       "command": "generate-requirements 2.0 manual review of REQUIREMENTS.md",
-      "requirementsSha256": "f024fa44456f25ae9c2ebf68b52b8b3cd803aab7f977360001c7e442b3bb17e0",
-      "sourceCommit": "25a550694c510eceb4d9d8afdb1bfb2d91be6f57",
-      "generatedAt": "2026-08-02T20:05:51Z",
+      "requirementsSha256": "da20eeae1600b8164492da41d2d37415b5f09c4c33da98cf787391855130dbb0",
+      "sourceCommit": "c9f20b2ff4bc9f66947a2110aafcbc064e399c38",
+      "generatedAt": "2026-08-04T16:33:48Z",
       "counts": {
-        "checked": 21,
+        "checked": 25,
         "errors": 0,
         "warnings": 1
       },
       "notes": [
-        "Reviewed all 21 scenarios for product-first wording, one-trigger atomicity, actor and limitation coverage, lifecycle mapping, cross-cutting applicability, and decision completeness.",
+        "Reviewed all 25 scenarios for product-first wording, one-trigger atomicity, actor and limitation coverage, lifecycle mapping, cross-cutting applicability, and decision completeness.",
         "The preamble warning is disposed in receipts.preamble; no priority-skew warning was computed."
       ]
     },
     "implementation": {
       "status": "PASS",
-      "receiptId": "IMPL-20260802-001",
+      "receiptId": "IMPL-20260804-001",
       "validator": "bun-test-plus-clause-audit",
       "validatorVersion": "1.3.14+generate-requirements-2.0.0",
-      "command": "bun test --dots --timeout=20000 src/commands/move.test.ts src/commands/tidy.test.ts src/core/rollback.test.ts src/commands/config-defaults.test.ts src/core/project-config.test.ts src/commands/discover.test.ts src/commands/move-transform.test.ts src/commands/move-batch.test.ts src/mcp-schema-parity.test.ts",
-      "requirementsSha256": "f024fa44456f25ae9c2ebf68b52b8b3cd803aab7f977360001c7e442b3bb17e0",
-      "sourceCommit": "25a550694c510eceb4d9d8afdb1bfb2d91be6f57",
-      "generatedAt": "2026-08-02T20:05:51Z",
+      "command": "bun test --dots --timeout=20000 src/commands/move.test.ts src/commands/tidy.test.ts src/core/rollback.test.ts src/commands/config-defaults.test.ts src/core/project-config.test.ts src/commands/discover.test.ts src/commands/move-transform.test.ts src/commands/move-batch.test.ts src/mcp-schema-parity.test.ts src/commands/audit.test.ts",
+      "requirementsSha256": "da20eeae1600b8164492da41d2d37415b5f09c4c33da98cf787391855130dbb0",
+      "sourceCommit": "c9f20b2ff4bc9f66947a2110aafcbc064e399c38",
+      "generatedAt": "2026-08-04T16:33:48Z",
       "counts": {
-        "checked": 21,
+        "checked": 25,
         "errors": 0,
         "warnings": 0
       },
       "notes": [
-        "78 focused tests passed with 0 failures and 319 assertions across 9 files at the audited source commit.",
-        "MOVE-001 through MOVE-003 map to src/commands/move.test.ts and src/commands/move.ts at source commit 25a5506.",
-        "TIDY-001, TIDY-002, and ROLL-001 map to src/commands/tidy.test.ts, src/core/rollback.test.ts, src/commands/tidy.ts, and src/core/rollback.ts at source commit 25a5506.",
-        "CFG-001 through CFG-006 map to src/core/project-config.test.ts, src/commands/config-defaults.test.ts, src/commands/discover.test.ts, and their corresponding implementation files at source commit 25a5506.",
-        "TRNS-001 and TRNS-002 map to src/commands/move-transform.test.ts and src/commands/move.ts at source commit 25a5506.",
-        "BATCH-001 through BATCH-005 map to src/commands/move-batch.test.ts and src/commands/move-batch.ts at source commit 25a5506.",
-        "BATCH-006 and BATCH-007 map to src/mcp-server.ts lines 1870-1952 plus src/mcp-schema-parity.test.ts at source commit 25a5506; these are explicit implementation locators in place of BDD anchors."
+        "89 focused tests passed with 0 failures and 350 assertions across 10 files at the audited source commit.",
+        "MOVE-001 through MOVE-003 map to src/commands/move.test.ts and src/commands/move.ts at source commit c9f20b2.",
+        "TIDY-001, TIDY-002, and ROLL-001 map to src/commands/tidy.test.ts, src/core/rollback.test.ts, src/commands/tidy.ts, and src/core/rollback.ts at source commit c9f20b2.",
+        "CFG-001 through CFG-006 map to src/core/project-config.test.ts, src/commands/config-defaults.test.ts, src/commands/discover.test.ts, and their corresponding implementation files at source commit c9f20b2.",
+        "TRNS-001 and TRNS-002 map to src/commands/move-transform.test.ts and src/commands/move.ts at source commit c9f20b2.",
+        "BATCH-001 through BATCH-005 map to src/commands/move-batch.test.ts and src/commands/move-batch.ts at source commit c9f20b2.",
+        "BATCH-006 and BATCH-007 map to src/mcp-server.ts plus src/mcp-schema-parity.test.ts at source commit c9f20b2; these are explicit implementation locators in place of BDD anchors.",
+        "AUDIT-001 through AUDIT-004 map to src/commands/audit.test.ts, src/commands/audit.ts, and src/mcp-server.ts at source commit c9f20b2."
       ]
     }
   },
   "metrics": {
-    "totalScenarios": 21,
+    "totalScenarios": 25,
     "byDelivery": {
-      "V1": 21,
+      "V1": 25,
       "V2": 0,
       "LATER": 0,
       "UNSLICED": 0
     },
     "byDecision": {
-      "DECIDED": 21,
+      "DECIDED": 25,
       "OPEN": 0
     },
     "byPriority": {
       "P0": 4,
-      "P1": 10,
+      "P1": 14,
       "P2": 7,
       "P3": 0
     },
     "priorityByDelivery": {
       "V1": {
         "P0": 4,
-        "P1": 10,
+        "P1": 14,
         "P2": 7,
         "P3": 0
       },
@@ -118,15 +119,15 @@
       }
     },
     "byFidelity": {
-      "VERIFIED": 21,
+      "VERIFIED": 25,
       "DRIFTED": 0,
       "MISSING": 0,
       "UNTESTABLE": 0
     },
     "coverage": {
       "v1Decided": {
-        "eligible": 21,
-        "verified": 21,
+        "eligible": 25,
+        "verified": 25,
         "percentage": 100
       },
       "v1LaunchCritical": {
@@ -177,8 +178,8 @@
     "fidelityNoteMismatchIds": [],
     "orphanAnchorIds": [],
     "preamble": {
-      "linesBeforeFirstScenario": 93,
-      "percentageBeforeFirstScenario": 32,
+      "linesBeforeFirstScenario": 94,
+      "percentageBeforeFirstScenario": 28.7,
       "warning": true,
       "disposition": "Accepted for this baseline because all content before the first scenario is required product-intent, actor, lifecycle, and applicability register data; implementation evidence and source extracts remain outside the contract."
     },
