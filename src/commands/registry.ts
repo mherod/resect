@@ -6,6 +6,7 @@ import { analyzeImpactCommand } from "./analyze-impact.ts";
 import { auditCommand } from "./audit.ts";
 import { barrelCommand } from "./barrel.ts";
 import { CLI_NAME, cliHelp } from "./command-spec.ts";
+import { depsCommand } from "./deps.ts";
 import { discoverCommand } from "./discover.ts";
 import { extractCommonCommand } from "./extract-common.ts";
 import { extractComponentCommand } from "./extract-component.ts";
@@ -200,6 +201,22 @@ export const COMMANDS: CommandDef[] = [
 			await workspaceCommand({
 				directory,
 				verbose: values.verbose,
+				json: values.json,
+			});
+		},
+	},
+
+	{
+		name: "deps",
+		helpText: cliHelp("deps"),
+		run: async ([directory], values) => {
+			requireArg("deps", "<directory>", directory);
+			await depsCommand({
+				directory,
+				fix: values.fix,
+				dryRun: values["dry-run"],
+				force: values.force,
+				strict: values.strict,
 				json: values.json,
 			});
 		},

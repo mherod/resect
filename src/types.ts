@@ -30,6 +30,18 @@ export type {
 	ReadOnlyCommandOptions,
 } from "./types/commands.ts";
 export type {
+	ConsumerDependencyContract,
+	ConsumerDependencyContractInput,
+	DependencyContractChange,
+	DependencyContractConflict,
+	DependencyContractIssue,
+	DependencyContractReport,
+	DependencyContractRequirement,
+	DependencySection,
+	DepsApplyResult,
+	TurboDependencyChange,
+} from "./types/deps.ts";
+export type {
 	BarrelExport,
 	BarrelExportEntry,
 	ImportBinding,

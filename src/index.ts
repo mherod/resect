@@ -53,6 +53,20 @@ export {
 	barrelReportToJson,
 	buildBarrelReport,
 } from "./commands/barrel.ts";
+// ── Commands: deps ──────────────────────────────────────────────────
+export type {
+	DepsExecutionDependencies,
+	DepsOptions,
+	LockfileRefreshResult,
+} from "./commands/deps.ts";
+export {
+	buildDependencyContractReport,
+	depsCommand,
+	executeDeps,
+	formatDependencyContractReport,
+	planDependencyManifestEdits,
+	refreshWorkspaceLockfile,
+} from "./commands/deps.ts";
 // ── Commands: discover ──────────────────────────────────────────────
 export type { DiscoverOptions } from "./commands/discover.ts";
 export { discoverCommand } from "./commands/discover.ts";
@@ -192,6 +206,8 @@ export {
 // ── Commands: workspace ─────────────────────────────────────────────
 export type { WorkspaceOptions } from "./commands/workspace.ts";
 export { workspaceCommand } from "./commands/workspace.ts";
+// ── Core: dependency contracts ──────────────────────────────────────
+export { analyzeDependencyContracts } from "./core/dependency-contracts.ts";
 export type { DependencyGraph } from "./core/graph.ts";
 export {
 	buildDependencyGraph,
@@ -266,6 +282,10 @@ export {
 	discoverProject,
 	findOwningConfig,
 } from "./core/tsconfig-discovery.ts";
+export {
+	analyzeTurboDependencyContracts,
+	planTurboDependencyEdits,
+} from "./core/turbo-deps.ts";
 // ── Core: verification ──────────────────────────────────────────────
 export {
 	canTypeCheck,
@@ -292,6 +312,26 @@ export type {
 	SubpathShadowing,
 } from "./types/barrel.ts";
 export type { MutatingCommandOptions } from "./types/commands.ts";
+// ── Types: dependency contracts ─────────────────────────────────────
+export type {
+	ConsumerDependencyContract,
+	ConsumerDependencyContractInput,
+	DependencyContractChange,
+	DependencyContractConflict,
+	DependencyContractConflictRequirement,
+	DependencyContractIssue,
+	DependencyContractIssueCode,
+	DependencyContractPolicy,
+	DependencyContractReport,
+	DependencyContractRequirement,
+	DependencyContractSummary,
+	DependencyRequirementKind,
+	DependencyRequirementReason,
+	DependencySection,
+	DepsApplyResult,
+	TurboDependencyChange,
+} from "./types/deps.ts";
+export { DEPENDENCY_SECTIONS } from "./types/deps.ts";
 export type {
 	BarrelExport,
 	BarrelExportEntry,

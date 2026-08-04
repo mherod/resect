@@ -1,6 +1,7 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
 import { getRuntime } from "../runtime/index.ts";
+import type { ConsumerDependencyContractInput } from "../types/deps.ts";
 import { EXPORT_STATEMENT_PATTERN, removeExtension } from "./constants.ts";
 import { readPackageJson } from "./package-json.ts";
 
@@ -33,6 +34,14 @@ export interface WorkspacePackage {
 	dependencies?: Record<string, string>;
 	/** Peer dependencies */
 	peerDependencies?: Record<string, string>;
+	/** Optional dependencies */
+	optionalDependencies?: Record<string, string>;
+	/** Development dependencies */
+	devDependencies?: Record<string, string>;
+	/** Resect-owned package policy metadata */
+	resect?: {
+		consumerDependencies?: ConsumerDependencyContractInput[];
+	};
 }
 
 export type PackageExports =
@@ -60,6 +69,7 @@ export interface WorkspaceInfo {
 	rootPackage?: {
 		name?: string;
 		version?: string;
+		packageManager?: string;
 	};
 }
 
@@ -106,6 +116,7 @@ export async function discoverWorkspace(
 			? {
 					name: rootPackageJson.name as string | undefined,
 					version: rootPackageJson.version as string | undefined,
+					packageManager: rootPackageJson.packageManager as string | undefined,
 				}
 			: undefined,
 	};
@@ -300,6 +311,11 @@ async function parsePackage(
 		peerDependencies: pkg.peerDependencies as
 			| Record<string, string>
 			| undefined,
+		optionalDependencies: pkg.optionalDependencies as
+			| Record<string, string>
+			| undefined,
+		devDependencies: pkg.devDependencies as Record<string, string> | undefined,
+		resect: pkg.resect as WorkspacePackage["resect"],
 	};
 }
 

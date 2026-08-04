@@ -248,6 +248,41 @@ Examples:
 			"Enumerate the packages in a pnpm/yarn/npm monorepo and how each is wired. Reads pnpm-workspace.yaml or the package.json 'workspaces' field, then reports per package: name, main/module/types entrypoints, the 'exports' map, dependencies, detected barrel (index) files, and tsconfig path. Use this in a monorepo to see what packages exist and their public surface before a cross-package move or import. For tsconfig/path-alias topology (including single-package repos) use `discover` instead. Returns an error if the directory is not a workspace root. Read-only.",
 	},
 	{
+		name: "deps",
+		usage: "<directory>",
+		summary: "Check and repair workspace consumer dependency contracts",
+		cliHelp: `
+Usage: ${CLI_NAME} deps <directory> [options]
+
+Check dependency contracts declared by workspace packages. Packages opt in
+with package.json#resect.consumerDependencies. Analysis is read-only by default.
+
+Arguments:
+  directory    Path to a pnpm, Yarn, or npm workspace
+
+Options:
+  --fix        Repair manifest and Turbo dependency drift
+  --dry-run    Preview --fix edits without writing files
+  --force      Allow --fix in a dirty git worktree
+  --strict     Exit non-zero when drift, conflicts, or policy issues are found
+  --json       Output the structured report and planned edits as JSON
+
+Safety:
+  • Conflicts and malformed policies block all writes
+  • Lockfiles refresh through the detected package manager
+  • Failed refresh or non-idempotent repair restores every touched file
+  • Turbo tasks with ^build do not receive redundant explicit build edges
+
+Examples:
+  ${CLI_NAME} deps .
+  ${CLI_NAME} deps . --strict --json
+  ${CLI_NAME} deps . --fix --dry-run
+  ${CLI_NAME} deps . --fix
+`,
+		mcpDescription:
+			"Analyze and optionally repair workspace consumer dependency contracts. Packages declare `resect.consumerDependencies` in package.json; each contract can inherit the provider's dependency section/version, select an explicit section/specifier, and opt into recursive INTERNAL workspace closure. Reports policies, requirements, reason chains, manifest changes, conflicts, policy issues, and missing Turbo build edges. Read-only unless `fix:true` and `dryRun:false`; MCP defaults `dryRun:true`. Repairs require a clean worktree unless `force:true`, refresh the detected package-manager lockfile, verify idempotence, and roll back every touched file on failure.",
+	},
+	{
 		name: "alias",
 		usage: "<target> --prefer=<strategy>",
 		summary: "Normalize imports to use aliases, relative paths, or shortest",

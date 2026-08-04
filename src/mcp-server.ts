@@ -48,6 +48,7 @@ import { analyzeImpact } from "./commands/analyze-impact.ts";
 import { auditReportToJson, buildAuditReport } from "./commands/audit.ts";
 import { analyzeBarrels, barrelReportToJson } from "./commands/barrel.ts";
 import { mcpDescription } from "./commands/command-spec.ts";
+import { executeDeps } from "./commands/deps.ts";
 import { runExtractCommon } from "./commands/extract-common.ts";
 import {
 	analyzeExtractComponentFreeVariables,
@@ -347,6 +348,47 @@ async function workspaceTool(directory: string): Promise<CallToolResult> {
 		return errorText(`No workspace found in ${absoluteDir}`);
 	}
 	return jsonText(ws);
+}
+
+async function depsTool(
+	directory: string,
+	options: {
+		fix?: boolean;
+		dryRun?: boolean;
+		force?: boolean;
+		strict?: boolean;
+	}
+): Promise<CallToolResult> {
+	const absoluteDir = path.resolve(directory);
+	const workspace = await discoverWorkspace(absoluteDir);
+	if (!workspace) {
+		return errorText(`No workspace found in ${absoluteDir}`);
+	}
+	const dryRun = options.dryRun ?? true;
+	const force = options.force ?? false;
+	let worktreeDirty = false;
+	if (options.fix && !dryRun) {
+		const worktree = await checkWorktree(workspace.root, force);
+		worktreeDirty = worktree.dirty;
+		if (worktree.blocked) {
+			return errorText(WORKTREE_BLOCKED_MESSAGE);
+		}
+	}
+
+	const result = await executeDeps({
+		directory: absoluteDir,
+		fix: options.fix,
+		dryRun,
+		// The MCP worktree gate above replaces ensureCleanWorktree, whose
+		// process.exit behavior is not safe inside a stdio server.
+		force: force || Boolean(options.fix && !dryRun),
+		strict: options.strict,
+	});
+	const response = jsonText({ ...result, worktreeDirty });
+	if (options.strict && !result.success) {
+		response.isError = true;
+	}
+	return response;
 }
 
 async function auditTool(
@@ -953,6 +995,45 @@ server.registerTool(
 	async ({ directory }) => {
 		return withErrorHandling(async () => {
 			return workspaceTool(directory);
+		});
+	}
+);
+
+server.registerTool(
+	"deps",
+	{
+		description: mcpDescription("deps"),
+		inputSchema: {
+			directory: z
+				.string()
+				.describe(
+					"Absolute or cwd-relative path to a pnpm, Yarn, or npm workspace"
+				),
+			fix: z
+				.boolean()
+				.optional()
+				.describe("Plan or apply dependency contract repairs (default false)"),
+			dryRun: z
+				.boolean()
+				.optional()
+				.describe(
+					"Preview repairs without writing files (default true for MCP safety)"
+				),
+			force: z
+				.boolean()
+				.optional()
+				.describe("Override the dirty-worktree guard when applying repairs"),
+			strict: z
+				.boolean()
+				.optional()
+				.describe(
+					"Return the tool result as an error when drift, conflicts, or policy issues are found"
+				),
+		},
+	},
+	async ({ directory, fix, dryRun, force, strict }) => {
+		return withErrorHandling(async () => {
+			return depsTool(directory, { fix, dryRun, force, strict });
 		});
 	}
 );

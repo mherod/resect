@@ -50,7 +50,7 @@ Options:
   --json            Output results as JSON
   --threshold       Similarity threshold for similar command (0.0–1.0, default 0.8)
   --max-groups      Maximum number of groups to display (default: 10)
-  --strict          Exit with error if similar functions are found (for CI/hooks)
+  --strict          Exit with an error when supported commands find drift/candidates
   --name-threshold  Name similarity threshold for similar command (0.0–1.0)
   --same-name-only  Only group functions with identical names (similar command)
   --skip-same-file  Skip groups where all functions are in the same file
@@ -80,6 +80,7 @@ Options:
 Examples:
   ${CLI_NAME} find Entity -p /path/to/project
   ${CLI_NAME} analyze src/utils/helpers.ts
+  ${CLI_NAME} deps . --strict
   ${CLI_NAME} alias src --prefer=alias --dry-run
   ${CLI_NAME} alias src --rename-specifier="@utils/Foo=@utils/foo"
   ${CLI_NAME} move src/old/file.ts src/new/file.ts --dry-run

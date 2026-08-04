@@ -42,6 +42,7 @@ function extractInputSchemaKeys(toolName: string): string[] {
  * defaults) that don't come from the CLI options interface directly.
  */
 const EXPECTED: Record<string, string[]> = {
+	deps: ["directory", "fix", "dryRun", "force", "strict"],
 	move: [
 		"source",
 		"target",
