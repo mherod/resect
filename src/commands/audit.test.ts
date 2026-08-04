@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { DependencyGraph } from "../core/graph.ts";
 import type { ModuleReference } from "../types/graph.ts";
+import type { ProjectConfig } from "../types.ts";
 import { CLI, cleanup, makeFixture } from "./__test-helpers.ts";
 import { buildAuditReport, detectCycles } from "./audit.ts";
 
@@ -38,6 +39,23 @@ function makeGraph(edges: [string, string][]): DependencyGraph {
 		skippedFiles: [],
 		barrelFiles,
 		barrelReExports,
+	};
+}
+
+function makeProject(
+	rootDir: string,
+	sourceDir: string,
+	outDir: string,
+	files: string[]
+): ProjectConfig {
+	return {
+		rootDir,
+		tsconfigPath: `${rootDir}/tsconfig.json`,
+		compilerOptions: { rootDir: sourceDir, outDir },
+		pathAliases: new Map(),
+		include: [],
+		exclude: [],
+		files,
 	};
 }
 
@@ -118,9 +136,225 @@ describe("buildAuditReport", () => {
 		expect(report.skippedFiles).toEqual(["/repo/unreadable.ts"]);
 		expect(report.totalFiles).toBe(0);
 	});
+
+	test("classifies each project output boundary independently", () => {
+		const projectA = makeProject(
+			"/repo/packages/a",
+			"/repo/packages/a/src",
+			"/repo/packages/a/dist",
+			[
+				"/repo/packages/a/src/consumer.ts",
+				"/repo/packages/a/src/esm.mts",
+				"/repo/packages/a/src/generated.ts",
+				"/repo/packages/a/src/index.ts",
+			]
+		);
+		const graphA = makeGraph([
+			["/repo/packages/a/src/consumer.ts", "/repo/packages/a/dist/index.js"],
+			[
+				"/repo/packages/a/dist/generated.d.ts",
+				"/repo/packages/a/dist/index.js.map",
+			],
+			["/repo/packages/a/dist/esm.d.mts", "/repo/packages/a/dist/index.js"],
+		]);
+		const projectB = makeProject(
+			"/repo/packages/b",
+			"/repo/packages/b/source",
+			"/repo/packages/b/build",
+			[
+				"/repo/packages/b/source/authored.d.ts",
+				"/repo/packages/b/source/main.ts",
+			]
+		);
+		const graphB = makeGraph([
+			[
+				"/repo/packages/b/source/main.ts",
+				"/repo/packages/b/source/authored.d.ts",
+			],
+			["/repo/packages/b/source/main.ts", "/repo/packages/b/build/main.js"],
+		]);
+
+		const report = buildAuditReport(
+			makeGraph([]),
+			{
+				fanOutThreshold: 10,
+				fanInThreshold: 10,
+				exportThreshold: 8,
+			},
+			[
+				{ graph: graphA, project: projectA },
+				{ graph: graphB, project: projectB },
+			]
+		);
+
+		expect(report.excludedGeneratedFiles).toEqual([
+			expect.objectContaining({
+				file: "/repo/packages/a/dist/esm.d.mts",
+				sourceFile: "/repo/packages/a/src/esm.mts",
+				tsconfigPath: "/repo/packages/a/tsconfig.json",
+			}),
+			expect.objectContaining({
+				file: "/repo/packages/a/dist/generated.d.ts",
+				sourceFile: "/repo/packages/a/src/generated.ts",
+				tsconfigPath: "/repo/packages/a/tsconfig.json",
+			}),
+			expect.objectContaining({
+				file: "/repo/packages/a/dist/index.js",
+				sourceFile: "/repo/packages/a/src/index.ts",
+				tsconfigPath: "/repo/packages/a/tsconfig.json",
+			}),
+			expect.objectContaining({
+				file: "/repo/packages/a/dist/index.js.map",
+				sourceFile: "/repo/packages/a/src/index.ts",
+				tsconfigPath: "/repo/packages/a/tsconfig.json",
+			}),
+			expect.objectContaining({
+				file: "/repo/packages/b/build/main.js",
+				sourceFile: "/repo/packages/b/source/main.ts",
+				tsconfigPath: "/repo/packages/b/tsconfig.json",
+			}),
+		]);
+		expect(report.metrics).toContainEqual(
+			expect.objectContaining({
+				file: "/repo/packages/a/src/index.ts",
+				fanIn: 1,
+			})
+		);
+		expect(report.metrics).toContainEqual(
+			expect.objectContaining({
+				file: "/repo/packages/b/source/authored.d.ts",
+				fanIn: 1,
+			})
+		);
+	});
+
+	test("does not remap an output when multiple source files share its stem", () => {
+		const project = makeProject(
+			"/repo/package",
+			"/repo/package/src",
+			"/repo/package/dist",
+			[
+				"/repo/package/src/consumer.ts",
+				"/repo/package/src/value.ts",
+				"/repo/package/src/value.tsx",
+			]
+		);
+		const graph = makeGraph([
+			["/repo/package/src/consumer.ts", "/repo/package/dist/value.js"],
+		]);
+
+		const report = buildAuditReport(
+			graph,
+			{
+				fanOutThreshold: 10,
+				fanInThreshold: 10,
+				exportThreshold: 8,
+			},
+			[{ graph, project }]
+		);
+
+		expect(report.excludedGeneratedFiles).toEqual([
+			expect.objectContaining({
+				file: "/repo/package/dist/value.js",
+				sourceFile: undefined,
+			}),
+		]);
+		expect(report.metrics).toContainEqual(
+			expect.objectContaining({
+				file: "/repo/package/src/consumer.ts",
+				fanOut: 0,
+			})
+		);
+	});
 });
 
 describe("audit command coverage", () => {
+	test("excludes imported outDir declarations while retaining authored declarations", async () => {
+		const dir = await makeFixture("audit-generated-output", {
+			"package.json": JSON.stringify({
+				private: true,
+				workspaces: ["packages/*"],
+			}),
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: {
+					baseUrl: ".",
+					paths: { "@lib/*": ["packages/lib/dist/*"] },
+					strict: true,
+				},
+				include: ["consumer/**/*.ts"],
+			}),
+			"consumer/use.ts":
+				'import { value } from "@lib/core";\nexport const used = value;\n',
+			"packages/lib/package.json": JSON.stringify({ name: "@fixture/lib" }),
+			"packages/lib/tsconfig.json": JSON.stringify({
+				compilerOptions: {
+					declaration: true,
+					outDir: "dist",
+					rootDir: "src",
+					strict: true,
+				},
+				include: ["src/**/*.ts"],
+			}),
+			"packages/lib/src/core.ts": "export const value = 1;\n",
+			"packages/lib/src/authored.d.ts":
+				"export interface AuthoredDeclaration { value: string }\n",
+			"packages/lib/dist/core.d.ts": "export declare const value = 1;\n",
+			"packages/lib/dist/core.js": "export const value = 1;\n",
+			"packages/lib/dist/core.js.map": "{}\n",
+		});
+
+		try {
+			const proc = Bun.spawn(
+				[
+					...CLI,
+					"audit",
+					dir,
+					"--workspace",
+					"--json",
+					"--fan-out-threshold",
+					"0",
+					"--fan-in-threshold",
+					"0",
+					"--export-threshold",
+					"0",
+				],
+				{ stdout: "pipe", stderr: "pipe" }
+			);
+			const [stdout, stderr] = await Promise.all([
+				new Response(proc.stdout).text(),
+				new Response(proc.stderr).text(),
+			]);
+			await proc.exited;
+			expect(proc.exitCode, stderr).toBe(0);
+
+			const report = JSON.parse(stdout);
+			expect(report.totalFiles).toBe(3);
+			expect(report.excludedGeneratedFileCount).toBe(1);
+			expect(report.excludedGeneratedFiles).toEqual([
+				expect.objectContaining({
+					file: "packages/lib/dist/core.d.ts",
+					sourceFile: "packages/lib/src/core.ts",
+				}),
+			]);
+			expect(report.highFanIn).toContainEqual(
+				expect.objectContaining({
+					file: "packages/lib/src/core.ts",
+					fanIn: 1,
+				})
+			);
+			expect(report.largeExportSurface).toContainEqual(
+				expect.objectContaining({
+					file: "packages/lib/src/authored.d.ts",
+				})
+			);
+			expect(report.largeExportSurface).not.toContainEqual(
+				expect.objectContaining({ file: "packages/lib/dist/core.d.ts" })
+			);
+		} finally {
+			await cleanup(dir);
+		}
+	});
+
 	test("surfaces skipped files in JSON and human output", async () => {
 		const dir = await makeFixture("audit-skipped-file", {
 			"tsconfig.json": JSON.stringify({

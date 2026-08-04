@@ -1,9 +1,16 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
-import { type DependencyGraph, withGraphSourceFile } from "../core/graph.ts";
+import { removeExtension } from "../core/constants.ts";
+import {
+	type DependencyGraph,
+	mergeDependencyGraphs,
+	withGraphSourceFile,
+} from "../core/graph.ts";
 import { normalizePath } from "../core/resolver.ts";
 import { scanExports } from "../core/scanner.ts";
 import type { ReadOnlyCommandOptions } from "../types/commands.ts";
+import type { ModuleReference } from "../types/graph.ts";
+import type { ProjectConfig } from "../types.ts";
 import { setupCommandContext } from "./command-context.ts";
 
 export interface AuditOptions extends ReadOnlyCommandOptions {
@@ -32,12 +39,242 @@ export interface Cycle {
 export interface AuditReport {
 	totalFiles: number;
 	skippedFiles: string[];
+	excludedGeneratedFiles: ExcludedGeneratedFile[];
 	metrics: FileMetrics[];
 	cycles: Cycle[];
 	highFanOut: FileMetrics[];
 	highFanIn: FileMetrics[];
 	largeExportSurface: FileMetrics[];
 }
+
+export interface ExcludedGeneratedFile {
+	file: string;
+	outDir: string;
+	sourceFile?: string;
+	tsconfigPath: string;
+}
+
+export interface AuditProjectGraph {
+	graph: DependencyGraph;
+	project: ProjectConfig;
+}
+
+export interface AuditJsonReport {
+	cycles: Array<{ files: string[] }>;
+	excludedGeneratedFileCount: number;
+	excludedGeneratedFiles: Array<{
+		file: string;
+		outDir: string;
+		sourceFile?: string;
+		tsconfigPath: string;
+	}>;
+	highFanIn: FileMetrics[];
+	highFanOut: FileMetrics[];
+	largeExportSurface: FileMetrics[];
+	skippedFileCount: number;
+	skippedFiles: string[];
+	totalFiles: number;
+}
+
+interface AuditProjectBoundary {
+	outDir?: string;
+	project: ProjectConfig;
+	sourceFiles: Set<string>;
+	sourceFilesByStem: Map<string, string[]>;
+	sourceRoot: string;
+}
+
+const isWithinDirectory = (directory: string, file: string): boolean => {
+	const relative = path.relative(directory, file);
+	return (
+		relative === "" ||
+		(relative !== ".." &&
+			!relative.startsWith(`..${path.sep}`) &&
+			!path.isAbsolute(relative))
+	);
+};
+
+const moduleStem = (file: string): string =>
+	removeExtension(file.endsWith(".map") ? file.slice(0, -4) : file);
+
+const projectBoundary = (project: ProjectConfig): AuditProjectBoundary => {
+	const outDir = project.compilerOptions.outDir
+		? normalizePath(
+				path.resolve(project.rootDir, project.compilerOptions.outDir)
+			)
+		: undefined;
+	const sourceRoot = normalizePath(
+		project.compilerOptions.rootDir
+			? path.resolve(project.rootDir, project.compilerOptions.rootDir)
+			: project.rootDir
+	);
+	const sourceFiles = new Set(project.files.map(normalizePath));
+	const sourceFilesByStem = new Map<string, string[]>();
+	for (const file of sourceFiles) {
+		if (outDir && isWithinDirectory(outDir, file)) {
+			continue;
+		}
+		const stem = moduleStem(normalizePath(path.relative(sourceRoot, file)));
+		const matches = sourceFilesByStem.get(stem) ?? [];
+		matches.push(file);
+		sourceFilesByStem.set(stem, matches);
+	}
+	return {
+		outDir,
+		project,
+		sourceFiles,
+		sourceFilesByStem,
+		sourceRoot,
+	};
+};
+
+const sourceFileForGenerated = (
+	file: string,
+	boundary: AuditProjectBoundary
+): string | undefined => {
+	if (!boundary.outDir) {
+		return undefined;
+	}
+	const relativeOutput = normalizePath(path.relative(boundary.outDir, file));
+	const candidates = boundary.sourceFilesByStem.get(moduleStem(relativeOutput));
+	return candidates?.length === 1 ? candidates[0] : undefined;
+};
+
+const generatedFileMetadata = (
+	file: string,
+	boundaries: AuditProjectBoundary[]
+): ExcludedGeneratedFile | undefined => {
+	const authoredOwner = boundaries.find(
+		(boundary) =>
+			boundary.sourceFiles.has(file) &&
+			!(boundary.outDir && isWithinDirectory(boundary.outDir, file))
+	);
+	if (authoredOwner) {
+		return undefined;
+	}
+	const boundary = boundaries
+		.filter(
+			(candidate) =>
+				candidate.outDir && isWithinDirectory(candidate.outDir, file)
+		)
+		.sort((a, b) => (b.outDir?.length ?? 0) - (a.outDir?.length ?? 0))
+		.at(0);
+	if (!boundary?.outDir) {
+		return undefined;
+	}
+	return {
+		file,
+		outDir: boundary.outDir,
+		sourceFile: sourceFileForGenerated(file, boundary),
+		tsconfigPath: boundary.project.tsconfigPath,
+	};
+};
+
+const projectAuditGraph = (
+	input: AuditProjectGraph,
+	boundaries: AuditProjectBoundary[]
+): { excluded: ExcludedGeneratedFile[]; graph: DependencyGraph } => {
+	const excludedByFile = new Map<string, ExcludedGeneratedFile>();
+	const imports = new Map<string, ModuleReference[]>();
+	const importedBy = new Map<string, ModuleReference[]>();
+
+	for (const [file, refs] of input.graph.imports) {
+		const normalizedFile = normalizePath(file);
+		const generatedSource = generatedFileMetadata(normalizedFile, boundaries);
+		if (generatedSource) {
+			excludedByFile.set(normalizedFile, generatedSource);
+			continue;
+		}
+
+		const projectedRefs: ModuleReference[] = [];
+		for (const ref of refs) {
+			const normalizedTarget = normalizePath(ref.resolvedPath);
+			const generatedTarget = generatedFileMetadata(
+				normalizedTarget,
+				boundaries
+			);
+			if (generatedTarget) {
+				excludedByFile.set(normalizedTarget, generatedTarget);
+				if (!generatedTarget.sourceFile) {
+					continue;
+				}
+				projectedRefs.push({
+					...ref,
+					resolvedPath: generatedTarget.sourceFile,
+				});
+				continue;
+			}
+			projectedRefs.push(ref);
+		}
+		imports.set(normalizedFile, projectedRefs);
+	}
+
+	for (const [file] of input.graph.importedBy) {
+		const normalizedFile = normalizePath(file);
+		const generatedTarget = generatedFileMetadata(normalizedFile, boundaries);
+		if (generatedTarget) {
+			excludedByFile.set(normalizedFile, generatedTarget);
+		}
+	}
+
+	for (const refs of imports.values()) {
+		for (const ref of refs) {
+			const target = normalizePath(ref.resolvedPath);
+			const existing = importedBy.get(target) ?? [];
+			existing.push(ref);
+			importedBy.set(target, existing);
+		}
+	}
+
+	return {
+		excluded: [...excludedByFile.values()].sort((a, b) =>
+			a.file.localeCompare(b.file)
+		),
+		graph: {
+			...input.graph,
+			imports,
+			importedBy,
+			skippedFiles: input.graph.skippedFiles.filter(
+				(file) => !generatedFileMetadata(normalizePath(file), boundaries)
+			),
+			barrelFiles: new Set(
+				[...input.graph.barrelFiles].filter(
+					(file) => !generatedFileMetadata(normalizePath(file), boundaries)
+				)
+			),
+		},
+	};
+};
+
+const prepareAuditGraph = (
+	graph: DependencyGraph,
+	projectGraphs: AuditProjectGraph[]
+): {
+	excludedGeneratedFiles: ExcludedGeneratedFile[];
+	graph: DependencyGraph;
+} => {
+	if (projectGraphs.length === 0) {
+		return { excludedGeneratedFiles: [], graph };
+	}
+	const boundaries = projectGraphs.map(({ project }) =>
+		projectBoundary(project)
+	);
+	const projected = projectGraphs.map((item) =>
+		projectAuditGraph(item, boundaries)
+	);
+	const excludedByFile = new Map<string, ExcludedGeneratedFile>();
+	for (const item of projected) {
+		for (const excluded of item.excluded) {
+			excludedByFile.set(excluded.file, excluded);
+		}
+	}
+	return {
+		excludedGeneratedFiles: [...excludedByFile.values()].sort((a, b) =>
+			a.file.localeCompare(b.file)
+		),
+		graph: mergeDependencyGraphs(projected.map((item) => item.graph)),
+	};
+};
 
 /**
  * Compute fan-out and fan-in for every file in the graph.
@@ -186,10 +423,12 @@ export function buildAuditReport(
 		fanOutThreshold: number;
 		fanInThreshold: number;
 		exportThreshold: number;
-	}
+	},
+	projectGraphs: AuditProjectGraph[] = []
 ): AuditReport {
-	const metrics = computeMetrics(graph);
-	const cycles = detectCycles(graph);
+	const prepared = prepareAuditGraph(graph, projectGraphs);
+	const metrics = computeMetrics(prepared.graph);
+	const cycles = detectCycles(prepared.graph);
 
 	const highFanOut = metrics.filter((m) => m.fanOut > options.fanOutThreshold);
 	const highFanIn = metrics.filter((m) => m.fanIn > options.fanInThreshold);
@@ -199,12 +438,45 @@ export function buildAuditReport(
 
 	return {
 		totalFiles: metrics.length,
-		skippedFiles: graph.skippedFiles,
+		skippedFiles: prepared.graph.skippedFiles,
+		excludedGeneratedFiles: prepared.excludedGeneratedFiles,
 		metrics,
 		cycles,
 		highFanOut,
 		highFanIn,
 		largeExportSurface,
+	};
+}
+
+export function auditReportToJson(
+	report: AuditReport,
+	baseDir: string
+): AuditJsonReport {
+	const relativeMetric = (metric: FileMetrics): FileMetrics => ({
+		...metric,
+		file: path.relative(baseDir, metric.file),
+	});
+	return {
+		totalFiles: report.totalFiles,
+		skippedFileCount: report.skippedFiles.length,
+		skippedFiles: report.skippedFiles.map((file) =>
+			path.relative(baseDir, file)
+		),
+		excludedGeneratedFileCount: report.excludedGeneratedFiles.length,
+		excludedGeneratedFiles: report.excludedGeneratedFiles.map((excluded) => ({
+			file: path.relative(baseDir, excluded.file),
+			outDir: path.relative(baseDir, excluded.outDir),
+			sourceFile: excluded.sourceFile
+				? path.relative(baseDir, excluded.sourceFile)
+				: undefined,
+			tsconfigPath: path.relative(baseDir, excluded.tsconfigPath),
+		})),
+		cycles: report.cycles.map((cycle) => ({
+			files: cycle.files.map((file) => path.relative(baseDir, file)),
+		})),
+		highFanOut: report.highFanOut.map(relativeMetric),
+		highFanIn: report.highFanIn.map(relativeMetric),
+		largeExportSurface: report.largeExportSurface.map(relativeMetric),
 	};
 }
 
@@ -238,35 +510,28 @@ export async function auditCommand(options: AuditOptions): Promise<void> {
 		throw new Error("Dependency graph was not built");
 	}
 
-	const report = buildAuditReport(graph, {
-		fanOutThreshold,
-		fanInThreshold,
-		exportThreshold,
+	const projectsByConfig = new Map(
+		[context.project, ...context.extraProjects].map((project) => [
+			normalizePath(project.tsconfigPath),
+			project,
+		])
+	);
+	const projectGraphs = context.graphs.flatMap((item) => {
+		const project = projectsByConfig.get(normalizePath(item.tsconfigPath));
+		return project ? [{ graph: item.graph, project }] : [];
 	});
+	const report = buildAuditReport(
+		graph,
+		{
+			fanOutThreshold,
+			fanInThreshold,
+			exportThreshold,
+		},
+		projectGraphs
+	);
 
 	if (json) {
-		const jsonReport = {
-			totalFiles: report.totalFiles,
-			skippedFileCount: report.skippedFiles.length,
-			skippedFiles: report.skippedFiles.map((file) =>
-				path.relative(absoluteDir, file)
-			),
-			cycles: report.cycles.map((c) => ({
-				files: c.files.map((f) => path.relative(absoluteDir, f)),
-			})),
-			highFanOut: report.highFanOut.map((m) => ({
-				...m,
-				file: path.relative(absoluteDir, m.file),
-			})),
-			highFanIn: report.highFanIn.map((m) => ({
-				...m,
-				file: path.relative(absoluteDir, m.file),
-			})),
-			largeExportSurface: report.largeExportSurface.map((m) => ({
-				...m,
-				file: path.relative(absoluteDir, m.file),
-			})),
-		};
+		const jsonReport = auditReportToJson(report, absoluteDir);
 		process.stdout.write(`${JSON.stringify(jsonReport, null, 2)}\n`);
 		return;
 	}

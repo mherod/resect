@@ -45,7 +45,7 @@ import {
 } from "./commands/alias.ts";
 import { analyze } from "./commands/analyze.ts";
 import { analyzeImpact } from "./commands/analyze-impact.ts";
-import { buildAuditReport } from "./commands/audit.ts";
+import { auditReportToJson, buildAuditReport } from "./commands/audit.ts";
 import { analyzeBarrels, barrelReportToJson } from "./commands/barrel.ts";
 import { mcpDescription } from "./commands/command-spec.ts";
 import { runExtractCommon } from "./commands/extract-common.ts";
@@ -370,30 +370,13 @@ async function auditTool(
 		fanInThreshold: options.fanInThreshold ?? 10,
 		exportThreshold: options.exportThreshold ?? 8,
 	};
-	const report = buildAuditReport(graph, thresholds);
+	const report = buildAuditReport(graph, thresholds, [
+		{ graph, project: projectConfig },
+	]);
 	return jsonText({
-		totalFiles: report.totalFiles,
+		...auditReportToJson(report, absoluteDir),
 		thresholds,
-		skippedFileCount: report.skippedFiles.length,
-		skippedFiles: report.skippedFiles.map((file) =>
-			path.relative(absoluteDir, file)
-		),
 		coverageIncomplete: report.skippedFiles.length > 0,
-		cycles: report.cycles.map((c) => ({
-			files: c.files.map((f) => path.relative(absoluteDir, f)),
-		})),
-		highFanOut: report.highFanOut.map((m) => ({
-			...m,
-			file: path.relative(absoluteDir, m.file),
-		})),
-		highFanIn: report.highFanIn.map((m) => ({
-			...m,
-			file: path.relative(absoluteDir, m.file),
-		})),
-		largeExportSurface: report.largeExportSurface.map((m) => ({
-			...m,
-			file: path.relative(absoluteDir, m.file),
-		})),
 	});
 }
 

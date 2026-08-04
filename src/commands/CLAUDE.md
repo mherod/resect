@@ -102,9 +102,9 @@ Batch moves (`move --batch`) validate non-empty `{ source, target }[]`, build co
 
 ## Audit, tidy, and barrel
 
-`audit` computes fan-out, fan-in, `fanOut / (fanIn + fanOut)` instability, export surface, and DFS cycles. `buildAuditReport()` filters thresholds. It is read-only.
+`audit` computes fan-out, fan-in, `fanOut / (fanIn + fanOut)` instability, export surface, and DFS cycles. `buildAuditReport()` filters thresholds and accepts per-project graph metadata so configured `outDir` artifacts can be excluded and safely mapped back to authored sources. It is read-only.
 
-Core seams are `computeMetrics(graph)`, iterative/deduplicated `detectCycles(graph)`, and `buildAuditReport(graph, options)`.
+Core seams are `computeMetrics(graph)`, iterative/deduplicated `detectCycles(graph)`, `buildAuditReport(graph, options, projectGraphs)`, and `auditReportToJson(report, baseDir)`.
 
 `tidy` composes `unused`, `similar`, and `audit`; schema is `1-experimental`. `--fix` uses the dirty guard, `--max-changes`, one closing typecheck, and `git restore` rollback on new errors or `verificationIncomplete`.
 
