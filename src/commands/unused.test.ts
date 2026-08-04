@@ -31,8 +31,9 @@ describe("unused command", () => {
 		expect(serverSource).toContain(
 			"skippedFileCount: result.skippedFiles.length"
 		);
+		expect(serverSource).toContain("...auditReportToJson(report, absoluteDir)");
 		expect(serverSource).toContain(
-			"skippedFileCount: report.skippedFiles.length"
+			"coverageIncomplete: report.skippedFiles.length > 0"
 		);
 	});
 
