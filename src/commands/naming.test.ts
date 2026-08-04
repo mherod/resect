@@ -147,6 +147,55 @@ describe("naming command", () => {
 		await cleanup(dir);
 	});
 
+	test("does not report a no-op rename for conventional index files", async () => {
+		const dir = await makeFixture("index-no-op", {
+			"src/group/alpha-one.ts": functionFile("alphaOne"),
+			"src/group/beta-two.ts": functionFile("betaTwo"),
+			"src/group/gamma-three.ts": functionFile("gammaThree"),
+			"src/group/index.ts": 'export * from "./alpha-one";\n',
+		});
+
+		const result = await captureOutput(async () =>
+			namingCommand({ directory: path.join(dir, "src"), json: true })
+		);
+		const report = JSON.parse(result.stdout) as {
+			findings: Array<{ file: string; suggestedName: string }>;
+		};
+		expect(report.findings).not.toContainEqual(
+			expect.objectContaining({
+				file: "group/index.ts",
+				suggestedName: "index.ts",
+			})
+		);
+
+		await cleanup(dir);
+	});
+
+	test("preserves Next App Router convention filenames", async () => {
+		const dir = await makeFixture("next-conventions", {
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: { jsx: "preserve", strict: true },
+				include: ["**/*.ts", "**/*.tsx"],
+			}),
+			"src/app/admin/alphaOne.tsx": functionFile("alphaOne"),
+			"src/app/admin/betaTwo.tsx": functionFile("betaTwo"),
+			"src/app/admin/gammaThree.tsx": functionFile("gammaThree"),
+			"src/app/admin/not-found.tsx": functionFile("NotFound"),
+		});
+
+		const result = await captureOutput(async () =>
+			namingCommand({ directory: path.join(dir, "src"), json: true })
+		);
+		const report = JSON.parse(result.stdout) as {
+			findings: Array<{ file: string }>;
+		};
+		expect(report.findings.map((finding) => finding.file)).not.toContain(
+			"app/admin/not-found.tsx"
+		);
+
+		await cleanup(dir);
+	});
+
 	test("does not report when no directory casing has a majority", async () => {
 		const dir = await makeFixture("no-majority", {
 			...withFiles(CAMEL_NAMES.slice(0, 5), functionFile),

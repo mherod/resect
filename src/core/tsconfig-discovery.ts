@@ -9,6 +9,8 @@ const SKIP_DIRECTORIES = new Set([
 	"dist",
 	"build",
 	".git",
+	".claude",
+	".codex",
 	".next",
 	".turbo",
 	"coverage",

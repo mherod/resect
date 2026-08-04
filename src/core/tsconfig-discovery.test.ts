@@ -102,4 +102,35 @@ describe("discoverProject cache", () => {
 			await rm(dir, { recursive: true, force: true });
 		}
 	});
+
+	test("ignores nested agent worktrees during tsconfig discovery", async () => {
+		const dir = await mkdtemp(path.join(tmpdir(), "resect-discovery-agents-"));
+		try {
+			await mkdir(path.join(dir, "src"), { recursive: true });
+			await writeFile(
+				path.join(dir, "src", "index.ts"),
+				"export const live = true;\n"
+			);
+			await writeFile(
+				path.join(dir, "tsconfig.json"),
+				JSON.stringify({ include: ["src/**/*.ts"] })
+			);
+
+			for (const agentDirectory of [".claude", ".codex"]) {
+				const worktree = path.join(dir, agentDirectory, "worktrees", "nested");
+				await mkdir(worktree, { recursive: true });
+				await writeFile(
+					path.join(worktree, "tsconfig.json"),
+					JSON.stringify({ include: ["src/**/*.ts"] })
+				);
+			}
+
+			const discovery = discoverProject(dir);
+			expect(discovery.configs.map((config) => config.path)).toEqual([
+				path.join(dir, "tsconfig.json"),
+			]);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
 });
