@@ -634,9 +634,13 @@ export async function scanProjectFunctions(
 	projectRoot?: string
 ): Promise<{ functions: FunctionInfo[]; totalFiles: number }> {
 	const absoluteDir = path.resolve(directory);
-	const rootDir = projectRoot
-		? path.resolve(projectRoot)
-		: findProjectRoot(absoluteDir);
+	let rootDir = findProjectRoot(absoluteDir);
+	if (projectRoot) {
+		const resolvedProjectPath = path.resolve(projectRoot);
+		rootDir = ts.sys.directoryExists(resolvedProjectPath)
+			? resolvedProjectPath
+			: path.dirname(resolvedProjectPath);
+	}
 
 	const discovery = discoverProject(rootDir);
 	const allFiles = Array.from(discovery.fileOwnership.keys()).filter(

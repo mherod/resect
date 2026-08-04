@@ -46,6 +46,20 @@ const SNAKE_CASE_PATTERN = /^[a-z0-9]+(?:_[a-z0-9]+)+$/;
 const LOWER_TO_UPPER_BOUNDARY = /([a-z0-9])([A-Z])/g;
 const ACRONYM_BOUNDARY = /([A-Z]+)([A-Z][a-z])/g;
 const NON_WORD_SEPARATOR = /[^A-Za-z0-9]+/g;
+const NEXT_APP_ROUTER_STEMS = new Set([
+	"default",
+	"error",
+	"global-error",
+	"layout",
+	"loading",
+	"not-found",
+	"opengraph-image",
+	"page",
+	"route",
+	"sitemap",
+	"template",
+	"twitter-image",
+]);
 
 type ConcreteExportKind = Exclude<PrimaryExportKind, "mixed" | "unknown">;
 type ProjectGraphResult = Awaited<
@@ -471,6 +485,13 @@ function findMajority(files: FileNamingInfo[]): Majority | null {
 	};
 }
 
+function isNextAppRouterConvention(file: FileNamingInfo): boolean {
+	return (
+		file.file.split(path.sep).includes("app") &&
+		NEXT_APP_ROUTER_STEMS.has(file.stem)
+	);
+}
+
 function round2(value: number): number {
 	return Math.round(value * 100) / 100;
 }
@@ -516,23 +537,30 @@ function analyzeNaming(
 	const violations: NamingViolation[] = [];
 
 	for (const group of groups.values()) {
-		if (group.length < minSiblings) {
+		const namingCandidates = group.filter(
+			(file) => !isNextAppRouterConvention(file)
+		);
+		if (namingCandidates.length < minSiblings) {
 			continue;
 		}
-		const majority = findMajority(group);
+		const majority = findMajority(namingCandidates);
 		if (!majority || majority.percent < majorityThreshold) {
 			continue;
 		}
-		for (const file of group) {
+		for (const file of namingCandidates) {
 			if (
 				file.currentCasing === majority.casing ||
 				isCasingJustified(file.currentCasing, file.primaryExport.kind)
 			) {
 				continue;
 			}
+			const violation = toViolation(file, majority);
+			if (path.basename(file.file) === violation.suggestedName) {
+				continue;
+			}
 			violations.push({
-				...toViolation(file, majority),
-				siblingCount: group.length,
+				...violation,
+				siblingCount: namingCandidates.length,
 			});
 		}
 	}

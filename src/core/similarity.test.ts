@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import {
 	analyzeSimilarity,
@@ -102,6 +104,38 @@ describe("analyzeSimilarity", () => {
 		);
 		expect(report.groups).toHaveLength(0);
 		expect(report.packageCount).toBeUndefined();
+	});
+
+	test("accepts an explicit tsconfig file as the project path", async () => {
+		const directory = await mkdtemp(
+			path.join(tmpdir(), "resect-similar-project-")
+		);
+		try {
+			const sourceDirectory = path.join(directory, "src");
+			await mkdir(sourceDirectory, { recursive: true });
+			await writeFile(
+				path.join(sourceDirectory, "example.ts"),
+				"export function calculateTotal(values: number[]) { return values.reduce((total, value) => total + value, 0); }\n"
+			);
+			const tsconfigPath = path.join(directory, "tsconfig.json");
+			await writeFile(
+				tsconfigPath,
+				JSON.stringify({
+					compilerOptions: { strict: true },
+					include: ["src/**/*.ts"],
+				})
+			);
+
+			const report = await analyzeSimilarity({
+				directory: sourceDirectory,
+				project: tsconfigPath,
+			});
+
+			expect(report.totalFiles).toBe(1);
+			expect(report.totalFunctions).toBe(1);
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
 	});
 });
 
