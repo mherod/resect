@@ -2,9 +2,9 @@
   "schemaVersion": 2,
   "projectId": "mherod/resect",
   "requirementsFile": "REQUIREMENTS.md",
-  "requirementsSha256": "f0d5da604bd1478f2fb410843020570486a98e26d41a0df6158f5488914782fb",
-  "sourceCommit": "52106e710d4c3d6c378eba1a386b85bcafb689a8",
-  "generatedAt": "2026-08-05T14:01:12Z",
+  "requirementsSha256": "284f84b3ea469d682d0a67da2090cc2038fbe5c4973b9075b10e0bf7880ea342",
+  "sourceCommit": "a9167adf358c9259be4a76de117a9fbc869f4bcc",
+  "generatedAt": "2026-08-05T14:32:49Z",
   "validator": {
     "name": "generate-requirements",
     "version": "2.0.0",
@@ -13,15 +13,15 @@
   "validation": {
     "structure": {
       "status": "PASS",
-      "receiptId": "STRUCT-20260805-001",
+      "receiptId": "STRUCT-20260805-002",
       "validator": "validate-bdd",
       "validatorVersion": "2.0.0",
       "command": "bun $HOME/.agents/skills/generate-requirements/scripts/validate-bdd.js REQUIREMENTS.md --status-log .requirements-status.json",
-      "requirementsSha256": "f0d5da604bd1478f2fb410843020570486a98e26d41a0df6158f5488914782fb",
-      "sourceCommit": "52106e710d4c3d6c378eba1a386b85bcafb689a8",
-      "generatedAt": "2026-08-05T14:01:12Z",
+      "requirementsSha256": "284f84b3ea469d682d0a67da2090cc2038fbe5c4973b9075b10e0bf7880ea342",
+      "sourceCommit": "a9167adf358c9259be4a76de117a9fbc869f4bcc",
+      "generatedAt": "2026-08-05T14:32:49Z",
       "counts": {
-        "checked": 26,
+        "checked": 29,
         "errors": 0,
         "warnings": 1
       },
@@ -31,39 +31,39 @@
     },
     "documentQuality": {
       "status": "PASS",
-      "receiptId": "QUALITY-20260805-001",
+      "receiptId": "QUALITY-20260805-002",
       "validator": "generate-requirements-manual-review",
       "validatorVersion": "2.0.0",
       "command": "generate-requirements 2.0 manual review of REQUIREMENTS.md",
-      "requirementsSha256": "f0d5da604bd1478f2fb410843020570486a98e26d41a0df6158f5488914782fb",
-      "sourceCommit": "52106e710d4c3d6c378eba1a386b85bcafb689a8",
-      "generatedAt": "2026-08-05T14:01:12Z",
+      "requirementsSha256": "284f84b3ea469d682d0a67da2090cc2038fbe5c4973b9075b10e0bf7880ea342",
+      "sourceCommit": "a9167adf358c9259be4a76de117a9fbc869f4bcc",
+      "generatedAt": "2026-08-05T14:32:49Z",
       "counts": {
-        "checked": 26,
+        "checked": 29,
         "errors": 0,
         "warnings": 1
       },
       "notes": [
-        "Reviewed all 26 scenarios for product-first wording, one-trigger atomicity, actor and limitation coverage, lifecycle mapping, cross-cutting applicability, and decision completeness.",
+        "Reviewed all 29 scenarios for product-first wording, one-trigger atomicity, actor and limitation coverage, lifecycle mapping, cross-cutting applicability, and decision completeness.",
         "The preamble warning is disposed in receipts.preamble; no priority-skew warning was computed."
       ]
     },
     "implementation": {
       "status": "PASS",
-      "receiptId": "IMPL-20260805-001",
+      "receiptId": "IMPL-20260805-002",
       "validator": "bun-test-plus-clause-audit",
       "validatorVersion": "1.3.14+generate-requirements-2.0.0",
       "command": "pnpm test && pnpm lint && pnpm typecheck",
-      "requirementsSha256": "f0d5da604bd1478f2fb410843020570486a98e26d41a0df6158f5488914782fb",
-      "sourceCommit": "52106e710d4c3d6c378eba1a386b85bcafb689a8",
-      "generatedAt": "2026-08-05T14:01:12Z",
+      "requirementsSha256": "284f84b3ea469d682d0a67da2090cc2038fbe5c4973b9075b10e0bf7880ea342",
+      "sourceCommit": "a9167adf358c9259be4a76de117a9fbc869f4bcc",
+      "generatedAt": "2026-08-05T14:32:49Z",
       "counts": {
-        "checked": 26,
+        "checked": 29,
         "errors": 0,
         "warnings": 0
       },
       "notes": [
-        "855 tests passed with 0 failures and 2300 assertions across 62 files; lint and typecheck also passed against the audited worktree.",
+        "867 tests passed with 0 failures and 2338 assertions across 64 files; lint and typecheck also passed against the audited worktree.",
         "MOVE-001 through MOVE-003 map to src/commands/move.test.ts and src/commands/move.ts at source commit 52106e7.",
         "TIDY-001, TIDY-002, and ROLL-001 map to src/commands/tidy.test.ts, src/core/rollback.test.ts, src/commands/tidy.ts, and src/core/rollback.ts at source commit 52106e7.",
         "CFG-001 through CFG-006 map to src/core/project-config.test.ts, src/commands/config-defaults.test.ts, src/commands/discover.test.ts, and their corresponding implementation files at source commit 52106e7.",
@@ -71,33 +71,34 @@
         "TRNS-003 maps to src/core/transform-config.test.ts, src/commands/command-spec.test.ts, src/core/config-module.ts, and src/core/transform-config.ts; 30 focused tests passed with 0 failures and 211 assertions.",
         "BATCH-001 through BATCH-005 map to src/commands/move-batch.test.ts and src/commands/move-batch.ts at source commit 52106e7.",
         "BATCH-006 and BATCH-007 map to src/mcp-server.ts plus src/mcp-schema-parity.test.ts at source commit 52106e7; these are explicit implementation locators in place of BDD anchors.",
-        "AUDIT-001 through AUDIT-004 map to src/commands/audit.test.ts, src/commands/audit.ts, and src/mcp-server.ts at source commit 52106e7."
+        "AUDIT-001 through AUDIT-004 map to src/commands/audit.test.ts, src/commands/audit.ts, and src/mcp-server.ts at source commit 52106e7.",
+        "NAM-001 through NAM-003 map to src/commands/naming.test.ts, src/commands/naming.ts, src/commands/registry.ts, src/mcp-server.ts, src/types/naming.ts, and src/index.test.ts; 50 focused tests passed with 0 failures and 154 assertions."
       ]
     }
   },
   "metrics": {
-    "totalScenarios": 26,
+    "totalScenarios": 29,
     "byDelivery": {
-      "V1": 26,
+      "V1": 29,
       "V2": 0,
       "LATER": 0,
       "UNSLICED": 0
     },
     "byDecision": {
-      "DECIDED": 26,
+      "DECIDED": 29,
       "OPEN": 0
     },
     "byPriority": {
       "P0": 4,
-      "P1": 15,
-      "P2": 7,
+      "P1": 17,
+      "P2": 8,
       "P3": 0
     },
     "priorityByDelivery": {
       "V1": {
         "P0": 4,
-        "P1": 15,
-        "P2": 7,
+        "P1": 17,
+        "P2": 8,
         "P3": 0
       },
       "V2": {
@@ -120,15 +121,15 @@
       }
     },
     "byFidelity": {
-      "VERIFIED": 26,
+      "VERIFIED": 29,
       "DRIFTED": 0,
       "MISSING": 0,
       "UNTESTABLE": 0
     },
     "coverage": {
       "v1Decided": {
-        "eligible": 26,
-        "verified": 26,
+        "eligible": 29,
+        "verified": 29,
         "percentage": 100
       },
       "v1LaunchCritical": {
@@ -178,8 +179,8 @@
     "fidelityNoteMismatchIds": [],
     "orphanAnchorIds": [],
     "preamble": {
-      "linesBeforeFirstScenario": 97,
-      "percentageBeforeFirstScenario": 28.6,
+      "linesBeforeFirstScenario": 99,
+      "percentageBeforeFirstScenario": 26.7,
       "warning": true,
       "disposition": "Accepted for this baseline because all content before the first scenario is required product-intent, actor, lifecycle, and applicability register data; implementation evidence and source extracts remain outside the contract."
     },

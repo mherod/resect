@@ -91,6 +91,18 @@ const EXPECTED: Record<string, string[]> = {
 		"ignore",
 		"entrypointGlobs", // #129
 	],
+	naming: [
+		"directory",
+		"project",
+		"workspace",
+		"minSiblings",
+		"majorityThreshold",
+		"case",
+		"includeTests",
+		"fix",
+		"dryRun",
+		"force",
+	],
 };
 
 describe("MCP inputSchema ↔ CLI options parity (#129)", () => {

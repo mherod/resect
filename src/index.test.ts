@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { COMMANDS } from "./commands/registry.ts";
+import type { NamingOptions } from "./index.ts";
 
 /**
  * Entry-point parity guard.
@@ -26,4 +27,12 @@ describe("library API / CLI parity", () => {
 			expect(typeof api[exportName]).toBe("function");
 		});
 	}
+
+	test("naming options expose the explicit case target", () => {
+		const options: NamingOptions = {
+			directory: "src",
+			case: "kebab-case",
+		};
+		expect(options.case).toBe("kebab-case");
+	});
 });

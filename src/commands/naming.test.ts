@@ -239,6 +239,72 @@ describe("naming command", () => {
 		await cleanup(dir);
 	});
 
+	test("NAM-001: --case flags every file outside the target casing", async () => {
+		const dir = await makeFixture("target-case", {
+			...withFiles(PASCAL_FUNCTION_NAMES, functionFile),
+			"src/group/already-kebab.ts": functionFile("alreadyKebab"),
+		});
+
+		const result = await captureOutput(async () =>
+			namingCommand({
+				directory: path.join(dir, "src"),
+				case: "kebab-case",
+				json: true,
+			})
+		);
+		const report = JSON.parse(result.stdout) as {
+			findings: Array<{ file: string; suggestedName: string }>;
+			summary: { case?: string };
+		};
+
+		expect(report.summary.case).toBe("kebab-case");
+		expect(report.findings).toHaveLength(PASCAL_FUNCTION_NAMES.length);
+		expect(report.findings).toContainEqual(
+			expect.objectContaining({
+				file: "group/BuildReport.ts",
+				suggestedName: "build-report.ts",
+			})
+		);
+
+		await cleanup(dir);
+	});
+
+	test("NAM-003: --case warns that --majority-threshold is ignored", async () => {
+		const dir = await makeFixture("target-warning", {
+			"src/group/BuildReport.ts": functionFile("BuildReport"),
+		});
+
+		const result = await captureOutput(async () =>
+			namingCommand({
+				directory: path.join(dir, "src"),
+				case: "kebab-case",
+				majorityThreshold: 0.9,
+				json: true,
+			})
+		);
+		const report = JSON.parse(result.stdout) as { warnings: string[] };
+
+		expect(result.stderr).toContain("--majority-threshold is ignored");
+		expect(report.warnings).toContainEqual(
+			expect.stringContaining("--majority-threshold is ignored")
+		);
+
+		await cleanup(dir);
+	});
+
+	test("documents and validates the supported --case values", async () => {
+		const help = await runCli(["naming", "--help"]);
+		expect(help.exitCode).toBe(0);
+		expect(help.stdout).toContain("--case=STYLE");
+		expect(help.stdout).toContain(
+			"kebab-case, camelCase, PascalCase, or snake_case"
+		);
+
+		const invalid = await runCli(["naming", "src", "--case=TitleCase"]);
+		expect(invalid.exitCode).toBe(1);
+		expect(invalid.stderr).toContain("Error: --case must be");
+	});
+
 	test("prints a grouped human-readable report", async () => {
 		const dir = await makeFixture("human", {
 			...withFiles(CAMEL_NAMES, functionFile),
@@ -345,6 +411,60 @@ describe("naming command", () => {
 		await cleanup(dir);
 	});
 
+	test("NAM-002: --case --fix renames files and updates importers", async () => {
+		const dir = await makeGitFixture("target-fix", {
+			"src/components/UserProfile.ts": functionFile("UserProfile"),
+			"src/app.ts":
+				'import { UserProfile } from "./components/UserProfile";\nexport const app = UserProfile();\n',
+		});
+
+		const result = await captureOutput(async () =>
+			namingCommand({
+				directory: path.join(dir, "src"),
+				case: "kebab-case",
+				fix: true,
+				json: true,
+			})
+		);
+		const out = JSON.parse(result.stdout) as {
+			renames: Array<{ from: string; to: string }>;
+			success: boolean;
+		};
+
+		expect(out.success).toBe(true);
+		expect(out.renames).toHaveLength(1);
+		expect(
+			await hasExactFile(path.join(dir, "src/components/user-profile.ts"))
+		).toBe(true);
+		expect(await readFile(path.join(dir, "src/app.ts"), "utf8")).toContain(
+			'./components/user-profile"'
+		);
+
+		await cleanup(dir);
+	});
+
+	test("--case --fix supports case-only renames", async () => {
+		const dir = await makeGitFixture("target-case-only", {
+			"src/UserProfile.ts": functionFile("UserProfile"),
+		});
+
+		await captureOutput(async () =>
+			namingCommand({
+				directory: path.join(dir, "src"),
+				case: "camelCase",
+				fix: true,
+				json: true,
+			})
+		);
+
+		expect(await hasExactFile(path.join(dir, "src/UserProfile.ts"))).toBe(
+			false
+		);
+		expect(await hasExactFile(path.join(dir, "src/userProfile.ts"))).toBe(true);
+
+		await cleanup(dir);
+	});
+
 	test("--fix rolls back when closing typecheck cannot complete", async () => {
 		const dir = await makeGitFixture("fix-rollback", {
 			"tsconfig.json": JSON.stringify({
@@ -409,5 +529,7 @@ describe("naming command", () => {
 		expect(serverSource).toContain("buildNamingReport");
 		expect(serverSource).toContain("applyNamingFix");
 		expect(serverSource).toContain("fix: z");
+		expect(serverSource).toContain("case: z");
+		expect(serverSource).toContain(".enum(FILENAME_CASING_STYLES)");
 	});
 });

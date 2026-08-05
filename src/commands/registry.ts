@@ -16,7 +16,12 @@ import { mockCleanupCommand } from "./mock-cleanup.ts";
 import { moveCommand } from "./move.ts";
 import { moveBatchCommand } from "./move-batch.ts";
 import { namingCommand } from "./naming.ts";
-import { FIND_TYPES, isInDomain, PREFER_STRATEGIES } from "./option-domains.ts";
+import {
+	FILENAME_CASING_STYLES,
+	FIND_TYPES,
+	isInDomain,
+	PREFER_STRATEGIES,
+} from "./option-domains.ts";
 import type { CliValues } from "./option-flags.ts";
 
 export type { CliValues } from "./option-flags.ts";
@@ -519,6 +524,16 @@ export const COMMANDS: CommandDef[] = [
 				);
 				process.exit(1);
 			}
+			const targetCase = values.case;
+			if (
+				targetCase !== undefined &&
+				!isInDomain(FILENAME_CASING_STYLES, targetCase)
+			) {
+				logger.error(
+					"Error: --case must be 'kebab-case', 'camelCase', 'PascalCase', or 'snake_case'"
+				);
+				process.exit(1);
+			}
 			try {
 				await namingCommand({
 					directory,
@@ -531,6 +546,7 @@ export const COMMANDS: CommandDef[] = [
 					dryRun: values["dry-run"],
 					minSiblings,
 					majorityThreshold,
+					case: targetCase,
 					includeTests: values["include-tests"],
 				});
 			} catch (error) {

@@ -52,6 +52,7 @@ export const OPTION_FLAGS = {
 	"export-threshold": { type: "string" },
 	"min-siblings": { type: "string" },
 	"majority-threshold": { type: "string" },
+	case: { type: "string" },
 	"include-tests": { type: "boolean" },
 	"convention-threshold": { type: "string" },
 	ignore: { type: "string" },

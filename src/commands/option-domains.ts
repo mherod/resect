@@ -20,6 +20,15 @@ export type PreferStrategy = (typeof PREFER_STRATEGIES)[number];
 export const FIND_TYPES = ["file", "export", "all"] as const;
 export type FindType = (typeof FIND_TYPES)[number];
 
+/** `naming --case` explicit filename casing targets. */
+export const FILENAME_CASING_STYLES = [
+	"kebab-case",
+	"camelCase",
+	"PascalCase",
+	"snake_case",
+] as const;
+export type FilenameCasingStyle = (typeof FILENAME_CASING_STYLES)[number];
+
 /**
  * Membership check that narrows an arbitrary string to a domain's member type.
  * Lets CLI handlers validate `values.<flag>` and keep the narrowed type without

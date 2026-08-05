@@ -70,6 +70,7 @@ Options:
   --export-threshold   Flag files with more than N exports (default: 8, audit command)
   --min-siblings       Minimum files in a directory before naming audit (default: 3)
   --majority-threshold Required filename casing majority for naming audit (default: 0.6)
+  --case=STYLE        Require naming files to use kebab-case, camelCase, PascalCase, or snake_case
   --include-tests      Include *.test.* and *.spec.* files in naming audit
   --convention-threshold Required __tests__ majority for test relocation (default: 0.7)
   --fix                Attempt command fix mode where supported

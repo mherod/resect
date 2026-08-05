@@ -757,7 +757,7 @@ Examples:
 		cliHelp: `
 Usage: ${CLI_NAME} naming <directory> [options]
 
-Audit per-directory filename casing conventions and report outliers.
+Audit per-directory filename casing conventions or enforce an explicit target.
 
 Arguments:
   directory    Path to the project directory to scan
@@ -767,6 +767,7 @@ Options:
   --workspace             Scan across workspace packages
   --min-siblings          Minimum files in a directory before auditing (default: 3)
   --majority-threshold    Required casing majority 0.0-1.0 (default: 0.6)
+  --case=STYLE            Require kebab-case, camelCase, PascalCase, or snake_case
   --include-tests         Include *.test.* and *.spec.* files
   --fix                   Rename flagged files to their suggested names
   -n, --dry-run           Preview planned renames without writing files
@@ -776,11 +777,12 @@ Examples:
   ${CLI_NAME} naming src
   ${CLI_NAME} naming src --json
   ${CLI_NAME} naming src --majority-threshold=0.8
+  ${CLI_NAME} naming src --case=kebab-case
   ${CLI_NAME} naming src --fix --dry-run
   ${CLI_NAME} naming src --fix
 `,
 		mcpDescription:
-			"Audit per-directory filename casing conventions and report files whose basename casing is an outlier not justified by the primary export kind. Groups files by directory, finds a casing majority across camelCase, PascalCase, kebab-case, and snake_case, and returns suggested filenames plus confidence. When fix=true and dryRun=false, applies safe case-only renames via the move pipeline, runs a closing tsc --noEmit gate, and rolls back on new type errors. Mutating when fix=true and dryRun=false; read-only otherwise.",
+			"Audit filename casing conventions using either per-directory majority or an explicit `case` target across camelCase, PascalCase, kebab-case, and snake_case. An explicit target reports every mismatched file and ignores `majorityThreshold`. Returns suggested filenames plus confidence. When fix=true and dryRun=false, applies safe case-only renames via the move pipeline, updates imports, runs a closing tsc --noEmit gate, and rolls back on new type errors. Mutating when fix=true and dryRun=false; read-only otherwise.",
 	},
 	{
 		name: "organise",

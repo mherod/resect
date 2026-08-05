@@ -22,6 +22,7 @@ export interface NamingAnalysisOptions {
 	directory?: string;
 	minSiblings?: number;
 	majorityThreshold?: number;
+	case?: FilenameCasing;
 	includeTests?: boolean;
 }
 
@@ -52,6 +53,7 @@ export interface NamingReport {
 	schemaVersion: "1";
 	directory: string;
 	generatedAt: string;
+	warnings: string[];
 	findings: NamingViolation[];
 	summary: {
 		totalFindings: number;
@@ -60,6 +62,7 @@ export interface NamingReport {
 		totalDirectories: number;
 		minSiblings: number;
 		majorityThreshold: number;
+		case?: FilenameCasing;
 		includeTests: boolean;
 	};
 }

@@ -28,16 +28,20 @@ import type {
 	NamingViolation,
 	PrimaryExportKind,
 } from "../types/naming.ts";
+import { FILENAME_CASING_STYLES } from "./option-domains.ts";
 
 const NAMING_SCHEMA_VERSION = "1" as const;
 const DEFAULT_MIN_SIBLINGS = 3;
 const DEFAULT_MAJORITY_THRESHOLD = 0.6;
 const CASING_STYLES = [
-	"camelCase",
-	"PascalCase",
-	"kebab-case",
-	"snake_case",
+	FILENAME_CASING_STYLES[1],
+	FILENAME_CASING_STYLES[2],
+	FILENAME_CASING_STYLES[0],
+	FILENAME_CASING_STYLES[3],
 ] as const satisfies readonly FilenameCasing[];
+
+export const TARGET_CASE_THRESHOLD_WARNING =
+	"--majority-threshold is ignored when --case is set.";
 
 const CAMEL_CASE_PATTERN = /^[a-z][A-Za-z0-9]*$/;
 const PASCAL_CASE_PATTERN = /^[A-Z][A-Za-z0-9]*$/;
@@ -523,6 +527,29 @@ function toViolation(
 	};
 }
 
+function toTargetViolation(
+	file: FileNamingInfo,
+	targetCasing: FilenameCasing,
+	siblings: FileNamingInfo[]
+): NamingViolation {
+	const matchingCount = siblings.filter(
+		(sibling) => toCasing(sibling.stem, targetCasing) === sibling.stem
+	).length;
+	const matchingPercent = round2(matchingCount / siblings.length);
+	return {
+		file: file.file,
+		currentCasing: file.currentCasing,
+		suggestedName: `${toCasing(file.stem, targetCasing)}${file.extension}`,
+		primaryExportKind: file.primaryExport.kind,
+		siblingCasingMajority: targetCasing,
+		siblingMajorityPercent: matchingPercent,
+		siblingMajorityCount: matchingCount,
+		siblingCount: siblings.length,
+		confidence: 1,
+		reason: `Filename does not match the required ${targetCasing} casing`,
+	};
+}
+
 function analyzeNaming(
 	graph: DependencyGraph,
 	options: NamingAnalysisOptions = {}
@@ -540,6 +567,17 @@ function analyzeNaming(
 		const namingCandidates = group.filter(
 			(file) => !isNextAppRouterConvention(file)
 		);
+		if (options.case) {
+			for (const file of namingCandidates) {
+				if (toCasing(file.stem, options.case) === file.stem) {
+					continue;
+				}
+				violations.push(
+					toTargetViolation(file, options.case, namingCandidates)
+				);
+			}
+			continue;
+		}
 		if (namingCandidates.length < minSiblings) {
 			continue;
 		}
@@ -639,13 +677,19 @@ export async function buildNamingReport(
 		directory: reportDirectory,
 		minSiblings,
 		majorityThreshold,
+		case: options.case,
 		includeTests: options.includeTests,
 	});
+	const warnings =
+		options.case && options.majorityThreshold !== undefined
+			? [TARGET_CASE_THRESHOLD_WARNING]
+			: [];
 
 	return {
 		schemaVersion: NAMING_SCHEMA_VERSION,
 		directory: toRelativePath(process.cwd(), reportDirectory),
 		generatedAt: new Date().toISOString(),
+		warnings,
 		findings: analysis.violations.map((violation) =>
 			relativizeViolation(violation, reportDirectory)
 		),
@@ -656,16 +700,20 @@ export async function buildNamingReport(
 			totalDirectories: analysis.totalDirectories,
 			minSiblings,
 			majorityThreshold,
+			case: options.case,
 			includeTests: options.includeTests ?? false,
 		},
 	};
 }
 
 export function formatNamingReport(report: NamingReport): string {
+	const rule = report.summary.case
+		? `target casing ${report.summary.case}`
+		: `min siblings ${report.summary.minSiblings}, majority threshold ${report.summary.majorityThreshold}`;
 	const lines = [
 		`Naming Report (${report.directory})`,
 		`Summary: ${report.summary.totalFindings} finding(s), ${report.summary.filesTouched} files touched`,
-		`Rules: min siblings ${report.summary.minSiblings}, majority threshold ${report.summary.majorityThreshold}`,
+		`Rules: ${rule}`,
 		"",
 	];
 	const groups = groupByFileDirectory(report.findings);
@@ -790,6 +838,9 @@ export async function applyNamingFix(
 }
 
 export async function namingCommand(options: NamingOptions): Promise<void> {
+	if (options.case && options.majorityThreshold !== undefined) {
+		logger.warn(TARGET_CASE_THRESHOLD_WARNING);
+	}
 	if (options.fix) {
 		await ensureCleanWorktree(path.resolve(options.directory), options.force);
 		const result = await applyNamingFix(options);

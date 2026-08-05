@@ -71,6 +71,7 @@ import {
 } from "./commands/move-batch.ts";
 import { buildNamingReport } from "./commands/naming.ts";
 import {
+	FILENAME_CASING_STYLES,
 	FIND_TYPES,
 	PREFER_STRATEGIES,
 	type PreferStrategy,
@@ -106,6 +107,7 @@ import {
 } from "./core/verify.ts";
 import { discoverWorkspace } from "./core/workspace.ts";
 import type { InlineConflict, InlineRewrite } from "./types/inline.ts";
+import type { FilenameCasing } from "./types/naming.ts";
 import type { TidyFixCategory } from "./types/tidy.ts";
 import type { TransformRule } from "./types/transform.ts";
 
@@ -658,6 +660,7 @@ async function namingTool(
 		workspace?: boolean;
 		minSiblings?: number;
 		majorityThreshold?: number;
+		case?: FilenameCasing;
 		includeTests?: boolean;
 		fix?: boolean;
 		dryRun?: boolean;
@@ -682,6 +685,7 @@ async function namingTool(
 			workspace: options.workspace,
 			minSiblings: options.minSiblings,
 			majorityThreshold: options.majorityThreshold,
+			case: options.case,
 			includeTests: options.includeTests,
 			fix: true,
 			force: options.force,
@@ -695,6 +699,7 @@ async function namingTool(
 		workspace: options.workspace,
 		minSiblings: options.minSiblings,
 		majorityThreshold: options.majorityThreshold,
+		case: options.case,
 		includeTests: options.includeTests,
 	});
 	return jsonText(report);
@@ -1394,6 +1399,12 @@ server.registerTool(
 				.describe(
 					"Required majority ratio from 0.0 to 1.0 before reporting outliers (default 0.6)"
 				),
+			case: z
+				.enum(FILENAME_CASING_STYLES)
+				.optional()
+				.describe(
+					"Require every filename to use this casing, regardless of directory majority"
+				),
 			includeTests: z
 				.boolean()
 				.optional()
@@ -1424,6 +1435,7 @@ server.registerTool(
 		workspace,
 		minSiblings,
 		majorityThreshold,
+		case: targetCase,
 		includeTests,
 		fix,
 		dryRun,
@@ -1435,6 +1447,7 @@ server.registerTool(
 				workspace,
 				minSiblings,
 				majorityThreshold,
+				case: targetCase,
 				includeTests,
 				fix,
 				dryRun: fix ? (dryRun ?? true) : undefined,
