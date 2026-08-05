@@ -3,13 +3,13 @@
 ## Document Contract
 
 - Contract version: 2.0
-- Last updated: 2026-08-04
+- Last updated: 2026-08-05
 - Requirements owner: Repository owner
 - Canonical artifact: `REQUIREMENTS.md`; derived review evidence: `.requirements-status.json`
 
 ## Product Ground Truth
 
-Resect is a local TypeScript and JavaScript refactoring tool exposed through a CLI, an MCP server, and a programmatic API. This baseline covers safe move failures, truthful tidy rollback, reusable rollback behavior, project-wide defaults, transform import preference, shared-context batch moves, and source-focused audit metrics. Other commands remain outside this baseline until they receive source-backed scenarios. The host operating system controls filesystem access; resect adds validation, dirty-worktree protection, dry-run previews, and verification boundaries but has no account, tenant, or remote session model.
+Resect is a local TypeScript and JavaScript refactoring tool exposed through a CLI, an MCP server, and a programmatic API. This baseline covers safe move failures, truthful tidy rollback, reusable rollback behavior, project-wide defaults, transform configuration trust and import preference, shared-context batch moves, and source-focused audit metrics. Other commands remain outside this baseline until they receive source-backed scenarios. The host operating system controls filesystem and process access; resect adds validation, dirty-worktree protection, dry-run previews, pre-execution trust warnings, and verification boundaries but has no account, tenant, or remote session model.
 
 ## Source Register
 
@@ -23,14 +23,15 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 | SRC-006 | Repository owner issue | 2026-07-11 | https://github.com/mherod/resect/issues/163 | Shared-context batch move behavior and surface parity |
 | SRC-007 | Published package contract | 1.8.0 at source commit 25a5506 | https://github.com/mherod/resect/blob/25a5506/README.md | CLI, MCP, library, configuration, and safety contract |
 | SRC-008 | Repository owner issue | 2026-08-04 | https://github.com/mherod/resect/issues/182 | Generated output exclusion, safe source relation mapping, and audit explanation |
+| SRC-009 | Repository owner issue | 2026-06-10 | https://github.com/mherod/resect/issues/147 | Transform config execution risk, documentation, and pre-execution warning |
 
 ## Delivery and Decision Register
 
 | Decision ID | Decision | State | Delivery | Sources | Reversal condition |
 |---|---|---|---|---|---|
-| DR-001 | This baseline covers the seven accepted issue scopes registered above. | DECIDED | V1 | SRC-001, SRC-002, SRC-003, SRC-004, SRC-005, SRC-006, SRC-008 | A repository-owner decision expands or retires the baseline. |
+| DR-001 | This baseline covers the eight accepted issue scopes registered above. | DECIDED | V1 | SRC-001, SRC-002, SRC-003, SRC-004, SRC-005, SRC-006, SRC-008, SRC-009 | A repository-owner decision expands or retires the baseline. |
 | DR-002 | Resect is a local developer tool without accounts, tenants, sessions, notifications, analytics, or media. | DECIDED | V1 | SRC-007 | A published contract adds one of these product surfaces. |
-| DR-003 | Filesystem and process permissions remain host concerns; resect must report failures and protect the workspace it mutates. | DECIDED | V1 | SRC-001, SRC-002, SRC-006, SRC-007 | The execution model moves into a managed remote sandbox. |
+| DR-003 | Filesystem and process permissions remain host concerns; resect must expose executable-config trust boundaries, report failures, and protect the workspace it mutates. | DECIDED | V1 | SRC-001, SRC-002, SRC-006, SRC-007, SRC-009 | The execution model moves into a managed remote sandbox. |
 | DR-004 | Batch moves are sequential within one process and use one setup, worktree guard, and verification boundary. | DECIDED | V1 | SRC-006 | A repository-owner decision introduces parallel or cross-process coordination. |
 | DR-005 | Explicit invocation values override command defaults, which override global defaults, which override built-in behavior. | DECIDED | V1 | SRC-004, SRC-007 | A published configuration contract changes precedence. |
 
@@ -43,7 +44,9 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 
 ## Actor Groups
 
-> Applicability: N/A — Operator and API Consumer defaults differ materially, so every scenario names one canonical actor directly.
+| Group | Exact members | Exclusions |
+|---|---|---|
+| Transform Config Consumer | Operator; API Consumer | Callers that do not request a transform config |
 
 ## V1 Launch Critical Path
 
@@ -56,8 +59,8 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 
 | Coverage row | Scenario IDs or N/A | Decision or rationale |
 |---|---|---|
-| Entry | CFG-001, BATCH-001, BATCH-006 | Configuration and batch entry points are explicit. |
-| Passive observation | CFG-005, BATCH-001, BATCH-006, AUDIT-001, AUDIT-002, AUDIT-003, AUDIT-004 | Operators and API consumers receive resolved, preview, or audit output. |
+| Entry | CFG-001, TRNS-003, BATCH-001, BATCH-006 | Configuration, transform, and batch entry points are explicit. |
+| Passive observation | CFG-005, TRNS-003, BATCH-001, BATCH-006, AUDIT-001, AUDIT-002, AUDIT-003, AUDIT-004 | Operators and API consumers receive resolved, warning, preview, or audit output. |
 | Successful exit | MOVE-001, BATCH-002 | Successful mutations report the applied operation. |
 | Cancel or alternative exit | BATCH-001 | Dry-run is the non-mutating alternative. |
 | Failure or timeout | MOVE-002, TIDY-001, TIDY-002, BATCH-004, BATCH-005, BATCH-007 | Failure paths preserve truthful outcomes. |
@@ -76,8 +79,8 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 |---|---|---|---|
 | Accessibility and keyboard or assistive-technology equivalence | N/A | — | Text CLI and structured API only; no graphical interaction in baseline; DR-002; XC-NA-001. |
 | Localisation, time, and timezone | N/A | — | No locale-sensitive or time-driven behavior in baseline; DR-002; XC-NA-002. |
-| Privacy, consent, and trust boundaries | APPLIES | MOVE-002, TIDY-001, BATCH-004 | Host filesystem failures and dirty-worktree boundaries must be visible; DR-003. |
-| Security, session expiry or revocation, and abuse | N/A | — | No authentication, session, tenant, or network service; DR-002; XC-NA-003. |
+| Privacy, consent, and trust boundaries | APPLIES | MOVE-002, TIDY-001, TRNS-003, BATCH-004 | Host filesystem failures, dirty-worktree boundaries, and executable-config trust must be visible; DR-003. |
+| Security, session expiry or revocation, and abuse | APPLIES | TRNS-003 | Transform configs execute with host process privileges, so the consumer is warned before execution; SRC-009, DR-003. |
 | Audit and accountability | N/A | — | No durable product audit history is created; DR-002; XC-NA-004. |
 | Notifications and communication preferences | N/A | — | No notification channel or preference model; DR-002; XC-NA-005. |
 | Search and discovery | APPLIES | CFG-001, CFG-005, AUDIT-001 | Project configuration and configured source or output boundaries are discovered and applied. |
@@ -199,7 +202,7 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 **When** the Operator invokes a configuration-aware command without explicit overrides
 **Then** the command uses its built-in behavior
 
-## Feature: Transform Import Preference
+## Feature: Transform Configuration and Import Preference
 
 ### TRNS-001 — Operator — Honor an explicit alias preference after transform
 
@@ -216,6 +219,14 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 **Given** a transform move needs to normalize an import in the moved module
 **When** the Operator applies the move without an import preference
 **Then** the moved module uses a relative import
+
+### TRNS-003 — Transform Config Consumer — Warn before executing a transform config
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P1 | **Fidelity:** VERIFIED | **Sources:** SRC-009
+
+**Given** a Transform Config Consumer selects an existing JavaScript transform config
+**When** resect loads the config for a transform move
+**Then** standard error identifies the resolved config path before the config is executed
 
 ## Feature: Shared-Context Batch Move
 
@@ -320,8 +331,8 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 
 | Layer | Status | Receipt | Current artifact |
 |---|---|---|---|
-| Structure | PASS | STRUCT-20260804-001 | [.requirements-status.json](.requirements-status.json) `validation.structure` |
-| Document quality | PASS | QUALITY-20260804-001 | [.requirements-status.json](.requirements-status.json) `validation.documentQuality` |
-| Implementation | PASS | IMPL-20260804-001 | [.requirements-status.json](.requirements-status.json) `validation.implementation` |
+| Structure | PASS | STRUCT-20260805-001 | [.requirements-status.json](.requirements-status.json) `validation.structure` |
+| Document quality | PASS | QUALITY-20260805-001 | [.requirements-status.json](.requirements-status.json) `validation.documentQuality` |
+| Implementation | PASS | IMPL-20260805-001 | [.requirements-status.json](.requirements-status.json) `validation.implementation` |
 
 The canonical validator, manual product-contract review, and focused implementation audit are independent. Counts, hashes, source commit, commands, timestamps, warning dispositions, and evidence summaries live only in the derived status artifact.

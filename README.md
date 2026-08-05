@@ -132,6 +132,9 @@ resect move src/config.ts packages/shared/src/config.ts --transform=.resect/tran
 
 > `--transform` takes its config path as a value, so use the `--transform=<path>` form (a bare `--transform` would swallow the next argument). `.resect/transforms.js` is the conventional location, but the path is always explicit.
 
+> [!WARNING]
+> Transform configs are executed as JavaScript with the same process privileges as resect. Only use `.resect/transforms.js` files and other transform configs you trust.
+
 ### The config file
 
 The config exports a list of `{ from, to }` rules — either as `{ transforms: [...] }` or as a bare array:

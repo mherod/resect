@@ -69,6 +69,12 @@ describe("command roster parity", () => {
  * deriving its prose from the spec (the drift mode this consolidation closes).
  */
 describe("command prose derivation", () => {
+	test("move help warns that transform configs execute as JavaScript (#147)", () => {
+		const moveHelp = commandSpec("move").cliHelp;
+		expect(moveHelp).toContain("The config is executed as");
+		expect(moveHelp).toContain("only use trusted files");
+	});
+
 	test("every spec carries non-empty cliHelp and mcpDescription", () => {
 		for (const spec of COMMAND_SPECS) {
 			expect(spec.cliHelp.length).toBeGreaterThan(0);

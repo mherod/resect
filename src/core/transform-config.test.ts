@@ -125,6 +125,32 @@ describe("validateTransformConfig (#123)", () => {
 });
 
 describe("loadTransformConfig (#123)", () => {
+	test("warns with the resolved path before executing the config (#147)", async () => {
+		await withTempDir(async (dir) => {
+			const absPath = path.join(dir, "transforms.js");
+			await Bun.write(
+				absPath,
+				'process.stderr.write("config executed\\n"); module.exports = { transforms: [] };'
+			);
+			const originalStderrWrite = process.stderr.write.bind(process.stderr);
+			let stderr = "";
+			process.stderr.write = ((chunk: unknown) => {
+				stderr += String(chunk);
+				return true;
+			}) as typeof process.stderr.write;
+
+			try {
+				await loadTransformConfig(dir, "transforms.js");
+			} finally {
+				process.stderr.write = originalStderrWrite;
+			}
+
+			expect(stderr).toBe(
+				`⚠️  Executing transform config: ${absPath}\nconfig executed\n`
+			);
+		});
+	});
+
 	test("loads a CommonJS { transforms } config relative to rootDir", async () => {
 		await withTempDir(async (dir) => {
 			await Bun.write(

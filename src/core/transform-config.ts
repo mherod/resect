@@ -59,7 +59,9 @@ export async function loadTransformConfig(
 		);
 	}
 
-	const mod = await loadConfigModule(absPath, "transform config");
+	const mod = await loadConfigModule(absPath, "transform config", () => {
+		process.stderr.write(`⚠️  Executing transform config: ${absPath}\n`);
+	});
 
 	const rules = validateTransformConfig(unwrapModule(mod), absPath);
 	return rules;

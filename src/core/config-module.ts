@@ -14,7 +14,8 @@ const moduleCache = new Map<string, { hash: string; value: unknown }>();
  */
 export async function loadConfigModule(
 	absPath: string,
-	description: string
+	description: string,
+	beforeExecute?: () => void
 ): Promise<unknown> {
 	const rt = getRuntime();
 	const source = await rt.fs.readFile(absPath);
@@ -30,6 +31,7 @@ export async function loadConfigModule(
 		const ext = path.extname(absPath) || ".js";
 		const loadPath = path.join(loadDir, `config${ext}`);
 		await rt.fs.writeFile(loadPath, source);
+		beforeExecute?.();
 		const value = await import(pathToFileURL(loadPath).href);
 		moduleCache.set(absPath, { hash, value });
 		return value;

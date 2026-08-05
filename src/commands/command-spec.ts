@@ -355,7 +355,8 @@ Options:
                     which does not resolve tsconfig paths
   --transform=PATH  Apply declarative AST rewrites from a config (e.g.
                     .resect/transforms.js) to the moved file; verified and
-                    rolled back on new type errors
+                    rolled back on new type errors. The config is executed as
+                    JavaScript with resect's privileges; only use trusted files
 
 Features:
   • Updates all import statements referencing the moved file
