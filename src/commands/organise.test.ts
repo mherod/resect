@@ -19,8 +19,9 @@ const TSCONFIG = JSON.stringify({
 		moduleResolution: "bundler",
 		allowImportingTsExtensions: true,
 		noEmit: true,
+		jsx: "preserve",
 	},
-	include: ["**/*.ts"],
+	include: ["**/*.ts", "**/*.tsx"],
 	exclude: ["node_modules"],
 });
 
@@ -138,6 +139,70 @@ describe("organise: basename collisions", () => {
 		);
 		// Same signature — not a conflict
 		expect(collision).toBeUndefined();
+	});
+
+	it("does not flag repeated route handlers whose GET signatures diverge", async () => {
+		const dir = await makeProject({
+			// Same export name, different signatures per segment — exactly what
+			// Route Handlers look like, and what plain basename grouping calls a
+			// collision.
+			"app/users/route.ts":
+				"export function GET(): Response { return new Response('users'); }",
+			"app/posts/route.ts":
+				"export function GET(req: Request): Promise<Response> { return Promise.resolve(new Response(req.url)); }",
+			"app/comments/route.ts":
+				"export function GET(req: Request, ctx: { id: string }): Response { return new Response(ctx.id); }",
+		});
+		const report = await buildOrganiseReport({ directory: dir });
+		expect(
+			report.basenameCollisions.find((c) => c.basename === "route")
+		).toBeUndefined();
+		expect(report.summary.totalCollisions).toBe(0);
+	});
+
+	it("does not flag repeated page/layout segments with divergent generateMetadata", async () => {
+		const dir = await makeProject({
+			// Segment-specific generateMetadata signatures are normal; only
+			// same-named exported functions are compared, so these are exactly
+			// the shape that plain basename grouping calls a conflict.
+			"app/dashboard/page.tsx":
+				'export function generateMetadata(): { title: string } { return { title: "Dashboard" }; }\nexport default function Page() { return null; }',
+			"app/settings/page.tsx":
+				'export function generateMetadata(props: { id: string }): { title: string; robots: string } { return { title: props.id, robots: "noindex" }; }\nexport default function Page() { return null; }',
+			"app/dashboard/layout.tsx":
+				"export function generateStaticParams(): string[] { return []; }\nexport default function Layout() { return null; }",
+			"app/settings/layout.tsx":
+				"export function generateStaticParams(depth: number): number[] { return [depth]; }\nexport default function Layout() { return null; }",
+		});
+		const report = await buildOrganiseReport({ directory: dir });
+		expect(
+			report.basenameCollisions.find((c) => c.basename === "page")
+		).toBeUndefined();
+		expect(
+			report.basenameCollisions.find((c) => c.basename === "layout")
+		).toBeUndefined();
+	});
+
+	it("still flags convention-named files outside a route tree", async () => {
+		const dir = await makeProject({
+			// `packages/app` is a package name, not an App Router root, so these
+			// are ordinary modules that happen to share a reserved basename.
+			"packages/app/lib/route.ts":
+				"export function route(a: string): string { return a; }",
+			"packages/app/api/route.ts":
+				"export function route(items: string[]): number { return items.length; }",
+			"packages/app/main.ts": `
+				import { route as r1 } from "./lib/route.ts";
+				import { route as r2 } from "./api/route.ts";
+				r1("a"); r2(["b"]);
+			`,
+		});
+		const report = await buildOrganiseReport({ directory: dir });
+		const collision = report.basenameCollisions.find(
+			(c) => c.basename === "route"
+		);
+		expect(collision).toBeDefined();
+		expect(collision?.conflictingExports).toHaveLength(1);
 	});
 });
 

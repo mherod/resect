@@ -2,6 +2,7 @@ import path from "node:path";
 import ts from "typescript";
 import { logger } from "../cli-logger.ts";
 import { hasExportModifier } from "../core/ast-utils.ts";
+import { isFrameworkConventionFile } from "../core/framework-conventions.ts";
 import {
 	buildProjectGraphs,
 	mergeDependencyGraphs,
@@ -230,6 +231,13 @@ function detectBasenameCollisions(
 			continue;
 		}
 		if (isTestFile(file)) {
+			continue;
+		}
+		// Framework convention files repeat by design — one page.tsx or route.ts
+		// per route segment — and their exports legitimately differ segment to
+		// segment. Grouping them by basename reports the convention itself as a
+		// collision. Convention-named files outside a route tree stay eligible.
+		if (isFrameworkConventionFile(file)) {
 			continue;
 		}
 
