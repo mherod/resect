@@ -2,7 +2,11 @@ import path from "node:path";
 import ts from "typescript";
 import { logger } from "../cli-logger.ts";
 import { hasExportModifier } from "../core/ast-utils.ts";
-import { isFrameworkConventionFile } from "../core/framework-conventions.ts";
+import {
+	hasAppRouterRootSegment,
+	isFrameworkConventionFile,
+	isSharedModuleRoot,
+} from "../core/framework-conventions.ts";
 import {
 	buildProjectGraphs,
 	mergeDependencyGraphs,
@@ -203,6 +207,20 @@ function detectMisplacedFiles(
 			continue;
 		}
 
+		// Importer clustering alone is not enough evidence to cross an
+		// architectural boundary. A shared module whose consumers happen to sit
+		// in one feature today is not misplaced — it is shared, and tomorrow's
+		// second consumer would have to move it straight back.
+		if (isSharedModuleRoot(relFile)) {
+			continue;
+		}
+		// Likewise, do not pull a module from outside a framework route tree into
+		// one. Route trees are owned by the framework's routing semantics, not by
+		// whichever segment currently imports the module.
+		if (hasAppRouterRootSegment(lca) && !hasAppRouterRootSegment(fileDir)) {
+			continue;
+		}
+
 		results.push({
 			file: relFile,
 			absolutePath: file,
@@ -213,6 +231,7 @@ function detectMisplacedFiles(
 			suggestedDir: toRelativePath(absoluteDir, lca),
 			suggestedPath: toRelativePath(absoluteDir, suggestedPath),
 			importerCount: importers.length,
+			evidence: `all ${importers.length} importer(s) cluster under ${toRelativePath(absoluteDir, lca)}; the module is outside that cluster, outside a shared root, and the destination is not a framework route tree`,
 		});
 	}
 

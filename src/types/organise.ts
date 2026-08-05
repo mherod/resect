@@ -8,6 +8,8 @@ export interface MisplacedFile {
 	suggestedDir: string;
 	suggestedPath: string;
 	importerCount: number;
+	/** Why this move was suggested and which boundary policy allowed it. */
+	evidence: string;
 }
 
 export interface SignatureInfo {

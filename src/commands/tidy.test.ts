@@ -1208,13 +1208,16 @@ export function usedInternal() {
 			compilerOptions: { strict: true, target: "ESNext", module: "Preserve" },
 			include: ["**/*.ts"],
 		}),
-		// util.ts lives in shared/ but all importers are in calc/.
-		"src/shared/util.ts":
+		// util.ts lives in misc/ but all importers are in calc/. The directory is
+		// deliberately NOT a recognised shared root (components/lib/shared/...),
+		// because organise now refuses to pull a shared module into a feature
+		// tree on importer clustering alone (#181).
+		"src/misc/util.ts":
 			'export function util(): string { return "utility"; }\n',
 		"src/calc/a.ts":
-			'import { util } from "../shared/util";\nexport const a = util();\n',
+			'import { util } from "../misc/util";\nexport const a = util();\n',
 		"src/calc/b.ts":
-			'import { util } from "../shared/util";\nexport const b = util() + "!";\n',
+			'import { util } from "../misc/util";\nexport const b = util() + "!";\n',
 	};
 
 	test("--fix=layout-relocations moves LCA-misplaced file next to its consumers", async () => {
@@ -1243,7 +1246,7 @@ export function usedInternal() {
 			})
 		);
 		// util.ts relocated from shared/ to calc/.
-		expect(await Bun.file(path.join(dir, "src/shared/util.ts")).exists()).toBe(
+		expect(await Bun.file(path.join(dir, "src/misc/util.ts")).exists()).toBe(
 			false
 		);
 		expect(await Bun.file(path.join(dir, "src/calc/util.ts")).exists()).toBe(
@@ -1252,7 +1255,7 @@ export function usedInternal() {
 		// Importer specifiers rewritten to local sibling.
 		const aContent = await Bun.file(path.join(dir, "src/calc/a.ts")).text();
 		expect(aContent).toContain('"./util"');
-		expect(aContent).not.toContain('"../shared/util"');
+		expect(aContent).not.toContain('"../misc/util"');
 
 		await cleanup(dir);
 	});
@@ -1297,7 +1300,7 @@ export function usedInternal() {
 			})
 		);
 		// Move reversed: original path restored.
-		expect(await Bun.file(path.join(dir, "src/shared/util.ts")).exists()).toBe(
+		expect(await Bun.file(path.join(dir, "src/misc/util.ts")).exists()).toBe(
 			true
 		);
 		expect(await Bun.file(path.join(dir, "src/calc/util.ts")).exists()).toBe(
@@ -1334,7 +1337,7 @@ export function usedInternal() {
 			)
 		).toBe(false);
 		// util.ts left in its original location under bare --fix.
-		expect(await Bun.file(path.join(dir, "src/shared/util.ts")).exists()).toBe(
+		expect(await Bun.file(path.join(dir, "src/misc/util.ts")).exists()).toBe(
 			true
 		);
 

@@ -97,6 +97,49 @@ describe("organise: misplaced files", () => {
 	});
 });
 
+describe("organise: architectural boundary guards", () => {
+	it("does not move a shared component into an app route tree", async () => {
+		const dir = await makeProject({
+			"components/shared-button.ts":
+				"export function sharedButton() { return 1; }",
+			"app/dashboard/page-a.ts": `import { sharedButton } from "../../components/shared-button.ts"; sharedButton();`,
+			"app/dashboard/page-b.ts": `import { sharedButton } from "../../components/shared-button.ts"; sharedButton();`,
+		});
+		const report = await buildOrganiseReport({ directory: dir });
+		expect(
+			report.misplacedFiles.find((f) => f.file.includes("shared-button"))
+		).toBeUndefined();
+	});
+
+	it("does not move a src-level shared helper into an app route tree", async () => {
+		const dir = await makeProject({
+			"src/lib/format-date.ts": "export function formatDate() { return 1; }",
+			"src/app/reports/a.ts": `import { formatDate } from "../../lib/format-date.ts"; formatDate();`,
+			"src/app/reports/b.ts": `import { formatDate } from "../../lib/format-date.ts"; formatDate();`,
+		});
+		const report = await buildOrganiseReport({ directory: dir });
+		expect(
+			report.misplacedFiles.find((f) => f.file.includes("format-date"))
+		).toBeUndefined();
+	});
+
+	it("still flags a genuinely local module outside any shared boundary", async () => {
+		const dir = await makeProject({
+			"src/helper.ts": "export function doWork() { return 42; }",
+			"src/core/cookies/a.ts": `import { doWork } from "../../helper.ts"; doWork();`,
+			"src/core/cookies/b.ts": `import { doWork } from "../../helper.ts"; doWork();`,
+		});
+		const report = await buildOrganiseReport({ directory: dir });
+		const finding = report.misplacedFiles.find((f) =>
+			f.file.includes("helper.ts")
+		);
+		expect(finding).toBeDefined();
+		expect(finding?.suggestedPath).toContain(
+			path.join("src", "core", "cookies")
+		);
+	});
+});
+
 describe("organise: basename collisions", () => {
 	it("flags two files sharing a basename with divergent function signatures", async () => {
 		const dir = await makeProject({

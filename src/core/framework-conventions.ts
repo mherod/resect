@@ -54,6 +54,44 @@ export function hasAppRouterRootSegment(filePath: string): boolean {
 }
 
 /**
+ * Directory names that conventionally hold modules shared across features.
+ *
+ * Next.js documents storing project files outside `app/` in top-level folders
+ * like these, so a module living here is an architectural choice rather than a
+ * placement mistake.
+ */
+const SHARED_MODULE_ROOTS = new Set([
+	"common",
+	"components",
+	"config",
+	"hooks",
+	"lib",
+	"services",
+	"shared",
+	"styles",
+	"types",
+	"utils",
+]);
+
+/**
+ * True when a project-relative path sits under a conventional shared root.
+ *
+ * Recognises both documented layouts — a top-level `components/` and a
+ * `src/components/` — by position rather than by matching one fixed repository
+ * shape, so the segment only counts at the project root or directly beneath
+ * `src`. A `shared` directory nested deep inside a feature is not a shared root.
+ */
+export function isSharedModuleRoot(relativePath: string): boolean {
+	const [first, second] = relativePath.split(path.sep);
+	if (first !== undefined && SHARED_MODULE_ROOTS.has(first)) {
+		return true;
+	}
+	return first === "src" && second !== undefined
+		? SHARED_MODULE_ROOTS.has(second)
+		: false;
+}
+
+/**
  * True when a file is a framework-owned convention file in a valid framework
  * location — its name and position carry the behaviour, so its exports are not
  * evidence about naming style or about colliding with a same-named module.
