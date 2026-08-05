@@ -8,6 +8,7 @@ import type {
 	SimilarityReport,
 } from "../types/similar.ts";
 import { TS_JS_VUE_EXTENSIONS } from "./constants.ts";
+import { resolveTsConfig } from "./project.ts";
 import {
 	extractAllIdentifiers,
 	extractContentTokens,
@@ -622,12 +623,36 @@ export async function collectFunctionsFromFiles(filePaths: string[]): Promise<{
 }
 
 /**
+ * Resolve an explicit `--project` argument to the directory owning its config.
+ *
+ * Routes through the shared `resolveTsConfig()` so `similar` accepts the same
+ * config-file-or-directory forms as every other command, then requires the
+ * result to exist. Without that check a bogus path silently degrades to its
+ * parent directory, so an unreadable config produced a normal-looking report
+ * instead of an error.
+ */
+function resolveExplicitProjectRoot(
+	projectRoot: string,
+	startDir: string
+): string {
+	const tsconfigPath = resolveTsConfig(projectRoot, startDir);
+	if (!(tsconfigPath && ts.sys.fileExists(tsconfigPath))) {
+		throw new Error(
+			`Could not resolve a tsconfig.json from --project ${projectRoot}`
+		);
+	}
+	return path.dirname(tsconfigPath);
+}
+
+/**
  * Scan all TypeScript/JavaScript files in a project directory and collect
  * top-level function declarations and named const function expressions.
  *
  * @param directory - Directory to scan (results are filtered to files under this path)
  * @param projectRoot - Optional explicit project root containing tsconfig.json.
- *   When omitted, the nearest tsconfig.json ancestor of `directory` is used.
+ *   Accepts a tsconfig file path or a directory containing one, matching
+ *   TypeScript's `--project` contract. When omitted, the nearest tsconfig.json
+ *   ancestor of `directory` is used.
  */
 export async function scanProjectFunctions(
 	directory: string,
@@ -636,10 +661,7 @@ export async function scanProjectFunctions(
 	const absoluteDir = path.resolve(directory);
 	let rootDir = findProjectRoot(absoluteDir);
 	if (projectRoot) {
-		const resolvedProjectPath = path.resolve(projectRoot);
-		rootDir = ts.sys.directoryExists(resolvedProjectPath)
-			? resolvedProjectPath
-			: path.dirname(resolvedProjectPath);
+		rootDir = resolveExplicitProjectRoot(projectRoot, absoluteDir);
 	}
 
 	const discovery = discoverProject(rootDir);

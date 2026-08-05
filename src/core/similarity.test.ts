@@ -7,6 +7,7 @@ import {
 	collectFunctions,
 	findSimilarGroups,
 	matchesRelatedPath,
+	scanProjectFunctions,
 	scanWorkspaceFunctions,
 } from "./similarity";
 import {
@@ -2027,6 +2028,99 @@ describe("e2e: analyzeSimilarity on project src", () => {
 					}
 				}
 			}
+		}
+	});
+});
+
+describe("scanProjectFunctions --project resolution", () => {
+	async function makeProject(): Promise<string> {
+		const dir = await mkdtemp(path.join(tmpdir(), "resect-similar-project-"));
+		await mkdir(path.join(dir, "src"), { recursive: true });
+		await writeFile(
+			path.join(dir, "src", "example.ts"),
+			[
+				"export function alphaCalc(a: number, b: number) {",
+				"	const total = a + b;",
+				'	return { total, label: "alpha" };',
+				"}",
+				"export function betaCalc(a: number, b: number) {",
+				"	const total = a + b;",
+				'	return { total, label: "beta" };',
+				"}",
+				"",
+			].join("\n")
+		);
+		await writeFile(
+			path.join(dir, "tsconfig.json"),
+			JSON.stringify({ include: ["src/**/*.ts"] })
+		);
+		return dir;
+	}
+
+	test("accepts a tsconfig file path and a directory path alike", async () => {
+		const dir = await makeProject();
+		try {
+			const srcDir = path.join(dir, "src");
+			const viaFile = await scanProjectFunctions(
+				srcDir,
+				path.join(dir, "tsconfig.json")
+			);
+			const viaDirectory = await scanProjectFunctions(srcDir, dir);
+			const implicit = await scanProjectFunctions(srcDir);
+
+			expect(viaFile.totalFiles).toBe(1);
+			// Explicit and implicit discovery must agree on the same project.
+			expect(viaDirectory.totalFiles).toBe(viaFile.totalFiles);
+			expect(implicit.totalFiles).toBe(viaFile.totalFiles);
+			expect(viaDirectory.functions.length).toBe(viaFile.functions.length);
+			expect(implicit.functions.length).toBe(viaFile.functions.length);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	/** Rejection message, or "" when the promise unexpectedly resolved. */
+	async function rejectionMessage(promise: Promise<unknown>): Promise<string> {
+		try {
+			await promise;
+		} catch (error) {
+			return (error as Error).message;
+		}
+		return "";
+	}
+
+	test("rejects an unresolvable --project instead of reporting an empty scan", async () => {
+		const dir = await makeProject();
+		try {
+			// dirname() of this path is a valid project, so a silent fallback would
+			// return a normal-looking report for a config that does not exist.
+			const message = await rejectionMessage(
+				scanProjectFunctions(
+					path.join(dir, "src"),
+					path.join(dir, "missing.json")
+				)
+			);
+			expect(message).toContain(
+				"Could not resolve a tsconfig.json from --project"
+			);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("rejects a directory that contains no tsconfig", async () => {
+		const dir = await mkdtemp(path.join(tmpdir(), "resect-similar-noconfig-"));
+		try {
+			await mkdir(path.join(dir, "src"), { recursive: true });
+			await writeFile(path.join(dir, "src", "a.ts"), "export const a = 1;\n");
+			const message = await rejectionMessage(
+				scanProjectFunctions(path.join(dir, "src"), dir)
+			);
+			expect(message).toContain(
+				"Could not resolve a tsconfig.json from --project"
+			);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
 		}
 	});
 });
