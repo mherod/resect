@@ -4,8 +4,35 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
 	discoverProject,
+	type ProjectDiscovery,
 	setDiscoveryReglobThrottleMs,
 } from "./tsconfig-discovery";
+
+async function initGitRepo(dir: string): Promise<void> {
+	await mkdir(dir, { recursive: true });
+	const proc = Bun.spawn(["git", "init", "-b", "main"], {
+		cwd: dir,
+		stdout: "pipe",
+		stderr: "pipe",
+	});
+	await proc.exited;
+}
+
+/** Write a minimal compiling project (tsconfig + one source file) at `dir`. */
+async function writeProject(dir: string): Promise<void> {
+	await mkdir(path.join(dir, "src"), { recursive: true });
+	await writeFile(path.join(dir, "src", "index.ts"), "export const x = 1;\n");
+	await writeFile(
+		path.join(dir, "tsconfig.json"),
+		JSON.stringify({ include: ["src/**/*.ts"] })
+	);
+}
+
+function configPaths(discovery: ProjectDiscovery, baseDir: string): string[] {
+	return discovery.configs
+		.map((config) => path.relative(baseDir, config.path))
+		.sort();
+}
 
 describe("discoverProject cache", () => {
 	test("rebuilds discovery when a tsconfig's content changes (same tsconfig set)", async () => {
@@ -99,6 +126,115 @@ describe("discoverProject cache", () => {
 			).toBe(true);
 		} finally {
 			setDiscoveryReglobThrottleMs(2000);
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("does not descend into a gitignored nested checkout", async () => {
+		const dir = await mkdtemp(path.join(tmpdir(), "resect-discovery-ignored-"));
+		try {
+			await initGitRepo(dir);
+			await writeProject(dir);
+			await writeFile(path.join(dir, ".gitignore"), ".worktrees/\nvendor/\n");
+
+			// Ignored by the repository but absent from SKIP_DIRECTORIES, so a
+			// name-denylist boundary would walk straight into both.
+			for (const ignored of [".worktrees", "vendor"]) {
+				await writeProject(path.join(dir, ignored, "nested"));
+			}
+
+			const discovery = discoverProject(dir);
+			expect(configPaths(discovery, dir)).toEqual(["tsconfig.json"]);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("excludes a nested separate checkout from the owning scan", async () => {
+		const dir = await mkdtemp(
+			path.join(tmpdir(), "resect-discovery-checkout-")
+		);
+		try {
+			await initGitRepo(dir);
+			await writeProject(dir);
+
+			// Not gitignored — recognised by carrying its own .git entry.
+			const nested = path.join(dir, "external-checkout");
+			await writeProject(nested);
+			await initGitRepo(nested);
+
+			const discovery = discoverProject(dir);
+			expect(configPaths(discovery, dir)).toEqual(["tsconfig.json"]);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("keeps built-in skips outside a git repository", async () => {
+		const dir = await mkdtemp(path.join(tmpdir(), "resect-discovery-nogit-"));
+		try {
+			await writeProject(dir);
+			await writeProject(path.join(dir, "node_modules", "pkg"));
+			await writeProject(path.join(dir, "packages", "lib"));
+
+			const discovery = discoverProject(dir);
+			expect(configPaths(discovery, dir)).toEqual([
+				path.join("packages", "lib", "tsconfig.json"),
+				"tsconfig.json",
+			]);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("resolves an explicitly selected project inside an ignored path", async () => {
+		const dir = await mkdtemp(
+			path.join(tmpdir(), "resect-discovery-explicit-")
+		);
+		try {
+			await initGitRepo(dir);
+			await writeProject(dir);
+			await writeFile(path.join(dir, ".gitignore"), "vendor/\n");
+			const nested = path.join(dir, "vendor", "nested");
+			await writeProject(nested);
+			await writeProject(path.join(nested, "packages", "inner"));
+
+			// Pointing discovery at the ignored checkout must resolve its own
+			// configs, including nested ones, rather than pruning the subtree.
+			const discovery = discoverProject(nested);
+			expect(configPaths(discovery, nested)).toEqual([
+				path.join("packages", "inner", "tsconfig.json"),
+				"tsconfig.json",
+			]);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("rebuilds discovery when ignore rules change", async () => {
+		const dir = await mkdtemp(
+			path.join(tmpdir(), "resect-discovery-ignorerule-")
+		);
+		try {
+			await initGitRepo(dir);
+			await writeProject(dir);
+			const gitignorePath = path.join(dir, ".gitignore");
+			await writeFile(gitignorePath, "vendor/\n");
+			await writeProject(path.join(dir, "vendor", "nested"));
+
+			expect(configPaths(discoverProject(dir), dir)).toEqual(["tsconfig.json"]);
+
+			// Stop ignoring vendor/. A cache keyed only on tsconfig mtimes would
+			// keep hiding a project the repository no longer ignores.
+			await writeFile(gitignorePath, "# nothing ignored\n");
+			const future = new Date(Date.now() + 10_000);
+			await utimes(gitignorePath, future, future);
+
+			expect(configPaths(discoverProject(dir), dir)).toEqual([
+				"tsconfig.json",
+				path.join("vendor", "nested", "tsconfig.json"),
+			]);
+		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}
 	});
