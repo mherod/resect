@@ -91,6 +91,37 @@ describe("validateTransformConfig (#123)", () => {
 			/each rule must be an object/
 		);
 	});
+
+	test("throws when a from accessor is duplicated", () => {
+		expect(() =>
+			validateTransformConfig(
+				[
+					{ from: "import.meta.env.API_URL", to: "process.env.API_URL" },
+					{
+						from: "import.meta.env.API_URL",
+						to: "process.env.NEXT_API_URL",
+					},
+				],
+				"cfg.js"
+			)
+		).toThrow(
+			'Duplicate transform rule in cfg.js: "from" value "import.meta.env.API_URL" appears more than once.'
+		);
+	});
+
+	test("normalizes whitespace before detecting duplicate from accessors", () => {
+		expect(() =>
+			validateTransformConfig(
+				[
+					{ from: "foo.bar", to: "first" },
+					{ from: "foo . bar", to: "second" },
+				],
+				"cfg.js"
+			)
+		).toThrow(
+			'Duplicate transform rule in cfg.js: "from" value "foo . bar" appears more than once.'
+		);
+	});
 });
 
 describe("loadTransformConfig (#123)", () => {

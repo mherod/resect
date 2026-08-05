@@ -3,6 +3,8 @@ import { getRuntime } from "../runtime/index.ts";
 import type { TransformRule } from "../types/transform.ts";
 import { loadConfigModule } from "./config-module.ts";
 
+const TRANSFORM_ACCESSOR_WHITESPACE_PATTERN = /\s+/g;
+
 /**
  * Loader + validator for a declarative `.resect/transforms.js` config (epic
  * #103, slice A). This slice ONLY loads and validates the rule set — the AST
@@ -20,6 +22,11 @@ import { loadConfigModule } from "./config-module.ts";
 
 /** The conventional default config location, relative to the project root. */
 export const DEFAULT_TRANSFORM_CONFIG_PATH = ".resect/transforms.js";
+
+/** Collapse whitespace so config validation and AST matching use one identity. */
+export function normalizeTransformAccessor(text: string): string {
+	return text.replace(TRANSFORM_ACCESSOR_WHITESPACE_PATTERN, "");
+}
 
 /**
  * Resolve `configPath` against `rootDir` (absolute paths pass through), load the
@@ -89,6 +96,7 @@ export function validateTransformConfig(
 	source: string
 ): TransformRule[] {
 	const rules = extractRules(raw, source);
+	const normalizedFromValues = new Set<string>();
 
 	return rules.map((rule, index) => {
 		if (!rule || typeof rule !== "object" || Array.isArray(rule)) {
@@ -101,6 +109,13 @@ export function validateTransformConfig(
 		if (typeof to !== "string" || to.length === 0) {
 			throw invalidRule(index, source, '"to" must be a non-empty string');
 		}
+		const normalizedFrom = normalizeTransformAccessor(from);
+		if (normalizedFromValues.has(normalizedFrom)) {
+			throw new Error(
+				`Duplicate transform rule in ${source}: "from" value "${from}" appears more than once.`
+			);
+		}
+		normalizedFromValues.add(normalizedFrom);
 		return { from, to };
 	});
 }

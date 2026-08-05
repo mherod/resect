@@ -23,13 +23,7 @@ import {
 	deduplicateChanges,
 	type TextChange,
 } from "./text-changes.ts";
-
-const WHITESPACE_PATTERN = /\s+/g;
-
-/** Collapse all whitespace so `import.meta . env .X` matches `import.meta.env.X`. */
-function normalizeAccessor(text: string): string {
-	return text.replace(WHITESPACE_PATTERN, "");
-}
+import { normalizeTransformAccessor } from "./transform-config.ts";
 
 /**
  * A node whose source text can represent a dotted accessor we may rewrite. We
@@ -60,12 +54,14 @@ export function planTransformRewrites(
 
 	const ruleByFrom = new Map<string, TransformRule>();
 	for (const rule of rules) {
-		ruleByFrom.set(normalizeAccessor(rule.from), rule);
+		ruleByFrom.set(normalizeTransformAccessor(rule.from), rule);
 	}
 
 	const visit = (node: ts.Node): void => {
 		if (isRewritableAccessor(node)) {
-			const rule = ruleByFrom.get(normalizeAccessor(node.getText(sourceFile)));
+			const rule = ruleByFrom.get(
+				normalizeTransformAccessor(node.getText(sourceFile))
+			);
 			if (rule) {
 				const start = node.getStart(sourceFile);
 				changes.push({ start, end: node.getEnd(), newText: rule.to });
