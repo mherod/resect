@@ -16,7 +16,7 @@ fi
 # re-link the package globally so every commit re-installs the latest
 # changes for the resect + resect-mcp commands on PATH.
 pnpm run build
-pnpm link --global || echo "⚠️  pnpm link --global failed (global re-install skipped)"
+pnpm add --global . || echo "⚠️  pnpm add --global . failed (global re-install skipped)"
 
 # Check if there are any staged files
 if [ -z "$(git diff --cached --name-only)" ]; then
