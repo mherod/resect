@@ -69,11 +69,22 @@ const JS_KEYWORDS = new Set([
  */
 export function extractAllIdentifiers(bodyText: string): string[] {
 	let s = bodyText.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
-	// Remove string and template literals before extracting identifiers
+	const tokens: string[] = [];
+	// Keep string and template literal VALUES as tokens. A type alias body is
+	// the right-hand side only, so a string-literal union carries no identifiers
+	// at all — dropping its literals leaves an empty fingerprint, and two empty
+	// fingerprints are indistinguishable from two identical ones. The literals
+	// are the domain content for these declarations.
+	for (const m of s.matchAll(
+		/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`/g
+	)) {
+		tokens.push(m[0].slice(1, -1));
+	}
+	// Remove literals before extracting identifiers so quoted text is not
+	// re-matched as an identifier.
 	s = s
 		.replace(/`(?:[^`\\]|\\.)*`/g, " ")
 		.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, " ");
-	const tokens: string[] = [];
 	for (const m of s.matchAll(/\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b/g)) {
 		if (!JS_KEYWORDS.has(m[0])) {
 			tokens.push(m[0]);

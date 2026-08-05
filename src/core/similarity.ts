@@ -25,6 +25,17 @@ const MIN_TOKEN_COUNT = 8;
 
 /** Minimum token count for a type alias or interface body to be included */
 const MIN_TYPE_TOKEN_COUNT = 6;
+/**
+ * Content-similarity stand-in when at least one declaration yields no semantic
+ * fingerprint. Neutral rather than 1, so structural identity alone cannot reach
+ * an exact score on the strength of missing evidence.
+ */
+const UNKNOWN_CONTENT_EVIDENCE = 0.5;
+
+/** True for the declaration kinds whose content tokens come from a type body. */
+function isTypeOrInterface(kind: FunctionInfo["kind"]): boolean {
+	return kind === "type" || kind === "interface";
+}
 
 /** Compile-time directives that prevent function consolidation */
 const DIRECTIVE_PATTERN =
@@ -472,11 +483,27 @@ export function findSimilarGroups(
 				// identifiers, string literals, AND camelCase function call targets,
 				// so wrappers calling different functions (e.g. runBashHook vs
 				// runFileEditHook) produce different content tokens and score < 1.0.
-				const contentSim = jaccardSimilarity(
-					fnI.contentTokens,
-					fnJ.contentTokens
-				);
-				score = 0.5 + 0.5 * contentSim;
+				// For a type or interface an empty fingerprint means no semantic
+				// evidence was recoverable, not that the two declarations agree.
+				// jaccardSimilarity() defines two empty sets as 1 — mathematically
+				// standard, but here it turns absence of evidence into proof of
+				// equivalence and promotes a structural coincidence to an exact
+				// match. Score that unknown case as high-but-not-exact.
+				//
+				// Functions are deliberately excluded: an empty content fingerprint
+				// is ordinary for a body with no literals, uppercase identifiers, or
+				// call targets, and structural identity there is real evidence of
+				// duplication. Penalising it would change existing wrapper and
+				// same-file function behaviour.
+				const isTypeLike =
+					isTypeOrInterface(fnI.kind) && isTypeOrInterface(fnJ.kind);
+				const hasFingerprints =
+					fnI.contentTokens.length > 0 && fnJ.contentTokens.length > 0;
+				score =
+					isTypeLike && !hasFingerprints
+						? 0.5 + 0.5 * UNKNOWN_CONTENT_EVIDENCE
+						: 0.5 +
+							0.5 * jaccardSimilarity(fnI.contentTokens, fnJ.contentTokens);
 			} else {
 				// Use precomputed bigrams to capture token ordering — plain set
 				// Jaccard gives misleading 1.0 for functions with the same token

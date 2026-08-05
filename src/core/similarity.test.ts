@@ -2032,6 +2032,66 @@ describe("e2e: analyzeSimilarity on project src", () => {
 	});
 });
 
+describe("empty semantic fingerprints are unknown evidence", () => {
+	async function typeFixture(source: string) {
+		const dir = await mkdtemp(path.join(tmpdir(), "resect-empty-fingerprint-"));
+		await mkdir(path.join(dir, "src"), { recursive: true });
+		await writeFile(
+			path.join(dir, "tsconfig.json"),
+			JSON.stringify({
+				compilerOptions: { strict: true, noEmit: true },
+				include: ["src/**/*.ts"],
+			})
+		);
+		await writeFile(path.join(dir, "src", "types.ts"), source);
+		try {
+			const report = await analyzeSimilarity({
+				directory: dir,
+				threshold: 1,
+				kinds: ["type", "interface"],
+			});
+			return report.groups.map((g) => g.functions.map((f) => f.name).sort());
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	}
+
+	test("disjoint string-literal unions are not exact duplicates", async () => {
+		// Same file, so the incidental cross-file name penalty cannot mask the
+		// defect: both bodies normalise to `$S | $S | ...` and, before the fix,
+		// both produced empty fingerprints that Jaccard scored as 1.
+		const groups = await typeFixture(
+			'export type DocumentKind = "invoice" | "receipt" | "quote" | "credit" | "statement" | "reminder";\n' +
+				'export type NavigationMode = "push" | "replace" | "back" | "forward" | "reload" | "restore";\n'
+		);
+		expect(groups).toHaveLength(0);
+	});
+
+	test("identical string-literal unions keep an exact signal", async () => {
+		const groups = await typeFixture(
+			'export type KindOne = "invoice" | "receipt" | "quote" | "credit" | "statement" | "reminder";\n' +
+				'export type KindTwo = "invoice" | "receipt" | "quote" | "credit" | "statement" | "reminder";\n'
+		);
+		expect(groups).toEqual([["KindOne", "KindTwo"]]);
+	});
+
+	test("identical marker types keep an exact signal", async () => {
+		const groups = await typeFixture(
+			"export type MarkerOne = Record<string, never>;\n" +
+				"export type MarkerTwo = Record<string, never>;\n"
+		);
+		expect(groups).toEqual([["MarkerOne", "MarkerTwo"]]);
+	});
+
+	test("interface property names still differentiate structural lookalikes", async () => {
+		const groups = await typeFixture(
+			"export interface Alpha { seconds: number; label: string; enabled: boolean; }\n" +
+				"export interface Beta { _seconds: number; _label: string; _enabled: boolean; }\n"
+		);
+		expect(groups).toHaveLength(0);
+	});
+});
+
 describe("scanProjectFunctions --project resolution", () => {
 	async function makeProject(): Promise<string> {
 		const dir = await mkdtemp(path.join(tmpdir(), "resect-similar-project-"));
