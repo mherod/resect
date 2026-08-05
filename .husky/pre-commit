@@ -25,7 +25,7 @@ if [ -z "$(git diff --cached --name-only)" ]; then
 fi
 
 # Store the hash of staged changes to detect modifications
-STAGED_HASH=$(git diff --cached | sha256sum | cut -d' ' -f1)
+STAGED_HASH=$(git diff --cached | git hash-object --stdin)
 
 # Save list of staged files (handling all file states)
 STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
@@ -75,7 +75,7 @@ else
 fi
 
 # Check if staged files actually changed
-NEW_STAGED_HASH=$(git diff --cached | sha256sum | cut -d' ' -f1)
+NEW_STAGED_HASH=$(git diff --cached | git hash-object --stdin)
 if [ "$STAGED_HASH" != "$NEW_STAGED_HASH" ]; then
   echo "✨ Files formatted by Ultracite"
 fi
