@@ -1746,7 +1746,7 @@ async function moveTool(args: {
 	});
 }
 
-async function renameTool(args: {
+export async function renameTool(args: {
 	file: string;
 	oldName: string;
 	newName: string;
@@ -1778,7 +1778,9 @@ async function renameTool(args: {
 			args.newName,
 			project,
 			args.dryRun,
-			args.verbose
+			args.verbose,
+			[],
+			args.force
 		);
 
 	const shouldVerify = args.verify && !args.dryRun;
@@ -2545,9 +2547,11 @@ async function main(): Promise<void> {
 	process.stderr.write(`resect MCP server v${version} running on stdio\n`);
 }
 
-main().catch((error) => {
-	process.stderr.write(
-		`Fatal error: ${error instanceof Error ? error.stack : String(error)}\n`
-	);
-	process.exit(1);
-});
+if (import.meta.main) {
+	main().catch((error) => {
+		process.stderr.write(
+			`Fatal error: ${error instanceof Error ? error.stack : String(error)}\n`
+		);
+		process.exit(1);
+	});
+}
