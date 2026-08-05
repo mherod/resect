@@ -64,6 +64,14 @@ const NEXT_APP_ROUTER_STEMS = new Set([
 	"template",
 	"twitter-image",
 ]);
+// Monorepo directories that hold packages rather than route segments; an `app`
+// directly inside one of these is a package name, not an App Router root.
+const WORKSPACE_CONTAINER_SEGMENTS = new Set([
+	"apps",
+	"libs",
+	"modules",
+	"packages",
+]);
 
 type ConcreteExportKind = Exclude<PrimaryExportKind, "mixed" | "unknown">;
 type ProjectGraphResult = Awaited<
@@ -489,10 +497,30 @@ function findMajority(files: FileNamingInfo[]): Majority | null {
 	};
 }
 
+/**
+ * True when an `app` segment plausibly roots a Next.js App Router tree.
+ *
+ * A bare `includes("app")` also matches a workspace package literally named
+ * `app` (`packages/app/lib/not-found.ts`), which silently exempts every
+ * reserved stem beneath it from naming analysis. Requiring the segment's
+ * parent not to be a workspace container keeps `apps/web/app`, `src/app`, and
+ * a repository-root `app` recognised while rejecting the package-name case.
+ * This only ever narrows the exemption, so it cannot create a new one.
+ */
+function hasAppRouterRootSegment(filePath: string): boolean {
+	const segments = filePath.split(path.sep);
+	return segments.some((segment, index) => {
+		if (segment !== "app") {
+			return false;
+		}
+		const parent = segments[index - 1];
+		return parent === undefined || !WORKSPACE_CONTAINER_SEGMENTS.has(parent);
+	});
+}
+
 function isNextAppRouterConvention(file: FileNamingInfo): boolean {
 	return (
-		file.file.split(path.sep).includes("app") &&
-		NEXT_APP_ROUTER_STEMS.has(file.stem)
+		NEXT_APP_ROUTER_STEMS.has(file.stem) && hasAppRouterRootSegment(file.file)
 	);
 }
 

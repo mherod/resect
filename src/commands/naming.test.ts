@@ -305,6 +305,99 @@ describe("naming command", () => {
 		expect(invalid.stderr).toContain("Error: --case must be");
 	});
 
+	test("never suggests a rename equal to the current filename", async () => {
+		const dir = await makeFixture("noop-index", {
+			...withFiles(CAMEL_NAMES, functionFile),
+			"src/group/index.ts": "export const groupIndex = 1;\n",
+		});
+
+		const result = await captureOutput(async () =>
+			namingCommand({ directory: path.join(dir, "src"), json: true })
+		);
+		const report = JSON.parse(result.stdout) as {
+			findings: Array<{ file: string; suggestedName: string }>;
+		};
+		for (const finding of report.findings) {
+			expect(finding.suggestedName).not.toBe(path.basename(finding.file));
+		}
+		expect(
+			report.findings.some((f) => f.file.endsWith("index.ts"))
+		).toBeFalse();
+
+		await cleanup(dir);
+	});
+
+	test("exempts Next.js reserved filenames inside an app router tree", async () => {
+		const dir = await makeFixture("reserved-app", {
+			...withFiles(CAMEL_NAMES, functionFile),
+			"src/app/not-found.tsx":
+				"export default function NotFound() { return null; }\n",
+			"src/app/route.ts": "export function GET() { return 1; }\n",
+			"src/app/global-error.tsx":
+				"export default function GlobalError() { return null; }\n",
+			"src/app/my-widget.ts": functionFile("myWidget"),
+		});
+
+		const result = await captureOutput(async () =>
+			namingCommand({
+				directory: path.join(dir, "src"),
+				json: true,
+				case: "camelCase",
+			})
+		);
+		const report = JSON.parse(result.stdout) as {
+			findings: Array<{ file: string }>;
+		};
+		const flagged = report.findings.map((f) => path.basename(f.file));
+		expect(flagged).not.toContain("not-found.tsx");
+		expect(flagged).not.toContain("route.ts");
+		expect(flagged).not.toContain("global-error.tsx");
+
+		await cleanup(dir);
+	});
+
+	test("keeps reserved stems eligible outside any app router tree", async () => {
+		const dir = await makeFixture("reserved-nonframework", {
+			...withFiles(CAMEL_NAMES, functionFile),
+			"src/group/not-found.ts": functionFile("notFound"),
+		});
+
+		const result = await captureOutput(async () =>
+			namingCommand({ directory: path.join(dir, "src"), json: true })
+		);
+		const report = JSON.parse(result.stdout) as {
+			findings: Array<{ file: string; suggestedName: string }>;
+		};
+		const notFound = report.findings.find((f) =>
+			f.file.endsWith("not-found.ts")
+		);
+		expect(notFound?.suggestedName).toBe("notFound.ts");
+
+		await cleanup(dir);
+	});
+
+	test("keeps reserved stems eligible inside a package literally named app", async () => {
+		const dir = await makeFixture("reserved-app-package", {
+			...Object.fromEntries(
+				CAMEL_NAMES.map((n) => [`packages/app/lib/${n}.ts`, functionFile(n)])
+			),
+			"packages/app/lib/not-found.ts": functionFile("notFound"),
+		});
+
+		const result = await captureOutput(async () =>
+			namingCommand({ directory: path.join(dir, "packages"), json: true })
+		);
+		const report = JSON.parse(result.stdout) as {
+			findings: Array<{ file: string; suggestedName: string }>;
+		};
+		const notFound = report.findings.find((f) =>
+			f.file.endsWith("not-found.ts")
+		);
+		expect(notFound?.suggestedName).toBe("notFound.ts");
+
+		await cleanup(dir);
+	});
+
 	test("prints a grouped human-readable report", async () => {
 		const dir = await makeFixture("human", {
 			...withFiles(CAMEL_NAMES, functionFile),
@@ -317,6 +410,40 @@ describe("naming command", () => {
 		expect(result.stdout).toContain("Naming Report");
 		expect(result.stdout).toContain("group");
 		expect(result.stdout).toContain("BuildReport.ts -> buildReport.ts");
+
+		await cleanup(dir);
+	});
+
+	test("--fix never plans a no-op or reserved-file rename", async () => {
+		const dir = await makeGitFixture("fix-reserved", {
+			...withFiles(CAMEL_NAMES, functionFile),
+			"src/app/not-found.tsx":
+				"export default function NotFound() { return null; }\n",
+			"src/app/route.ts": "export function GET() { return 1; }\n",
+			"src/app/index.ts": "export const appIndex = 1;\n",
+			"src/app/my-widget.ts": functionFile("myWidget"),
+		});
+
+		const result = await captureOutput(async () =>
+			namingCommand({
+				directory: path.join(dir, "src"),
+				fix: true,
+				dryRun: true,
+				json: true,
+				case: "camelCase",
+			})
+		);
+		const out = JSON.parse(result.stdout) as {
+			renames: Array<{ from: string; to: string }>;
+		};
+		for (const rename of out.renames) {
+			expect(path.basename(rename.to)).not.toBe(path.basename(rename.from));
+		}
+		const planned = out.renames.map((r) => path.basename(r.from));
+		expect(planned).not.toContain("not-found.tsx");
+		expect(planned).not.toContain("route.ts");
+		expect(planned).not.toContain("index.ts");
+		expect(planned).toContain("my-widget.ts");
 
 		await cleanup(dir);
 	});
