@@ -682,6 +682,9 @@ Options:
   --json           Output results as JSON
   --verbose        Show detailed output
   --ignore              Glob pattern to exclude files (e.g. "*.test.ts")
+  --workspace           Merge sibling workspace packages into the usage graph, so an
+                        export consumed only from another package is not reported
+                        dead. The report still covers <directory> only.
   --entrypoint-globs    Glob pattern(s) for convention entrypoints to exclude from
                         orphan/dead reporting (e.g. "hooks/**", "scripts/*.ts").
                         Repeat the flag for multiple patterns.
@@ -690,6 +693,7 @@ Examples:
   ${CLI_NAME} unused src
   ${CLI_NAME} unused . --json
   ${CLI_NAME} unused src --ignore="*.test.ts"
+  ${CLI_NAME} unused packages/provider --workspace
   ${CLI_NAME} unused src --entrypoint-globs="hooks/**"
   ${CLI_NAME} unused src --entrypoint-globs="hooks/**" --entrypoint-globs="scripts/*.ts"
 `,

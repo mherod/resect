@@ -673,6 +673,7 @@ export const COMMANDS: CommandDef[] = [
 				json: values.json,
 				verbose: values.verbose,
 				ignore: values.ignore,
+				workspace: values.workspace,
 				entrypointGlobs: values["entrypoint-globs"],
 			});
 		},

@@ -890,3 +890,145 @@ describe("unused command — cross-tsconfig and ignore scope (#59)", () => {
 		await cleanup(dir);
 	});
 });
+
+describe("unused --workspace cross-package consumers", () => {
+	/** Two-package pnpm workspace: apps/consumer imports from packages/provider. */
+	async function makeWorkspace(name: string) {
+		return makeFixtureBase(`unused-workspace-${name}`, {
+			"package.json": JSON.stringify({
+				name: "root",
+				private: true,
+				workspaces: ["packages/*", "apps/*"],
+			}),
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: { strict: true },
+				include: ["**/*.ts"],
+			}),
+			"packages/provider/package.json": JSON.stringify({
+				name: "@scope/provider",
+				version: "1.0.0",
+				main: "src/index.ts",
+			}),
+			"packages/provider/tsconfig.json": JSON.stringify({
+				compilerOptions: {
+					strict: true,
+					baseUrl: ".",
+					paths: { "@scope/provider": ["src/index.ts"] },
+				},
+				include: ["src/**/*.ts"],
+			}),
+			"packages/provider/src/index.ts": [
+				"export function usedAcrossPackages() {",
+				"	return 1;",
+				"}",
+				"export function neverUsedAnywhere() {",
+				"	return 2;",
+				"}",
+				"",
+			].join("\n"),
+			"apps/consumer/package.json": JSON.stringify({
+				name: "@scope/consumer",
+				version: "1.0.0",
+				dependencies: { "@scope/provider": "1.0.0" },
+			}),
+			"apps/consumer/tsconfig.json": JSON.stringify({
+				compilerOptions: {
+					strict: true,
+					baseUrl: ".",
+					paths: {
+						"@scope/provider": ["../../packages/provider/src/index.ts"],
+					},
+				},
+				include: ["src/**/*.ts"],
+			}),
+			"apps/consumer/src/app.ts": [
+				'import { usedAcrossPackages } from "@scope/provider";',
+				"export function run() {",
+				"	return usedAcrossPackages();",
+				"}",
+				"",
+			].join("\n"),
+		});
+	}
+
+	async function runUnused(args: string[]): Promise<{
+		exitCode: number | null;
+		unused: string[];
+		scannedConfigs: string[];
+		scannedFileCount: number;
+	}> {
+		const proc = Bun.spawn([...CLI, "unused", ...args, "--json"], {
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		const stdout = await new Response(proc.stdout).text();
+		await proc.exited;
+		const report = JSON.parse(stdout);
+		return {
+			exitCode: proc.exitCode,
+			unused: report.unused.map((u: { name: string }) => u.name),
+			scannedConfigs: report.scannedConfigs ?? [],
+			scannedFileCount: report.scannedFileCount ?? 0,
+		};
+	}
+
+	test("--workspace spares an export consumed by a sibling package", async () => {
+		const dir = await makeWorkspace("consumed");
+		const provider = path.join(dir, "packages", "provider");
+		try {
+			const withWorkspace = await runUnused([
+				provider,
+				"--project",
+				path.join(provider, "tsconfig.json"),
+				"--workspace",
+			]);
+			expect(withWorkspace.exitCode).toBe(0);
+			// The consumer lives in another package; only a merged graph sees it.
+			expect(withWorkspace.unused).not.toContain("usedAcrossPackages");
+			// Genuinely dead exports are still reported.
+			expect(withWorkspace.unused).toContain("neverUsedAnywhere");
+			// Coverage metadata must describe the widened scan.
+			expect(withWorkspace.scannedConfigs.length).toBeGreaterThan(1);
+			expect(withWorkspace.scannedFileCount).toBeGreaterThan(1);
+		} finally {
+			await cleanup(dir);
+		}
+	});
+
+	test("without --workspace the project-bounded verdict is unchanged", async () => {
+		const dir = await makeWorkspace("bounded");
+		const provider = path.join(dir, "packages", "provider");
+		try {
+			const bounded = await runUnused([
+				provider,
+				"--project",
+				path.join(provider, "tsconfig.json"),
+			]);
+			expect(bounded.exitCode).toBe(0);
+			// Project-bounded analysis cannot see the other package's import.
+			expect(bounded.unused).toContain("usedAcrossPackages");
+			expect(bounded.unused).toContain("neverUsedAnywhere");
+			expect(bounded.scannedConfigs.length).toBe(1);
+		} finally {
+			await cleanup(dir);
+		}
+	});
+
+	test("--workspace reports only candidates under the requested directory", async () => {
+		const dir = await makeWorkspace("boundary");
+		const provider = path.join(dir, "packages", "provider");
+		try {
+			const report = await runUnused([
+				provider,
+				"--project",
+				path.join(provider, "tsconfig.json"),
+				"--workspace",
+			]);
+			// `run` is exported by apps/consumer and used by nobody, but it is
+			// outside the requested directory so it must not be listed.
+			expect(report.unused).not.toContain("run");
+		} finally {
+			await cleanup(dir);
+		}
+	});
+});

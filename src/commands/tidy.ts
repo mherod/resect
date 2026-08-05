@@ -16,11 +16,7 @@ import {
 	type DependencyGraph,
 	mergeDependencyGraphs,
 } from "../core/graph.ts";
-import {
-	dedupeTsconfigResults,
-	isWithinPath,
-	toRelativePath,
-} from "../core/path-utils.ts";
+import { isWithinPath, toRelativePath } from "../core/path-utils.ts";
 import {
 	collectFunctionsFromFiles,
 	findSimilarGroups,
@@ -36,10 +32,8 @@ import {
 	type TextChange,
 } from "../core/text-changes.ts";
 import { runTypeCheckDetailed } from "../core/verify.ts";
-import {
-	discoverWorkspace,
-	filterToWorkspaceBoundary,
-} from "../core/workspace.ts";
+import { filterToWorkspaceBoundary } from "../core/workspace.ts";
+import { buildWorkspaceGraphs } from "../core/workspace-graphs.ts";
 import type {
 	TidyAppliedFix,
 	TidyAuditFinding,
@@ -146,35 +140,20 @@ async function buildGraphSet(options: {
 	project?: string;
 	workspace?: boolean;
 }): Promise<{ graphs: ProjectGraphResult[]; scanDirectory: string }> {
-	const baseGraphs = await buildProjectGraphs(options.tsconfigPath);
-	if (!options.workspace) {
-		return { graphs: baseGraphs, scanDirectory: options.reportDirectory };
+	const { graphs, workspaceRoot } = await buildWorkspaceGraphs(options);
+	if (workspaceRoot === null) {
+		return { graphs, scanDirectory: options.reportDirectory };
 	}
-
-	const workspaceDir = options.project
-		? path.resolve(options.project)
-		: options.reportDirectory;
-	const workspace = await discoverWorkspace(workspaceDir);
-	if (!workspace || workspace.packages.length === 0) {
-		return { graphs: baseGraphs, scanDirectory: options.reportDirectory };
-	}
+	// tidy mutates, so a request from outside the workspace it just widened to
+	// is refused rather than silently rescoped.
 	if (
-		filterToWorkspaceBoundary([options.reportDirectory], workspace.root)
+		filterToWorkspaceBoundary([options.reportDirectory], workspaceRoot)
 			.length === 0
 	) {
-		throw new Error(`Directory is outside workspace root: ${workspace.root}`);
+		throw new Error(`Directory is outside workspace root: ${workspaceRoot}`);
 	}
 
-	const packageGraphs = await mapConcurrent(
-		workspace.packages.filter((pkg) => pkg.tsconfigPath),
-		async (pkg) => buildProjectGraphs(pkg.tsconfigPath as string),
-		{ onError: () => [] as ProjectGraphResult[] }
-	);
-
-	return {
-		graphs: dedupeTsconfigResults([...baseGraphs, ...packageGraphs.flat()]),
-		scanDirectory: workspace.root,
-	};
+	return { graphs, scanDirectory: workspaceRoot };
 }
 
 function graphFiles(graph: DependencyGraph, directory: string): string[] {

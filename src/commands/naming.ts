@@ -2,23 +2,20 @@ import path from "node:path";
 import ts from "typescript";
 import { logger } from "../cli-logger.ts";
 import { hasDefaultModifier, hasExportModifier } from "../core/ast-utils.ts";
-import { mapConcurrent } from "../core/concurrency.ts";
 import { TS_JS_VUE_EXTENSIONS } from "../core/constants.ts";
 import { ensureCleanWorktree, rollbackMoves } from "../core/git.ts";
 import {
-	buildProjectGraphs,
 	type DependencyGraph,
 	mergeDependencyGraphs,
 	withGraphSourceFile,
 } from "../core/graph.ts";
-import {
-	dedupeTsconfigResults,
-	isWithinPath,
-	toRelativePath,
-} from "../core/path-utils.ts";
+import { isWithinPath, toRelativePath } from "../core/path-utils.ts";
 import { resolveTsConfig } from "../core/project.ts";
 import { isTestFile } from "../core/test-files.ts";
-import { discoverWorkspace } from "../core/workspace.ts";
+import {
+	buildWorkspaceGraphs,
+	type ProjectGraphResult,
+} from "../core/workspace-graphs.ts";
 import type {
 	DetectedFilenameCasing,
 	FilenameCasing,
@@ -74,9 +71,6 @@ const WORKSPACE_CONTAINER_SEGMENTS = new Set([
 ]);
 
 type ConcreteExportKind = Exclude<PrimaryExportKind, "mixed" | "unknown">;
-type ProjectGraphResult = Awaited<
-	ReturnType<typeof buildProjectGraphs>
->[number];
 
 interface ExportCandidate {
 	name: string;
@@ -654,25 +648,8 @@ async function buildGraphSet(options: {
 	project?: string;
 	workspace?: boolean;
 }): Promise<ProjectGraphResult[]> {
-	const baseGraphs = await buildProjectGraphs(options.tsconfigPath);
-	if (!options.workspace) {
-		return baseGraphs;
-	}
-
-	const workspaceDir = options.project
-		? path.resolve(options.project)
-		: options.reportDirectory;
-	const workspace = await discoverWorkspace(workspaceDir);
-	if (!workspace || workspace.packages.length === 0) {
-		return baseGraphs;
-	}
-
-	const packageGraphs = await mapConcurrent(
-		workspace.packages.filter((pkg) => pkg.tsconfigPath),
-		async (pkg) => buildProjectGraphs(pkg.tsconfigPath as string),
-		{ onError: () => [] as ProjectGraphResult[] }
-	);
-	return dedupeTsconfigResults([...baseGraphs, ...packageGraphs.flat()]);
+	const { graphs } = await buildWorkspaceGraphs(options);
+	return graphs;
 }
 
 export function findNamingViolations(

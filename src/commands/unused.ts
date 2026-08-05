@@ -4,7 +4,6 @@ import { logger } from "../cli-logger.ts";
 import { filterGitignored } from "../core/git.ts";
 import type { DependencyGraph } from "../core/graph.ts";
 import {
-	buildProjectGraphs,
 	findAllReferences,
 	mergeDependencyGraphs,
 	withGraphSourceFile,
@@ -15,6 +14,7 @@ import { normalizePath } from "../core/resolver.ts";
 import { scanExports } from "../core/scanner.ts";
 import { withSourceFile } from "../core/source-file.ts";
 import { discoverWorkspace } from "../core/workspace.ts";
+import { buildWorkspaceGraphs } from "../core/workspace-graphs.ts";
 import { getRuntime } from "../runtime/index.ts";
 import type { ExportInfo } from "../types/analysis.ts";
 import type { ReadOnlyCommandOptions } from "../types/commands.ts";
@@ -160,7 +160,16 @@ export async function findUnusedExports(
 	// just the one that resolves for the scan directory. Otherwise an export
 	// consumed only by files owned by a sibling config (e.g. a CLI/migration
 	// script on tsconfig.scripts.json) is falsely reported dead (#59).
-	const graphs = await buildProjectGraphs(tsconfigPath);
+	// With --workspace the same reasoning extends across package boundaries:
+	// sibling packages are consumers too, so their graphs must be merged in
+	// before any export is called dead (#178). The report boundary stays the
+	// requested directory.
+	const { graphs } = await buildWorkspaceGraphs({
+		tsconfigPath,
+		reportDirectory: absoluteDir,
+		project: options?.project,
+		workspace: options?.workspace,
+	});
 
 	return findUnusedExportsFromGraphs(directory, graphs, {
 		ignore: options?.ignore,

@@ -445,6 +445,7 @@ async function unusedTool(
 		project?: string;
 		ignore?: string;
 		entrypointGlobs?: string | string[];
+		workspace?: boolean;
 	}
 ): Promise<CallToolResult> {
 	const absoluteDir = path.resolve(directory);
@@ -452,6 +453,7 @@ async function unusedTool(
 		project: options.project,
 		ignore: options.ignore,
 		entrypointGlobs: options.entrypointGlobs,
+		workspace: options.workspace,
 	});
 	const selfContainedOrphans = report.orphanFiles.filter(
 		(o) => o.selfContained
@@ -1156,15 +1158,22 @@ server.registerTool(
 				.describe(
 					"Glob pattern(s) for convention entrypoints dispatched by filename (e.g. 'hooks/**', 'scripts/*') to exclude from dead-export candidates, e.g. \"hooks/**\""
 				),
+			workspace: z
+				.boolean()
+				.optional()
+				.describe(
+					"Merge sibling workspace packages into the usage graph so an export consumed only from another package is not reported dead. The report still covers `directory` only"
+				),
 		},
 	},
-	async ({ directory, project, ignore, entrypointGlobs }) => {
+	async ({ directory, project, ignore, entrypointGlobs, workspace }) => {
 		return withErrorHandling(async () => {
 			const defaults = await mcpConfig("unused");
 			return unusedTool(directory, {
 				project,
 				ignore: ignore ?? defaults.ignore,
 				entrypointGlobs,
+				workspace,
 			});
 		});
 	}
