@@ -36,8 +36,8 @@ PARTIALLY_STAGED=$(git diff --name-only)
 . "$(dirname "$0")/lib/stash-guard.sh"
 stash_guard_push
 
-# Run formatter on the staged files
-bun x ultracite fix
+# Run the repository-pinned formatter without a registry-resolving launcher.
+pnpm run fix
 FORMAT_EXIT_CODE=$?
 
 # Restore working directory state

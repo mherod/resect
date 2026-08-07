@@ -149,8 +149,8 @@ Biome runs after edits and removes unused imports. Add an import and its first u
 Run repository checks with:
 
 ```bash
-bun x ultracite fix
-bun x ultracite check
+pnpm run fix
+pnpm run check
 pnpm run lint
 pnpm run typecheck
 ```
@@ -232,9 +232,9 @@ This project uses **Ultracite**, a zero-config preset that enforces strict code 
 
 ## Quick Reference
 
-- **Format code**: `bun x ultracite fix`
-- **Check for issues**: `bun x ultracite check`
-- **Diagnose setup**: `bun x ultracite doctor`
+- **Format code**: `pnpm run fix`
+- **Check for issues**: `pnpm run check`
+- **Diagnose setup**: `pnpm exec ultracite doctor`
 
 Biome (the underlying engine) provides robust linting and formatting. Most issues are automatically fixable.
 
@@ -348,4 +348,4 @@ Biome's linter will catch most issues automatically. Focus your attention on:
 
 ---
 
-Most formatting and common issues are automatically fixed by Biome. Run `bun x ultracite fix` before committing to ensure compliance.
+Most formatting and common issues are automatically fixed by Biome. Run `pnpm run fix` before committing to ensure compliance.
