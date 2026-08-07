@@ -22,6 +22,7 @@ export const OPTION_FLAGS = {
 	"alias-prefer": { type: "string" },
 	"rename-specifier": { type: "string", multiple: true },
 	force: { type: "boolean" },
+	journal: { type: "boolean" },
 	verify: { type: "boolean" },
 	"no-verify": { type: "boolean" },
 	fix: { type: "boolean" },

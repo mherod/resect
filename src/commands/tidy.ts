@@ -16,6 +16,10 @@ import {
 	type DependencyGraph,
 	mergeDependencyGraphs,
 } from "../core/graph.ts";
+import {
+	completeOperationJournal,
+	prepareOperationJournal,
+} from "../core/journal.ts";
 import { isWithinPath, toRelativePath } from "../core/path-utils.ts";
 import {
 	collectFunctionsFromFiles,
@@ -1238,6 +1242,10 @@ export async function applyTidyFixes(
 	const maxChanges = options.maxChanges ?? DEFAULT_MAX_CHANGES;
 	const dirty = await isWorktreeDirty(context.project.rootDir);
 	await ensureCleanWorktree(context.project.rootDir, options.force);
+	const journalContext = await prepareOperationJournal(
+		context.project.rootDir,
+		options.journal ?? false
+	);
 	const rollbackEnabled = !(options.force && dirty);
 	if (!rollbackEnabled) {
 		logger.error(
@@ -1315,8 +1323,22 @@ export async function applyTidyFixes(
 		});
 	}
 
+	const journalEntry = await completeOperationJournal(journalContext, {
+		args: {
+			directory: path.relative(
+				context.project.rootDir,
+				context.reportDirectory
+			),
+			fixCategories: options.fixCategories ?? [],
+		},
+		command: "tidy",
+		movedFiles: applyResult.moveRenames,
+	});
 	return {
-		report: applyReportMutation(reportWithEdits, applyResult.applied, delta),
+		report: {
+			...applyReportMutation(reportWithEdits, applyResult.applied, delta),
+			...(journalEntry ? { journalEntryId: journalEntry.id } : {}),
+		},
 		success: true,
 		errors: [],
 		worktreeDirtyRollbackDisabled: !rollbackEnabled,
@@ -1434,6 +1456,9 @@ export async function tidyCommand(options: TidyOptions): Promise<void> {
 	const output = options.json
 		? `${JSON.stringify(result.report, null, 2)}\n`
 		: formatTidyReport(result.report);
+	if (!options.json && result.report.journalEntryId) {
+		logger.info(`Journaled operation ${result.report.journalEntryId}`);
+	}
 
 	if (options.out) {
 		await Bun.write(path.resolve(options.out), output);

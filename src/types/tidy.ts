@@ -17,6 +17,7 @@ export interface TidyOptions {
 	fixCategories?: TidyFixCategory[];
 	aliasPrefer?: "alias" | "relative" | "shortest";
 	force?: boolean;
+	journal?: boolean;
 	maxChanges?: number;
 	fanOutThreshold?: number;
 	fanInThreshold?: number;
@@ -115,6 +116,7 @@ export interface TidyReport {
 	edits: StructuredEdit[];
 	applied: TidyAppliedFix[];
 	typecheckDelta: TypecheckDelta | null;
+	journalEntryId?: string;
 	summary: {
 		totalFindings: number;
 		filesTouched: number;

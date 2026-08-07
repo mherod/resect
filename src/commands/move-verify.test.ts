@@ -12,6 +12,10 @@ async function fileExists(filePath: string): Promise<boolean> {
 setDefaultTimeout(20_000);
 
 const dirs: string[] = [];
+const cliEnvironment = {
+	...process.env,
+	PATH: `${path.resolve(import.meta.dir, "../../node_modules/.bin")}${path.delimiter}${process.env.PATH ?? ""}`,
+};
 afterAll(async () => {
 	for (const dir of dirs) {
 		await cleanup(dir);
@@ -34,6 +38,7 @@ describe("move --verify with pre-existing type errors (#128)", () => {
 
 		const proc = Bun.spawn([...CLI, "move", "src/foo.ts", "src/moved/foo.ts"], {
 			cwd: dir,
+			env: cliEnvironment,
 			stdout: "pipe",
 			stderr: "pipe",
 		});
@@ -69,6 +74,7 @@ describe("move --verify with pre-existing type errors (#128)", () => {
 		// Baseline: src/broken.ts already has one pre-existing error before any move.
 		const proc = Bun.spawn([...CLI, "move", "src/foo.ts", "src/moved/foo.ts"], {
 			cwd: dir,
+			env: cliEnvironment,
 			stdout: "pipe",
 			stderr: "pipe",
 		});

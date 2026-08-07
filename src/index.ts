@@ -187,6 +187,13 @@ export {
 	previewTidyFixes,
 	tidyCommand,
 } from "./commands/tidy.ts";
+// ── Commands: undo ─────────────────────────────────────────────────
+export type {
+	UndoOptions,
+	UndoResult,
+	UndoVerification,
+} from "./commands/undo.ts";
+export { executeUndo, undoCommand } from "./commands/undo.ts";
 // ── Commands: unused ────────────────────────────────────────────────
 export type {
 	UnusedExport,

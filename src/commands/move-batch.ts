@@ -2,6 +2,10 @@ import path from "node:path";
 import { logger } from "../cli-logger.ts";
 import { ensureCleanWorktree } from "../core/git.ts";
 import { buildDependencyGraph, type DependencyGraph } from "../core/graph.ts";
+import {
+	completeOperationJournal,
+	prepareOperationJournal,
+} from "../core/journal.ts";
 import { isCrossPackageMove, normalizePath } from "../core/resolver.ts";
 import { scanBarrelExports, scanModuleReferences } from "../core/scanner.ts";
 import { createSourceFileFromText } from "../core/source-file.ts";
@@ -56,6 +60,7 @@ export interface MoveBatchResult {
 	failed: MoveBatchItemResult[];
 	typecheck?: VerificationResult;
 	projectRoot: string;
+	journalEntryId?: string;
 }
 
 interface MoveBatchDependencies {
@@ -212,6 +217,10 @@ export async function moveBatchWithDependencies(
 	const { project, workspace } = context;
 	validateWorkspaceBoundaries(moves, workspace?.root);
 	await dependencies.ensureCleanWorktree(project.rootDir, force, dryRun);
+	const journalContext = await prepareOperationJournal(
+		project.rootDir,
+		(options.journal ?? false) && !dryRun
+	);
 
 	const graph = await dependencies.buildDependencyGraph(project);
 	const fileState = new BatchFileState(dryRun);
@@ -275,14 +284,33 @@ export async function moveBatchWithDependencies(
 	const items = guarded.result;
 	const applied = items.filter(({ result }) => result.success);
 	const failed = items.filter(({ result }) => !result.success);
+	const success = failed.length === 0 && (guarded.delta?.success ?? true);
+	const journalEntry = success
+		? await completeOperationJournal(journalContext, {
+				args: {
+					moves: applied.map(({ move }) => ({
+						source: path.relative(project.rootDir, move.source),
+						target: path.relative(project.rootDir, move.target),
+					})),
+					prefer: options.prefer ?? null,
+					transform: options.transform ?? null,
+				},
+				command: "move",
+				movedFiles: applied.map(({ move }) => ({
+					from: move.source,
+					to: move.target,
+				})),
+			})
+		: null;
 	return {
-		success: failed.length === 0 && (guarded.delta?.success ?? true),
+		success,
 		dryRun,
 		items,
 		applied,
 		failed,
 		typecheck: guarded.delta,
 		projectRoot: project.rootDir,
+		journalEntryId: journalEntry?.id,
 	};
 }
 
@@ -311,6 +339,9 @@ export async function moveBatchCommand(
 		}
 		if (result.typecheck) {
 			printVerificationResults(result.typecheck);
+		}
+		if (result.journalEntryId) {
+			logger.info(`Journaled operation ${result.journalEntryId}`);
 		}
 		logger.empty();
 	}
@@ -348,6 +379,7 @@ export function serializeMoveBatchResult(result: MoveBatchResult): object {
 		failedCount: result.failed.length,
 		items: result.items.map(serializeItem),
 		typecheck: result.typecheck,
+		journalEntryId: result.journalEntryId,
 	};
 }
 

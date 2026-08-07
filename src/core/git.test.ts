@@ -92,6 +92,40 @@ describe("isWorktreeDirty", () => {
 		}
 	});
 
+	test("ignores the operation journal as tool-owned state", async () => {
+		const dir = await makeTmpDir();
+		try {
+			await initRepo(dir);
+			await Bun.write(path.join(dir, "file.ts"), "export const x = 1;");
+			await git(dir, "add", ".");
+			await git(dir, "commit", "-m", "init");
+			await Bun.write(
+				path.join(dir, ".resect/history.json"),
+				'{"schemaVersion":1,"entries":[]}\n'
+			);
+			expect(await isWorktreeDirty(dir)).toBe(false);
+		} finally {
+			await cleanupDir(dir);
+		}
+	});
+
+	test("ignores a nested project operation journal", async () => {
+		const dir = await makeTmpDir();
+		try {
+			await initRepo(dir);
+			await Bun.write(path.join(dir, "file.ts"), "export const x = 1;");
+			await git(dir, "add", ".");
+			await git(dir, "commit", "-m", "init");
+			await Bun.write(
+				path.join(dir, "packages/app/.resect/history.json"),
+				'{"schemaVersion":1,"entries":[]}\n'
+			);
+			expect(await isWorktreeDirty(path.join(dir, "packages/app"))).toBe(false);
+		} finally {
+			await cleanupDir(dir);
+		}
+	});
+
 	test("returns false for a non-git directory", async () => {
 		// Use system tmpdir to ensure we're outside any git repo
 		const { tmpdir } = await import("node:os");

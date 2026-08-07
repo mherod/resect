@@ -88,9 +88,14 @@ import {
 	buildTidyReport,
 	previewTidyFixes,
 } from "./commands/tidy.ts";
+import { executeUndo } from "./commands/undo.ts";
 import { findUnusedExports } from "./commands/unused.ts";
 import { isWorktreeDirty } from "./core/git.ts";
 import { buildDependencyGraph } from "./core/graph.ts";
+import {
+	completeOperationJournal,
+	prepareOperationJournal,
+} from "./core/journal.ts";
 import { loadProject, resolveTsConfig } from "./core/project.ts";
 import {
 	loadResectConfig,
@@ -561,6 +566,7 @@ async function tidyTool(
 		workspace?: boolean;
 		dryRun?: boolean;
 		force?: boolean;
+		journal?: boolean;
 		fixCategories?: TidyFixCategory[];
 		aliasPrefer?: PreferStrategy;
 		maxChanges?: number;
@@ -636,6 +642,7 @@ async function tidyTool(
 			fixCategories: options.fixCategories,
 			aliasPrefer: options.aliasPrefer,
 			force: options.force,
+			journal: options.journal,
 			maxChanges: options.maxChanges,
 			fanOutThreshold: options.fanOutThreshold,
 			fanInThreshold: options.fanInThreshold,
@@ -1311,6 +1318,12 @@ server.registerTool(
 				.boolean()
 				.optional()
 				.describe("Allow mutation when the git worktree is dirty"),
+			journal: z
+				.boolean()
+				.optional()
+				.describe(
+					"Record an applied fix batch in `.resect/history.json` for a later undo"
+				),
 			fixCategories: z
 				.array(z.enum(ALL_TIDY_FIX_CATEGORIES))
 				.optional()
@@ -1351,6 +1364,7 @@ server.registerTool(
 		workspace,
 		dryRun,
 		force,
+		journal,
 		fixCategories,
 		aliasPrefer,
 		maxChanges,
@@ -1367,6 +1381,7 @@ server.registerTool(
 				workspace,
 				dryRun,
 				force,
+				journal,
 				fixCategories,
 				aliasPrefer: aliasPrefer ?? defaults.prefer,
 				maxChanges,
@@ -1611,6 +1626,7 @@ async function moveBatchTool(args: {
 	project?: string;
 	dryRun: boolean;
 	force: boolean;
+	journal?: boolean;
 	verify: boolean;
 	verbose: boolean;
 	transform?: string;
@@ -1622,6 +1638,7 @@ async function moveBatchTool(args: {
 			project: args.project,
 			dryRun: args.dryRun,
 			force: false,
+			journal: args.journal ?? false,
 			verify: args.verify,
 			verbose: args.verbose,
 			transform: args.transform,
@@ -1647,6 +1664,7 @@ async function moveTool(args: {
 	project?: string;
 	dryRun: boolean;
 	force: boolean;
+	journal?: boolean;
 	verify: boolean;
 	verbose: boolean;
 	transform?: string;
@@ -1669,6 +1687,10 @@ async function moveTool(args: {
 	}
 
 	const workspace = (await discoverWorkspace(project.rootDir)) ?? undefined;
+	const journalContext = await prepareOperationJournal(
+		project.rootDir,
+		(args.journal ?? false) && !args.dryRun
+	);
 
 	// Load the declarative transform config (epic #103, slice A) before the move
 	// runs so a missing/malformed config fails fast and writes nothing.
@@ -1716,6 +1738,22 @@ async function moveTool(args: {
 	) {
 		transformRolledBack = await rollbackTransformMove(project, result);
 	}
+	const journalEntry =
+		result.success &&
+		!args.dryRun &&
+		!transformRolledBack &&
+		(delta?.success ?? true)
+			? await completeOperationJournal(journalContext, {
+					args: {
+						prefer: args.prefer ?? null,
+						source: path.relative(project.rootDir, absoluteSource),
+						target: path.relative(project.rootDir, absoluteTarget),
+						transform: args.transform ?? null,
+					},
+					command: "move",
+					movedFiles: [{ from: absoluteSource, to: absoluteTarget }],
+				})
+			: null;
 
 	const root = project.rootDir;
 	return jsonText({
@@ -1765,6 +1803,7 @@ async function moveTool(args: {
 		})),
 		transformRolledBack,
 		typecheck: delta,
+		journalEntryId: journalEntry?.id,
 	});
 }
 
@@ -1775,6 +1814,7 @@ export async function renameTool(args: {
 	project?: string;
 	dryRun: boolean;
 	force: boolean;
+	journal?: boolean;
 	verify: boolean;
 	verbose: boolean;
 }): Promise<CallToolResult> {
@@ -1792,6 +1832,10 @@ export async function renameTool(args: {
 	if (wt.blocked) {
 		return errorText(WORKTREE_BLOCKED_MESSAGE);
 	}
+	const journalContext = await prepareOperationJournal(
+		project.rootDir,
+		(args.journal ?? false) && !args.dryRun
+	);
 
 	const runRename = async () =>
 		renameSymbol(
@@ -1809,6 +1853,17 @@ export async function renameTool(args: {
 	const { result, delta } = shouldVerify
 		? await runWithTypecheckGuard(project, runRename)
 		: { result: await runRename(), delta: undefined };
+	const journalEntry =
+		result.success && !args.dryRun && (delta?.success ?? true)
+			? await completeOperationJournal(journalContext, {
+					args: {
+						file: path.relative(project.rootDir, absolutePath),
+						newName: args.newName,
+						oldName: args.oldName,
+					},
+					command: "rename",
+				})
+			: null;
 
 	const root = project.rootDir;
 	return jsonText({
@@ -1836,6 +1891,7 @@ export async function renameTool(args: {
 			message: e.message,
 		})),
 		typecheck: delta,
+		journalEntryId: journalEntry?.id,
 	});
 }
 
@@ -1846,6 +1902,7 @@ async function aliasTool(args: {
 	project?: string;
 	dryRun: boolean;
 	force: boolean;
+	journal?: boolean;
 	verify: boolean;
 }): Promise<CallToolResult> {
 	const absoluteTarget = path.resolve(args.target);
@@ -1859,6 +1916,10 @@ async function aliasTool(args: {
 	if (wt.blocked) {
 		return errorText(WORKTREE_BLOCKED_MESSAGE);
 	}
+	const journalContext = await prepareOperationJournal(
+		project.rootDir,
+		(args.journal ?? false) && !args.dryRun
+	);
 
 	const renames = parseSpecifierRenames(args.renameSpecifiers ?? []);
 	if (renames.length === 0 && !args.prefer) {
@@ -1899,6 +1960,21 @@ async function aliasTool(args: {
 	}
 
 	const root = project.rootDir;
+	const journalEntry =
+		!args.dryRun &&
+		result.changes.length > 0 &&
+		result.conflicts.length === 0 &&
+		!rolledBack &&
+		(delta?.success ?? true)
+			? await completeOperationJournal(journalContext, {
+					args: {
+						prefer: args.prefer ?? null,
+						renameSpecifiers: args.renameSpecifiers ?? [],
+						target: path.relative(project.rootDir, absoluteTarget),
+					},
+					command: "alias",
+				})
+			: null;
 	return jsonText({
 		dryRun: args.dryRun,
 		force: args.force,
@@ -1933,6 +2009,7 @@ async function aliasTool(args: {
 			to: m.to,
 		})),
 		typecheck: delta,
+		journalEntryId: journalEntry?.id,
 	});
 }
 
@@ -1985,6 +2062,12 @@ server.registerTool(
 				.describe(
 					"Override the dirty-worktree guard (default false). Use with care — the guard prevents data loss on a clean commit boundary"
 				),
+			journal: z
+				.boolean()
+				.optional()
+				.describe(
+					"Record an applied move in `.resect/history.json` for a later undo"
+				),
 			verify: z
 				.boolean()
 				.optional()
@@ -2016,6 +2099,7 @@ server.registerTool(
 		project,
 		dryRun,
 		force,
+		journal,
 		verify,
 		verbose,
 		transform,
@@ -2034,6 +2118,7 @@ server.registerTool(
 					project,
 					dryRun: dryRun ?? true,
 					force: force ?? false,
+					journal: journal ?? false,
 					verify: verify ?? defaults.verify ?? true,
 					verbose: verbose ?? false,
 					transform: transform ?? defaults.transformConfigPath,
@@ -2049,6 +2134,7 @@ server.registerTool(
 				project,
 				dryRun: dryRun ?? true,
 				force: force ?? false,
+				journal: journal ?? false,
 				verify: verify ?? defaults.verify ?? true,
 				verbose: verbose ?? false,
 				transform: transform ?? defaults.transformConfigPath,
@@ -2096,6 +2182,12 @@ server.registerTool(
 				.describe(
 					"Override the dirty-worktree guard (default false). Use with care"
 				),
+			journal: z
+				.boolean()
+				.optional()
+				.describe(
+					"Record an applied rename in `.resect/history.json` for a later undo"
+				),
 			verify: z
 				.boolean()
 				.optional()
@@ -2115,6 +2207,7 @@ server.registerTool(
 		project,
 		dryRun,
 		force,
+		journal,
 		verify,
 		verbose,
 	}) => {
@@ -2127,9 +2220,61 @@ server.registerTool(
 				project,
 				dryRun: dryRun ?? true,
 				force: force ?? false,
+				journal: journal ?? false,
 				verify: verify ?? defaults.verify ?? true,
 				verbose: verbose ?? false,
 			});
+		});
+	}
+);
+
+server.registerTool(
+	"undo",
+	{
+		description: mcpDescription("undo"),
+		inputSchema: {
+			id: z
+				.string()
+				.optional()
+				.describe(
+					"Optional journal entry ID; defaults to the latest applied entry"
+				),
+			project: z
+				.string()
+				.optional()
+				.describe(
+					"Optional path to the project root or tsconfig.json. Omit to auto-resolve"
+				),
+			dryRun: z
+				.boolean()
+				.optional()
+				.describe(
+					"Preview the files that would be restored (default true). Set false to apply"
+				),
+			force: z
+				.boolean()
+				.optional()
+				.describe(
+					"Override unrelated or diverged-work safeguards (default false)"
+				),
+			verify: z
+				.boolean()
+				.optional()
+				.describe(
+					"Run a TypeScript check after applying the undo (default true). Ignored when dryRun=true"
+				),
+		},
+	},
+	async ({ id, project, dryRun, force, verify }) => {
+		return withErrorHandling(async () => {
+			const result = await executeUndo({
+				id,
+				project,
+				dryRun: dryRun ?? true,
+				force: force ?? false,
+				verify: verify ?? true,
+			});
+			return jsonText(result);
 		});
 	}
 );
@@ -2174,6 +2319,12 @@ server.registerTool(
 				.describe(
 					"Override the dirty-worktree guard (default false). Use with care"
 				),
+			journal: z
+				.boolean()
+				.optional()
+				.describe(
+					"Record an applied import rewrite in `.resect/history.json` for a later undo"
+				),
 			verify: z
 				.boolean()
 				.optional()
@@ -2189,6 +2340,7 @@ server.registerTool(
 		project,
 		dryRun,
 		force,
+		journal,
 		verify,
 	}) => {
 		return withErrorHandling(async () => {
@@ -2200,6 +2352,7 @@ server.registerTool(
 				project,
 				dryRun: dryRun ?? true,
 				force: force ?? false,
+				journal: journal ?? false,
 				verify: verify ?? defaults.verify ?? true,
 			});
 		});

@@ -20,6 +20,10 @@ import {
 	findBarrelReExports,
 } from "../core/graph.ts";
 import {
+	completeOperationJournal,
+	prepareOperationJournal,
+} from "../core/journal.ts";
+import {
 	applyDependencyAdditions,
 	computeDependencyAdditions,
 	computeInternalDependencyAdditions,
@@ -122,6 +126,7 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 		verify = true,
 		project: projectArg,
 		prefer,
+		journal = false,
 	} = options;
 
 	const absoluteSource = path.resolve(source);
@@ -185,6 +190,10 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 			process.exit(1);
 		}
 	}
+	const journalContext = await prepareOperationJournal(
+		project.rootDir,
+		journal && !dryRun
+	);
 
 	if (!json) {
 		logger.info(`\n${dryRun ? "🔍 Dry run:" : "🚀"} Moving module...`);
@@ -273,6 +282,19 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 			}
 		}
 	}
+	const journalEntry =
+		result.success && !verificationFailed && !dryRun
+			? await completeOperationJournal(journalContext, {
+					args: {
+						prefer: prefer ?? null,
+						source: path.relative(project.rootDir, absoluteSource),
+						target: path.relative(project.rootDir, absoluteTarget),
+						transform: options.transform ?? null,
+					},
+					command: "move",
+					movedFiles: [{ from: absoluteSource, to: absoluteTarget }],
+				})
+			: null;
 
 	if (json) {
 		const root = project.rootDir;
@@ -296,6 +318,7 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 						file: path.relative(root, error.file),
 					})),
 					typecheck: delta,
+					journalEntryId: journalEntry?.id,
 				},
 				null,
 				2
@@ -308,6 +331,9 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 	}
 
 	printCommandResult(result, "move", "Moved", dryRun, verbose, project.rootDir);
+	if (journalEntry) {
+		logger.info(`Journaled operation ${journalEntry.id}`);
+	}
 
 	if (result.dependencyChanges && result.dependencyChanges.length > 0) {
 		logger.info(
