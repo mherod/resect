@@ -35,6 +35,41 @@ pnpm add -g @mherod/resect
 bun add -g @mherod/resect
 ```
 
+### Install a development checkout globally
+
+From a cloned resect repository, install the locked dependencies, build both
+entrypoints, and register that checkout as the global package:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm run build
+pnpm add --global .
+```
+
+If pnpm reports that its global bin directory is not on `PATH`, run the
+one-time setup first, then restart the shell (or source the startup file that
+pnpm names) and repeat the global install:
+
+```bash
+pnpm setup
+pnpm add --global .
+```
+
+Verify that both entrypoints resolve from the refreshed shell:
+
+```bash
+command -v resect
+command -v resect-mcp
+resect --version
+resect move --help | rg -- '--batch'
+```
+
+The pre-commit hook rebuilds the standalone binaries and repeats
+`pnpm add --global .`, so a successful commit also refreshes the global
+checkout installation. For a Bun-managed development link instead, run
+`bun link` from the repository and ensure `~/.bun/bin` is on `PATH`; do not use
+`bun link --global`.
+
 ## Quick Start
 
 ```bash

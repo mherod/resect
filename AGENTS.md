@@ -36,42 +36,54 @@ bun test --timeout=20000
 
 DO budget output for the full suite or filter its first run to failures, totals, and `Ran ...`. DON'T rerun hundreds of passing tests only because terminal output was truncated; poll the original process for its exit and summary.
 
-## Global build and link
+## Global build and install
 
-Rebuild both compiled entrypoints, then register the checkout with Bun:
+Rebuild both compiled entrypoints, then register the checkout using the same
+supported local-package command as the pre-commit hook:
 
 ```bash
 pnpm build
-bun link
+pnpm add --global .
 ```
+
+If pnpm reports that its global bin directory is not on `PATH`, run
+`pnpm setup` once, restart the shell (or source the startup file pnpm names),
+and repeat `pnpm add --global .`.
 
 `pnpm build` creates:
 
 - `bin/resect-bin` from `src/cli.ts`.
 - `bin/resect-mcp-bin` from `src/mcp-server.ts`.
 
-`bun link` registers `@mherod/resect` globally and creates both executable links:
+`pnpm add --global .` registers the local checkout and creates both executable
+commands under pnpm's configured global bin directory (`$PNPM_HOME/bin`):
 
 ```text
-~/.bun/bin/resect     -> ../install/global/node_modules/@mherod/resect/bin/resect.js
-~/.bun/bin/resect-mcp -> ../install/global/node_modules/@mherod/resect/bin/resect-mcp.js
+$PNPM_HOME/bin/resect
+$PNPM_HOME/bin/resect-mcp
 ```
 
-The package link must resolve to this checkout. `bin/resect.js` and `bin/resect-mcp.js` import the TypeScript entrypoints, so linked commands see the checkout; rebuilding still refreshes the standalone binaries.
+The global package must resolve to this checkout. `bin/resect.js` and
+`bin/resect-mcp.js` import the TypeScript entrypoints, so the installed commands
+see the checkout; rebuilding still refreshes the standalone binaries.
 
 Verify the result:
 
 ```bash
 command -v resect
 command -v resect-mcp
-readlink ~/.bun/bin/resect
-readlink ~/.bun/bin/resect-mcp
-readlink ~/.bun/install/global/node_modules/@mherod/resect
 resect --version
 resect move --help | rg -- '--batch'
 ```
 
-Expected executable directory: `~/.bun/bin`. Expected package target: the current resect repository. The CLI version comes from `package.json` (`1.8.0` until bumped).
+Expected executable directory: `$PNPM_HOME/bin`. Expected package target: the
+current resect repository. The CLI version comes from `package.json` (`1.8.0`
+until bumped).
+
+For a Bun-managed development link instead, run `bun link` from this
+repository and ensure `~/.bun/bin` is on `PATH`. That creates executable links
+through Bun's global package directory while keeping the same checkout-backed
+command behavior.
 
 DON'T run zero-argument `pnpm link --global` with pnpm `11.9.0`; it fails with `[ERR_PNPM_LINK_BAD_PARAMS] You must provide a parameter. Usage: pnpm link <dir>`.
 
