@@ -3,13 +3,13 @@
 ## Document Contract
 
 - Contract version: 2.0
-- Last updated: 2026-08-05
+- Last updated: 2026-08-07
 - Requirements owner: Repository owner
 - Canonical artifact: `REQUIREMENTS.md`; derived review evidence: `.requirements-status.json`
 
 ## Product Ground Truth
 
-Resect is a local TypeScript and JavaScript refactoring tool exposed through a CLI, an MCP server, and a programmatic API. This baseline covers safe move failures, truthful tidy rollback, reusable rollback behavior, project-wide defaults, transform configuration trust and import preference, shared-context batch moves, explicit filename-casing enforcement, and source-focused audit metrics. Other commands remain outside this baseline until they receive source-backed scenarios. The host operating system controls filesystem and process access; resect adds validation, dirty-worktree protection, dry-run previews, pre-execution trust warnings, and verification boundaries but has no account, tenant, or remote session model.
+Resect is a local TypeScript and JavaScript refactoring tool exposed through a CLI, an MCP server, and a programmatic API. This baseline covers safe move failures, truthful tidy rollback, reusable rollback behavior, opt-in operation journaling and user-initiated undo, project-wide defaults, transform configuration trust and import preference, shared-context batch moves, explicit filename-casing enforcement, and source-focused audit metrics. Other commands remain outside this baseline until they receive source-backed scenarios. The host operating system controls filesystem and process access; resect adds validation, dirty-worktree protection, dry-run previews, pre-execution trust warnings, bounded local operation history, and verification boundaries but has no account, tenant, or remote session model.
 
 ## Source Register
 
@@ -25,23 +25,25 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 | SRC-008 | Repository owner issue | 2026-08-04 | https://github.com/mherod/resect/issues/182 | Generated output exclusion, safe source relation mapping, and audit explanation |
 | SRC-009 | Repository owner issue | 2026-06-10 | https://github.com/mherod/resect/issues/147 | Transform config execution risk, documentation, and pre-execution warning |
 | SRC-010 | Repository owner issue | 2026-07-11 | https://github.com/mherod/resect/issues/162 | Explicit filename-casing audit, surface parity, warning, and fix behavior |
+| SRC-011 | Repository owner issue | 2026-08-05 re-grounding | https://github.com/mherod/resect/issues/134 | Opt-in operation journal, guarded user-initiated undo, retention cap, and public-surface parity |
 
 ## Delivery and Decision Register
 
 | Decision ID | Decision | State | Delivery | Sources | Reversal condition |
 |---|---|---|---|---|---|
-| DR-001 | This baseline covers the nine accepted issue scopes registered above. | DECIDED | V1 | SRC-001, SRC-002, SRC-003, SRC-004, SRC-005, SRC-006, SRC-008, SRC-009, SRC-010 | A repository-owner decision expands or retires the baseline. |
+| DR-001 | This baseline covers the ten accepted issue scopes registered above. | DECIDED | V1 | SRC-001, SRC-002, SRC-003, SRC-004, SRC-005, SRC-006, SRC-008, SRC-009, SRC-010, SRC-011 | A repository-owner decision expands or retires the baseline. |
 | DR-002 | Resect is a local developer tool without accounts, tenants, sessions, notifications, analytics, or media. | DECIDED | V1 | SRC-007 | A published contract adds one of these product surfaces. |
 | DR-003 | Filesystem and process permissions remain host concerns; resect must expose executable-config trust boundaries, report failures, and protect the workspace it mutates. | DECIDED | V1 | SRC-001, SRC-002, SRC-006, SRC-007, SRC-009 | The execution model moves into a managed remote sandbox. |
 | DR-004 | Batch moves are sequential within one process and use one setup, worktree guard, and verification boundary. | DECIDED | V1 | SRC-006 | A repository-owner decision introduces parallel or cross-process coordination. |
 | DR-005 | Explicit invocation values override command defaults, which override global defaults, which override built-in behavior. | DECIDED | V1 | SRC-004, SRC-007 | A published configuration contract changes precedence. |
+| DR-006 | Operation journaling is explicit, local to the project, capped at 20 retained entries, and intended to reverse one recorded operation rather than provide a transaction log; later work blocks undo unless the consumer explicitly forces it. | DECIDED | V1 | SRC-011 | A repository-owner decision introduces transactional history, another retention limit, or automatic journaling. |
 
 ## User Roles
 
 | Actor | Access scope and capabilities | Limitation and direct-attempt coverage | Passive perspective |
 |---|---|---|---|
-| Operator | Invokes the CLI against a local project under host filesystem permissions. | Fatal writes, invalid config, malformed manifests, and unprotected dirty mutations are refused or reported; MOVE-002, CFG-004, BATCH-005. | Resolved configuration, previews, target-casing findings, and source-focused audit metrics are observable; CFG-005, BATCH-001, NAM-001, AUDIT-001, AUDIT-002, AUDIT-003. |
-| API Consumer | Invokes MCP or library operations against an explicitly supplied project and receives structured results. | Invalid or empty batch input is rejected before mutation; BATCH-007. | MCP batch mutation defaults to dry-run, target-casing findings are structured, and audit exclusions are structured; BATCH-006, NAM-001, AUDIT-004. |
+| Operator | Invokes the CLI against a local project under host filesystem permissions. | Fatal writes, invalid config, malformed manifests, unprotected dirty mutations, and unsafe undo attempts are refused or reported; MOVE-002, CFG-004, BATCH-005, UNDO-004. | Resolved configuration, previews, journal identifiers, target-casing findings, and source-focused audit metrics are observable; CFG-005, BATCH-001, JOUR-001, UNDO-003, NAM-001, AUDIT-001, AUDIT-002, AUDIT-003. |
+| API Consumer | Invokes MCP or library operations against an explicitly supplied project and receives structured results. | Invalid or empty batch input and unsafe undo attempts are rejected before mutation; BATCH-007, UNDO-004. | MCP mutations and undo default to dry-run, while journal entries, target-casing findings, and audit exclusions are structured; JOUR-001, UNDO-003, BATCH-006, NAM-001, AUDIT-004. |
 
 ## Actor Groups
 
@@ -49,6 +51,7 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 |---|---|---|
 | Transform Config Consumer | Operator; API Consumer | Callers that do not request a transform config |
 | Naming Consumer | Operator; API Consumer | Callers that do not invoke the naming surface |
+| Refactor Consumer | Operator; API Consumer | Callers that do not invoke the CLI, MCP, or library refactoring surfaces |
 
 ## V1 Launch Critical Path
 
@@ -61,36 +64,36 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 
 | Coverage row | Scenario IDs or N/A | Decision or rationale |
 |---|---|---|
-| Entry | CFG-001, TRNS-003, BATCH-001, BATCH-006, NAM-001 | Configuration, transform, batch, and target-casing entry points are explicit. |
-| Passive observation | CFG-005, TRNS-003, BATCH-001, BATCH-006, NAM-001, NAM-003, AUDIT-001, AUDIT-002, AUDIT-003, AUDIT-004 | Operators and API consumers receive resolved, warning, preview, or audit output. |
-| Successful exit | MOVE-001, BATCH-002, NAM-002 | Successful mutations report the applied operation. |
-| Cancel or alternative exit | BATCH-001 | Dry-run is the non-mutating alternative. |
-| Failure or timeout | MOVE-002, TIDY-001, TIDY-002, BATCH-004, BATCH-005, BATCH-007 | Failure paths preserve truthful outcomes. |
-| Interruption and re-entry | TIDY-002, ROLL-001 | A thrown verification process restores the checkpoint when enabled. |
-| Illegal transitions | CFG-004, BATCH-005, BATCH-007 | Invalid inputs fail before mutation. |
+| Entry | JOUR-001, CFG-001, TRNS-003, BATCH-001, BATCH-006, NAM-001 | Journal, configuration, transform, batch, and target-casing entry points are explicit. |
+| Passive observation | JOUR-001, UNDO-003, CFG-005, TRNS-003, BATCH-001, BATCH-006, NAM-001, NAM-003, AUDIT-001, AUDIT-002, AUDIT-003, AUDIT-004 | Operators and API consumers receive journal identifiers, resolved values, warnings, previews, or audit output. |
+| Successful exit | UNDO-001, UNDO-002, MOVE-001, BATCH-002, NAM-002 | Successful mutations and reversals report the applied operation. |
+| Cancel or alternative exit | UNDO-003, BATCH-001 | Dry-run is the non-mutating alternative. |
+| Failure or timeout | UNDO-004, UNDO-005, MOVE-002, TIDY-001, TIDY-002, BATCH-004, BATCH-005, BATCH-007 | Failure paths preserve truthful outcomes. |
+| Interruption and re-entry | JOUR-001, UNDO-001, TIDY-002, ROLL-001 | Journal state survives command boundaries, and interrupted verification restores the checkpoint when enabled. |
+| Illegal transitions | UNDO-004, UNDO-005, CFG-004, BATCH-005, BATCH-007 | Invalid inputs and unsafe or unavailable reversals fail before mutation. |
 | LIFE-NA-001 — System-driven transitions | N/A — commands run only on caller invocation | Decision: DR-002 |
-| Side effects | MOVE-001, BATCH-003, NAM-002 | Importer updates remain consistent with file moves and casing enforcement. |
-| Reversibility | TIDY-002, ROLL-001 | Enabled rollback restores pre-run content and removes created files. |
+| Side effects | JOUR-001, UNDO-001, MOVE-001, BATCH-003, NAM-002 | Journal state and importer updates remain consistent with file mutations and reversals. |
+| Reversibility | UNDO-001, UNDO-002, TIDY-002, ROLL-001 | User-initiated undo and failure rollback restore the recorded pre-run state. |
 | LIFE-NA-002 — Subject and observer perspectives | N/A — no action targets another account or tenant | Decision: DR-002 |
-| LIFE-NA-003 — Persisted entity phases | N/A — the baseline has transactions, not product-managed records | Decision: DR-003 |
-| LIFE-NA-004 — Concurrency winner and loser outcomes | N/A — batch application is sequential and cross-process coordination is outside scope | Decision: DR-004 |
+| Journal entry lifecycle | JOUR-001, JOUR-002, UNDO-001, UNDO-002, UNDO-005 | Entries move from recorded to retained, selected, restored, or unavailable. |
+| LIFE-NA-004 — Concurrency winner and loser outcomes | N/A — batch application is sequential and the journal is not a cross-process transaction log | Decision: DR-004, DR-006 |
 
 ## Cross-Cutting Applicability
 
 | Concern | Applicability | Scenario IDs | Reason or decision |
 |---|---|---|---|
 | Accessibility and keyboard or assistive-technology equivalence | N/A | — | Text CLI and structured API only; no graphical interaction in baseline; DR-002; XC-NA-001. |
-| Localisation, time, and timezone | N/A | — | No locale-sensitive or time-driven behavior in baseline; DR-002; XC-NA-002. |
-| Privacy, consent, and trust boundaries | APPLIES | MOVE-002, TIDY-001, TRNS-003, BATCH-004 | Host filesystem failures, dirty-worktree boundaries, and executable-config trust must be visible; DR-003. |
+| Localisation, time, and timezone | N/A | — | No locale-sensitive display or time-driven transition; journal timestamps are machine-readable operation metadata; DR-002, DR-006; XC-NA-002. |
+| Privacy, consent, and trust boundaries | APPLIES | UNDO-004, MOVE-002, TIDY-001, TRNS-003, BATCH-004 | Host filesystem failures, dirty-worktree boundaries, unsafe reversals, and executable-config trust must be visible; DR-003, DR-006. |
 | Security, session expiry or revocation, and abuse | APPLIES | TRNS-003 | Transform configs execute with host process privileges, so the consumer is warned before execution; SRC-009, DR-003. |
-| Audit and accountability | N/A | — | No durable product audit history is created; DR-002; XC-NA-004. |
+| Audit and accountability | APPLIES | JOUR-001 | An opt-in local operation history identifies the command, inputs, timestamp, and affected files; SRC-011, DR-006. |
 | Notifications and communication preferences | N/A | — | No notification channel or preference model; DR-002; XC-NA-005. |
 | Search and discovery | APPLIES | CFG-001, CFG-005, AUDIT-001 | Project configuration and configured source or output boundaries are discovered and applied. |
-| Empty and first-run states | APPLIES | CFG-006, BATCH-005, BATCH-007 | Missing config falls back safely; empty batches are rejected. |
-| Limits, quotas, and upgrade or denial behavior | N/A | — | No plan, quota, or upgrade model; DR-002; XC-NA-006. |
-| Errors, degraded states, retry, and recovery | APPLIES | MOVE-002, TIDY-001, TIDY-002, ROLL-001, BATCH-004 | Mutating failures report truthfully and restore when rollback is enabled. |
-| Persistence, interruption, and re-entry | APPLIES | TIDY-002, ROLL-001 | Interrupted verification uses the same restoration boundary. |
-| Data lifecycle, retention, deletion, and export | N/A | — | No product-managed records or retention policy; DR-003; XC-NA-007. |
+| Empty and first-run states | APPLIES | UNDO-005, CFG-006, BATCH-005, BATCH-007 | Missing undo history and config are handled explicitly, and empty batches are rejected. |
+| Limits, quotas, and upgrade or denial behavior | APPLIES | JOUR-002 | Local operation history has a fixed retention limit without a plan or upgrade model; DR-006. |
+| Errors, degraded states, retry, and recovery | APPLIES | UNDO-004, UNDO-005, MOVE-002, TIDY-001, TIDY-002, ROLL-001, BATCH-004 | Mutating and reversal failures report truthfully and preserve later work unless explicitly forced. |
+| Persistence, interruption, and re-entry | APPLIES | JOUR-001, UNDO-001, UNDO-002, TIDY-002, ROLL-001 | Journal entries persist across command invocations and support a later guarded reversal. |
+| Data lifecycle, retention, deletion, and export | APPLIES | JOUR-002 | Operation history retains only the newest 20 entries; SRC-011, DR-006. |
 | Analytics and telemetry | N/A | — | No analytics or telemetry surface in baseline; DR-002; XC-NA-008. |
 | Performance, freshness, and stale-data behavior | APPLIES | CFG-001, BATCH-002, BATCH-003, AUDIT-001, AUDIT-002, AUDIT-003 | Config and graph state are refreshed at their documented boundaries, and audit metrics represent authored sources rather than duplicate build artifacts. |
 | Media alternatives, captions, transcripts, and reduced motion | N/A | — | No media or motion surface; DR-002; XC-NA-009. |
@@ -150,6 +153,69 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 **When** the refactor restores that checkpoint after failure
 **Then** existing files contain their pre-run content
 **And** files created after the checkpoint are absent
+
+## Feature: Operation Journal and User-Initiated Undo
+
+### JOUR-001 — Refactor Consumer — Record a successful mutation for later undo
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P1 | **Fidelity:** VERIFIED | **Sources:** SRC-011
+
+**Given** a Refactor Consumer uses the CLI, MCP, or library surface to apply a move, rename, alias normalization, or tidy fix in a clean project
+**When** the consumer enables operation journaling for the successful mutation
+**Then** one local journal entry identifies the command, supplied arguments, and timestamp
+**And** the entry records the files changed by that mutation
+
+### JOUR-002 — Refactor Consumer — Retain a bounded operation history
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P2 | **Fidelity:** VERIFIED | **Sources:** SRC-011
+
+**Given** a project's operation journal already contains 20 retained entries
+**When** a Refactor Consumer completes another journaled mutation
+**Then** the journal retains the newest 20 entries
+**And** the oldest retained entry is removed
+
+### UNDO-001 — Refactor Consumer — Restore the latest journaled operation
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P1 | **Fidelity:** VERIFIED | **Sources:** SRC-011
+
+**Given** the latest applied journal entry still matches the files changed by its operation
+**When** a Refactor Consumer applies undo without an operation identifier
+**Then** those files return to their recorded pre-operation state
+**And** a post-undo TypeScript verification runs
+
+### UNDO-002 — Refactor Consumer — Restore a named journaled operation
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P2 | **Fidelity:** VERIFIED | **Sources:** SRC-011
+
+**Given** a retained journal entry identifies an applied operation whose affected files still match its recorded state
+**When** a Refactor Consumer applies undo with that entry's identifier
+**Then** the named operation's files return to their recorded pre-operation state
+
+### UNDO-003 — Refactor Consumer — Preview an undo without changing files
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P2 | **Fidelity:** VERIFIED | **Sources:** SRC-011
+
+**Given** an applied journal entry is available to undo
+**When** a Refactor Consumer previews that undo
+**Then** the result identifies the files that would be restored
+**And** project files and journal state remain unchanged
+
+### UNDO-004 — Refactor Consumer — Refuse undo over later or unrelated work
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P1 | **Fidelity:** VERIFIED | **Sources:** SRC-011
+
+**Given** project files contain unrelated changes or an affected file no longer matches the selected journal entry
+**When** a Refactor Consumer requests undo without forcing it
+**Then** the undo is refused with the conflicting files identified
+**And** no project file is restored
+
+### UNDO-005 — Refactor Consumer — Refuse undo when no applied entry is available
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P2 | **Fidelity:** VERIFIED | **Sources:** SRC-011
+
+**Given** no matching applied journal entry exists
+**When** a Refactor Consumer requests undo
+**Then** the undo is refused without changing project files
 
 ## Feature: Project-Wide Defaults
 

@@ -31,6 +31,7 @@ import { renameCommand } from "./rename.ts";
 import { similarCommand } from "./similar.ts";
 import { testRelocationCommand } from "./test-relocation.ts";
 import { parseTidyFixCategories, tidyCommand } from "./tidy.ts";
+import { undoCommand } from "./undo.ts";
 import { workspaceCommand } from "./workspace.ts";
 
 function requireArg(
@@ -80,6 +81,7 @@ export const COMMANDS: CommandDef[] = [
 					batch: values.batch,
 					dryRun: values["dry-run"],
 					force: values.force,
+					journal: values.journal,
 					json: values.json,
 					verbose: values.verbose,
 					verify: !values["no-verify"],
@@ -97,6 +99,7 @@ export const COMMANDS: CommandDef[] = [
 				target,
 				dryRun: values["dry-run"],
 				force: values.force,
+				journal: values.journal,
 				json: values.json,
 				verbose: values.verbose,
 				verify: !values["no-verify"],
@@ -125,10 +128,26 @@ export const COMMANDS: CommandDef[] = [
 				newName,
 				dryRun: values["dry-run"],
 				force: values.force,
+				journal: values.journal,
 				json: values.json,
 				verbose: values.verbose,
 				project: values.project,
 				workspace: values.workspace,
+				verify: !values["no-verify"],
+			});
+		},
+	},
+
+	{
+		name: "undo",
+		helpText: cliHelp("undo"),
+		run: async ([id], values) => {
+			await undoCommand({
+				id,
+				dryRun: values["dry-run"],
+				force: values.force,
+				json: values.json,
+				project: values.project,
 				verify: !values["no-verify"],
 			});
 		},
@@ -276,6 +295,7 @@ export const COMMANDS: CommandDef[] = [
 				prefer,
 				dryRun: values["dry-run"],
 				force: values.force,
+				journal: values.journal,
 				json: values.json,
 				verbose: values.verbose,
 				verify: !values["no-verify"],
@@ -620,6 +640,7 @@ export const COMMANDS: CommandDef[] = [
 					fixCategories,
 					aliasPrefer,
 					force: values.force,
+					journal: values.journal,
 					maxChanges,
 					fanOutThreshold: values["fan-out-threshold"]
 						? Number(values["fan-out-threshold"])

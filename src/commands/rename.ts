@@ -8,6 +8,10 @@ import {
 } from "../core/duplicate-detection.ts";
 import { ensureCleanWorktree } from "../core/git.ts";
 import { buildDependencyGraph, findAllReferences } from "../core/graph.ts";
+import {
+	completeOperationJournal,
+	prepareOperationJournal,
+} from "../core/journal.ts";
 import { createProgram } from "../core/project.ts";
 import { normalizePath } from "../core/resolver.ts";
 import { getNameNode, hasExportModifier } from "../core/scanner.ts";
@@ -58,6 +62,7 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 		project: projectArg,
 		workspace = false,
 		verify = true,
+		journal = false,
 	} = options;
 
 	const absolutePath = path.resolve(file);
@@ -76,6 +81,10 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 		process.exit(1);
 	}
 	const { extraProjects, project } = context;
+	const journalContext = await prepareOperationJournal(
+		project.rootDir,
+		journal && !dryRun
+	);
 	if (!json && verbose && extraProjects.length > 0) {
 		logger.info(
 			`Workspace: scanning ${extraProjects.length} additional package(s)`
@@ -103,6 +112,17 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 		verify && !dryRun
 			? await runWithTypecheckGuard(project, runRename)
 			: { result: await runRename(), delta: undefined };
+	const journalEntry =
+		result.success && (delta?.success ?? true) && !dryRun
+			? await completeOperationJournal(journalContext, {
+					args: {
+						file: path.relative(project.rootDir, absolutePath),
+						newName,
+						oldName,
+					},
+					command: "rename",
+				})
+			: null;
 
 	if (json) {
 		const root = project.rootDir;
@@ -126,6 +146,7 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 						file: path.relative(root, error.file),
 					})),
 					typecheck: delta,
+					journalEntryId: journalEntry?.id,
 				},
 				null,
 				2
@@ -140,6 +161,9 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 			verbose,
 			project.rootDir
 		);
+		if (journalEntry) {
+			logger.info(`Journaled operation ${journalEntry.id}`);
+		}
 	}
 
 	if (delta && !json) {

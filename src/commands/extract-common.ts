@@ -1,6 +1,7 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
 import ts from "../core/ast-utils.ts";
+import { removeExtension } from "../core/constants.ts";
 import {
 	compareDeclarations,
 	describeComparison,
@@ -597,7 +598,7 @@ function wouldCreateCycle(
 	dupFile: string
 ): boolean {
 	const canonDir = path.dirname(canonicalFile);
-	const dupNoExt = dupFile.replace(/\.[^.]+$/, "");
+	const dupNoExt = removeExtension(dupFile);
 
 	const importMatches = canonicalContent.matchAll(
 		/(?:import|from)\s+['"]([^'"]+)['"]/g
@@ -608,7 +609,7 @@ function wouldCreateCycle(
 			continue;
 		}
 		const resolved = path.resolve(canonDir, spec);
-		const resolvedNoExt = resolved.replace(/\.[^.]+$/, "");
+		const resolvedNoExt = removeExtension(resolved);
 		if (resolvedNoExt === dupNoExt || resolved === dupFile) {
 			return true;
 		}

@@ -119,6 +119,32 @@ verbatim produces the same file contents as the real command.
 The MCP `move`, `rename`, `alias`, and `tidy` tools return the identical
 five-field `edits` schema when `dryRun: true`.
 
+## Operation journal and undo
+
+Add `--journal` to an applied `move`, `rename`, `alias`, or `tidy --fix` to
+record the successful operation in `.resect/history.json`. Journaling requires
+a clean Git baseline; previews and unsuccessful operations do not create an
+entry. Each result includes the journal entry ID.
+
+```bash
+resect move src/old.ts src/new.ts --journal
+resect undo --dry-run                         # preview the latest undo
+resect undo                                   # restore the latest entry
+resect undo <operation-id>                    # restore a named entry
+```
+
+The journal retains the newest 20 entries. It is a single-operation safety aid,
+not a transaction log or a replacement for Git: commit or stash one operation
+before journaling another. Undo refuses unrelated changes or later edits to an
+affected file unless `--force` is explicit, and applied undo runs a TypeScript
+check unless `--no-verify` is supplied. A failed check rolls back the attempted
+undo and leaves the entry applied. Because `--force` can overwrite later work,
+preview first when the recorded state is no longer current.
+
+The MCP `undo` tool defaults to `dryRun: true`, like the other mutating tools.
+Library consumers can call `executeUndo()` or `undoCommand()`; journal and undo
+results use the same entry IDs across all three surfaces.
+
 ## Cross-Package Refactoring
 
 The killer feature. Move files between packages in your monorepo and resect handles everything:
@@ -582,6 +608,7 @@ resect ships a stdio [Model Context Protocol](https://modelcontextprotocol.io) s
 |------|-------------|
 | `move` | Move a file and rewrite every import (relative, alias, cross-package barrel) |
 | `rename` | Rename an exported symbol and every import binding across the project |
+| `undo` | Preview or restore the latest or a named journaled operation |
 | `alias` | Normalize import specifiers to `alias`, `relative`, or `shortest` style |
 | `inline` | Inline a pure re-export barrel, retargeting all importers to the canonical source |
 | `mock-cleanup` | Remove orphan mock factory keys with typecheck rollback |
@@ -593,6 +620,7 @@ Each mutating tool:
 
 - Defaults to `dryRun: true`; pass `dryRun: false` to apply.
 - `move`, `rename`, `alias`, and `tidy` return exact `edits` (`file`, `start`, `end`, `oldText`, `newText`) alongside their command-specific metadata.
+- `move`, `rename`, `alias`, and `tidy` accept `journal: true`; `undo` accepts the returned entry ID and defaults to a non-mutating preview.
 - When `dryRun: false` and `verify: true` (the default), runs `tsc --noEmit` before AND after and returns the diagnostic delta as `typecheck: { errorsBefore, errorsAfter, newErrors, fixedCount }` — the caller sees exactly which type errors the refactor introduced or fixed.
 - Refuses to mutate a dirty worktree unless `force: true` (returned as a structured error, never as a process exit).
 
@@ -659,7 +687,7 @@ To remove it: `codex mcp remove resect`.
 
 ## Programmatic API
 
-resect is also an importable library — the third entry point alongside the `resect` CLI and the `resect-mcp` server. Every command is exported as a `<name>Command` function plus the underlying pure compute seams (`analyze`, `findUnusedExports`, `analyzeBarrels`, `moveModule`, `buildAuditReport`, …) and their option/report types.
+resect is also an importable library — the third entry point alongside the `resect` CLI and the `resect-mcp` server. Every command is exported as a `<name>Command` function plus the underlying pure compute seams (`analyze`, `findUnusedExports`, `analyzeBarrels`, `moveModule`, `executeUndo`, `buildAuditReport`, …) and their option/report types.
 
 ```ts
 import { analyze, findUnusedExports, setRuntime, nodeRuntime } from "@mherod/resect";
@@ -686,6 +714,7 @@ Under Bun the default runtime works out of the box; subpath entry points `@mhero
 - **Import splitting** — Handles mixed imports from barrels correctly
 - **Auto-rebuild** — Keeps dist/ in sync after cross-package moves
 - **Dry-run mode** — Preview everything before committing
+- **Operation journal and undo** — Opt in to a bounded local history and safely reverse the latest or a named mutation
 - **Unresolvable import detection** — Surfaces broken imports with file, line, and specifier
 - **Modern extension support** — Handles `.mts`, `.cts`, `.mjs`, `.cjs` in addition to classic extensions
 - **Similarity detection** — Find duplicate/similar functions using bigram Jaccard on normalized ASTs
@@ -705,6 +734,7 @@ Under Bun the default runtime works out of the box; subpath entry points `@mhero
 | `--verify` | | Enable type checking verification, overriding project config |
 | `--no-verify` | | Skip type checking verification (not recommended) |
 | `--force` | | Proceed past the dirty-worktree guard and similarity/conflict blocks (mutating commands) |
+| `--journal` | | Record a successful move, rename, alias rewrite, or tidy fix for later undo |
 | `--fix` | | Apply suggested fixes (mock-cleanup, test-relocation, naming, tidy) |
 | `--transform` | | Apply AST rewrites from a config during a move; takes a value: `--transform=.resect/transforms.js` |
 | `--batch` | | Apply move pairs from a JSON manifest using one shared project context |

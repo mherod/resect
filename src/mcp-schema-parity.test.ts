@@ -18,7 +18,9 @@ const MCP_SERVER_SOURCE = await Bun.file(
 ).text();
 
 function extractInputSchemaKeys(toolName: string): string[] {
-	const toolStart = MCP_SERVER_SOURCE.indexOf(`"${toolName}",`);
+	const toolStart = MCP_SERVER_SOURCE.indexOf(
+		`server.registerTool(\n\t"${toolName}",`
+	);
 	if (toolStart === -1) {
 		throw new Error(`Tool "${toolName}" not found in mcp-server.ts`);
 	}
@@ -50,10 +52,49 @@ const EXPECTED: Record<string, string[]> = {
 		"project",
 		"dryRun",
 		"force",
+		"journal",
 		"verify",
 		"verbose",
 		"transform",
 		"prefer",
+	],
+	rename: [
+		"file",
+		"oldName",
+		"newName",
+		"project",
+		"dryRun",
+		"force",
+		"journal",
+		"verify",
+		"verbose",
+	],
+	alias: [
+		"target",
+		"prefer",
+		"renameSpecifiers",
+		"project",
+		"dryRun",
+		"force",
+		"journal",
+		"verify",
+	],
+	undo: ["id", "project", "dryRun", "force", "verify"],
+	tidy: [
+		"directory",
+		"experimental",
+		"project",
+		"scope",
+		"workspace",
+		"dryRun",
+		"force",
+		"journal",
+		"fixCategories",
+		"aliasPrefer",
+		"maxChanges",
+		"fanOutThreshold",
+		"fanInThreshold",
+		"exportThreshold",
 	],
 	similar: [
 		"directory",

@@ -303,6 +303,7 @@ Options:
   -n, --dry-run   Preview changes without modifying files
   --json          Emit structured edits as JSON (use with --dry-run)
   --force         Allow operation when git worktree has uncommitted changes
+  --journal       Record the applied operation for a later resect undo
   --no-verify     Disable type checking verification (enabled by default)
   --verbose       Show detailed changes
   --workspace     Scan across all workspace packages
@@ -344,6 +345,7 @@ Options:
   -n, --dry-run     Preview changes without modifying files
   --json            Emit structured edits as JSON (use with --dry-run)
   --force           Allow operation when git worktree has uncommitted changes
+  --journal         Record the applied operation for a later resect undo
   --verbose         Show detailed information about each change
   --workspace       Scan across all workspace packages
   --batch=PATH      Apply an array of { source, target } moves from a JSON file
@@ -394,6 +396,7 @@ Options:
   -n, --dry-run   Preview changes without modifying files
   --json          Emit structured edits as JSON (use with --dry-run)
   --force         Allow operation when git worktree has uncommitted changes
+  --journal       Record the applied operation for a later resect undo
   --verbose       Show detailed information about each change
   --workspace     Scan across all workspace packages
   --no-verify     Disable type checking verification (enabled by default)
@@ -414,6 +417,34 @@ Examples:
 `,
 		mcpDescription:
 			"Rename an exported symbol (function, class, type, interface, enum, const) in its source file and update every import that references it across the project. Updates both the declaration and all unaliased import bindings; aliased imports (`import { foo as bar }`) are left intact because the local name is already decoupled. Checks for conflicts before mutating: aborts if the new name already exists in the source file or in any importing file's local bindings. Defaults to `dryRun: true`; when `dryRun: false` and `verify: true` (both default) runs `tsc --noEmit` before AND after and returns the diagnostic delta. A dirty worktree is returned as an error unless `force: true`. Returns success, updated reference list, errors, worktree-dirty flag, and (when verified) the typecheck delta.",
+	},
+	{
+		name: "undo",
+		usage: "[operation-id]",
+		summary: "Undo the latest or a named journaled refactor",
+		cliHelp: `
+Usage: ${CLI_NAME} undo [operation-id] [options]
+
+Restore the files recorded before a successful journaled operation. When no
+operation ID is supplied, the latest applied entry is selected.
+
+Arguments:
+  operation-id    Optional journal entry ID; defaults to the latest applied entry
+
+Options:
+  -p, --project   Path to project directory or tsconfig.json
+  -n, --dry-run   Preview the files that would be restored
+  --force         Override unrelated or diverged-work safeguards
+  --json          Output the structured undo result
+  --no-verify     Skip the post-undo typecheck
+
+Examples:
+  ${CLI_NAME} undo --dry-run
+  ${CLI_NAME} undo
+  ${CLI_NAME} undo 7b3c2af0-7d8e-4bb8-a8fa-8abfdc73640e
+`,
+		mcpDescription:
+			"Undo the latest or a named operation from `.resect/history.json`. Defaults to `dryRun: true`; set `dryRun: false` to restore recorded files. Refuses unrelated or later edits unless `force: true`. When `verify: true`, the entry is marked undone only after the post-undo TypeScript check passes; a failed check rolls back the attempted undo.",
 	},
 	{
 		name: "similar",
@@ -845,6 +876,7 @@ Options:
   --alias-prefer=<s>     Alias-normalisation strategy: alias, relative, or shortest
   --max-changes          Abort --fix when planned changes exceed this limit (default: 50)
   --force                Allow --fix when the git worktree is dirty
+  --journal              Record the applied fix batch for a later resect undo
   --verbose              Show extra operational messages
 
 Examples:

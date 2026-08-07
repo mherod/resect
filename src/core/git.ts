@@ -1,6 +1,7 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
 import { getRuntime } from "../runtime/index.ts";
+import { JOURNAL_RELATIVE_PATH } from "./journal.ts";
 
 /**
  * Filter out files that are ignored by .gitignore.
@@ -60,7 +61,7 @@ export async function filterGitignored(
 export async function isWorktreeDirty(dir: string): Promise<boolean> {
 	try {
 		const { stdout, exitCode } = await getRuntime().process.exec(
-			["git", "status", "--porcelain"],
+			["git", "status", "--porcelain", "--untracked-files=all"],
 			{ cwd: dir }
 		);
 
@@ -69,7 +70,17 @@ export async function isWorktreeDirty(dir: string): Promise<boolean> {
 			return false;
 		}
 
-		return stdout.trim().length > 0;
+		return stdout
+			.trim()
+			.split("\n")
+			.filter((line) => line.length > 0)
+			.some((line) => {
+				const statusPath = line.slice(3);
+				return (
+					statusPath !== JOURNAL_RELATIVE_PATH &&
+					!statusPath.endsWith(`/${JOURNAL_RELATIVE_PATH}`)
+				);
+			});
 	} catch {
 		// git not installed or other system error — treat as non-git
 		return false;

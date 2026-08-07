@@ -4,6 +4,10 @@ import ts from "../core/ast-utils.ts";
 import { mapConcurrent } from "../core/concurrency.ts";
 import { diffDiagnostics } from "../core/diagnostics.ts";
 import { ensureCleanWorktree } from "../core/git.ts";
+import {
+	completeOperationJournal,
+	prepareOperationJournal,
+} from "../core/journal.ts";
 import { createProgram, loadProject } from "../core/project.ts";
 import {
 	calculateRelativeSpecifier,
@@ -113,6 +117,7 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 		verify = true,
 		project: projectArg,
 		workspace = false,
+		journal = false,
 	} = options;
 
 	const absoluteTarget = path.resolve(target);
@@ -141,6 +146,7 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 			json,
 			verbose,
 			verify,
+			journal,
 		});
 		return;
 	}
@@ -158,6 +164,10 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 			logger.error("No workspace packages found.");
 			process.exit(1);
 		}
+		const journalContext = await prepareOperationJournal(
+			wsInfo.root,
+			journal && !dryRun
+		);
 
 		if (!json) {
 			logger.info(
@@ -218,10 +228,21 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 			}
 		} else {
 			await applyChanges(result.changes);
+			const journalEntry = await completeOperationJournal(journalContext, {
+				args: {
+					prefer,
+					target: path.relative(wsInfo.root, absoluteTarget),
+					workspace: true,
+				},
+				command: "alias",
+			});
 			if (json) {
-				printAliasResultJson(result, wsInfo.root);
+				printAliasResultJson(result, wsInfo.root, undefined, journalEntry?.id);
 			} else {
 				printResults(result, dryRun, verbose, wsInfo.root);
+				if (journalEntry) {
+					logger.info(`Journaled operation ${journalEntry.id}`);
+				}
 			}
 		}
 		return;
@@ -236,6 +257,10 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 		process.exit(1);
 	}
 	const { project } = context;
+	const journalContext = await prepareOperationJournal(
+		project.rootDir,
+		journal && !dryRun
+	);
 
 	if (!json) {
 		logger.info(`\n${dryRun ? "🔍 Dry run:" : "🔧"} Normalizing imports...`);
@@ -277,12 +302,29 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 			async () => applyChanges(result.changes)
 		);
 
+		const journalEntry = verifyResult.success
+			? await completeOperationJournal(journalContext, {
+					args: {
+						prefer,
+						target: path.relative(project.rootDir, absoluteTarget),
+					},
+					command: "alias",
+				})
+			: null;
 		if (json) {
-			printAliasResultJson(result, project.rootDir, verifyResult);
+			printAliasResultJson(
+				result,
+				project.rootDir,
+				verifyResult,
+				journalEntry?.id
+			);
 		} else {
 			printResults(result, dryRun, verbose, project.rootDir);
 			logger.empty();
 			printVerificationResults(verifyResult);
+			if (journalEntry) {
+				logger.info(`Journaled operation ${journalEntry.id}`);
+			}
 		}
 
 		if (!verifyResult.success) {
@@ -293,10 +335,25 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 		}
 	} else {
 		await applyChanges(result.changes);
+		const journalEntry = await completeOperationJournal(journalContext, {
+			args: {
+				prefer,
+				target: path.relative(project.rootDir, absoluteTarget),
+			},
+			command: "alias",
+		});
 		if (json) {
-			printAliasResultJson(result, project.rootDir);
+			printAliasResultJson(
+				result,
+				project.rootDir,
+				undefined,
+				journalEntry?.id
+			);
 		} else {
 			printResults(result, dryRun, verbose, project.rootDir);
+			if (journalEntry) {
+				logger.info(`Journaled operation ${journalEntry.id}`);
+			}
 		}
 	}
 }
@@ -309,6 +366,7 @@ async function aliasRenameSpecifierCommand(options: {
 	projectArg?: string;
 	verbose: boolean;
 	verify: boolean;
+	journal: boolean;
 }): Promise<void> {
 	const context = await setupCommandContext({
 		project: options.projectArg,
@@ -319,6 +377,10 @@ async function aliasRenameSpecifierCommand(options: {
 		process.exit(1);
 	}
 	const { project } = context;
+	const journalContext = await prepareOperationJournal(
+		project.rootDir,
+		options.journal && !options.dryRun
+	);
 	if (!options.json) {
 		logger.info(
 			`\n${options.dryRun ? "🔍 Dry run:" : "🔧"} Renaming import specifiers...`
@@ -383,12 +445,31 @@ async function aliasRenameSpecifierCommand(options: {
 			result.changes,
 			project
 		);
+		const journalEntry = verifyResult.success
+			? await completeOperationJournal(journalContext, {
+					args: {
+						renameSpecifiers: options.specifierRenames.map(
+							(rename) => `${rename.from}=${rename.to}`
+						),
+						target: path.relative(project.rootDir, options.absoluteTarget),
+					},
+					command: "alias",
+				})
+			: null;
 		if (options.json) {
-			printAliasResultJson(result, project.rootDir, verifyResult);
+			printAliasResultJson(
+				result,
+				project.rootDir,
+				verifyResult,
+				journalEntry?.id
+			);
 		} else {
 			printResults(result, false, options.verbose, project.rootDir);
 			logger.empty();
 			printVerificationResults(verifyResult);
+			if (journalEntry) {
+				logger.info(`Journaled operation ${journalEntry.id}`);
+			}
 		}
 
 		if (!verifyResult.success) {
@@ -401,10 +482,22 @@ async function aliasRenameSpecifierCommand(options: {
 	}
 
 	await applyChanges(result.changes);
+	const journalEntry = await completeOperationJournal(journalContext, {
+		args: {
+			renameSpecifiers: options.specifierRenames.map(
+				(rename) => `${rename.from}=${rename.to}`
+			),
+			target: path.relative(project.rootDir, options.absoluteTarget),
+		},
+		command: "alias",
+	});
 	if (options.json) {
-		printAliasResultJson(result, project.rootDir);
+		printAliasResultJson(result, project.rootDir, undefined, journalEntry?.id);
 	} else {
 		printResults(result, false, options.verbose, project.rootDir);
+		if (journalEntry) {
+			logger.info(`Journaled operation ${journalEntry.id}`);
+		}
 	}
 }
 
@@ -1025,7 +1118,8 @@ function calculatePreferredSpecifier(
 function printAliasResultJson(
 	result: AliasResult,
 	projectRoot: string,
-	typecheck?: VerificationResult
+	typecheck?: VerificationResult,
+	journalEntryId?: string
 ): void {
 	logger.info(
 		JSON.stringify(
@@ -1047,6 +1141,7 @@ function printAliasResultJson(
 					file: path.relative(projectRoot, missed.file),
 				})),
 				typecheck,
+				journalEntryId,
 			},
 			null,
 			2

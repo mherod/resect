@@ -3,6 +3,7 @@ import path from "node:path";
 import { cleanup, makeTempDir } from "../src/commands/__test-helpers.ts";
 
 const PRE_COMMIT_HOOK = path.join(import.meta.dir, "../.husky/pre-commit");
+const PACKAGE_JSON = path.join(import.meta.dir, "../package.json");
 const dirs: string[] = [];
 
 afterAll(async () => {
@@ -37,6 +38,21 @@ describe("pre-commit hook", () => {
 
 		expect(hook).toContain("pnpm add --global .");
 		expect(hook).not.toContain("pnpm link --global");
+	});
+
+	test("formats with pinned local binaries without registry lookups", async () => {
+		const hook = await Bun.file(PRE_COMMIT_HOOK).text();
+		const packageJson = await Bun.file(PACKAGE_JSON).json();
+
+		expect(hook).toContain("pnpm run fix");
+		expect(hook).not.toContain("bun x ultracite");
+		expect(hook).not.toContain("pnpm dlx");
+		expect(packageJson.scripts.fix).toBe(
+			"pnpm exec biome check --write --no-errors-on-unmatched ."
+		);
+		expect(
+			packageJson["lint-staged"]["*.{js,jsx,ts,tsx,json,jsonc,css,scss,md,mdx}"]
+		).toEqual(["pnpm exec biome check --write --no-errors-on-unmatched"]);
 	});
 
 	test("uses Git-native staged hashes that detect formatting changes (#154)", async () => {

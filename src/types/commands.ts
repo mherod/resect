@@ -25,4 +25,6 @@ export interface MutatingCommandOptions {
 	project?: string;
 	/** Scan across all workspace packages */
 	workspace?: boolean;
+	/** Persist a reversible operation record in .resect/history.json */
+	journal?: boolean;
 }
