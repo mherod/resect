@@ -679,6 +679,102 @@ describe("unused command", () => {
 		await cleanup(dir);
 	});
 
+	// @BDD: ANLY-005-Verified
+	test("protects package public API exports but still reports private siblings", async () => {
+		const dir = await makeFixture("public-api-exports", {
+			"package.json": JSON.stringify({
+				name: "@scope/data",
+				main: "./dist/index.js",
+				module: "./dist/index.js",
+				exports: {
+					".": "./dist/index.js",
+					"./subpath": "./dist/subpath.js",
+				},
+			}),
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: { strict: true },
+				include: ["src/**/*.ts"],
+			}),
+			"src/index.ts": 'export { publicValue } from "./values";\n',
+			"src/values.ts": [
+				"export const publicValue = 1;",
+				"export const privateValue = 2;",
+			].join("\n"),
+			"src/subpath.ts": "export const subpathValue = 3;\n",
+		});
+
+		const proc = Bun.spawn(
+			[...CLI, "unused", path.join(dir, "src"), "--json"],
+			{ stdout: "pipe", stderr: "pipe" }
+		);
+		const [stdout, stderr] = await Promise.all([
+			new Response(proc.stdout).text(),
+			new Response(proc.stderr).text(),
+		]);
+		await proc.exited;
+		expect(proc.exitCode, stderr).toBe(0);
+		const report = JSON.parse(stdout);
+		const publicApiExports = report.publicApiExports.map(
+			(item: { file: string; name: string }) => ({
+				file: path.relative(dir, item.file),
+				name: item.name,
+			})
+		);
+		expect(publicApiExports).toEqual(
+			expect.arrayContaining([
+				{ file: path.join("src", "values.ts"), name: "publicValue" },
+				{ file: path.join("src", "subpath.ts"), name: "subpathValue" },
+			])
+		);
+		expect(
+			report.unused.map((item: { file: string; name: string }) => ({
+				file: path.relative(dir, item.file),
+				name: item.name,
+			}))
+		).toEqual([{ file: path.join("src", "values.ts"), name: "privateValue" }]);
+		expect(report.orphanFiles).toHaveLength(0);
+
+		await cleanup(dir);
+	});
+
+	// @BDD: ANLY-006-Verified
+	test("withholds destructive verdicts for unresolved package export patterns", async () => {
+		const dir = await makeFixture("ambiguous-public-api", {
+			"package.json": JSON.stringify({
+				name: "@scope/data",
+				exports: { "./*": "./dist/*.js" },
+			}),
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: { strict: true },
+				include: ["src/**/*.ts"],
+			}),
+			"src/value.ts": "export const maybePublic = 1;\n",
+		});
+
+		const proc = Bun.spawn(
+			[...CLI, "unused", path.join(dir, "src"), "--json"],
+			{ stdout: "pipe", stderr: "pipe" }
+		);
+		const [stdout, stderr] = await Promise.all([
+			new Response(proc.stdout).text(),
+			new Response(proc.stderr).text(),
+		]);
+		await proc.exited;
+		expect(proc.exitCode, stderr).toBe(0);
+		const report = JSON.parse(stdout);
+		expect(report.unknownExternalUsageExportCount).toBe(1);
+		expect(report.unknownExternalUsageExports).toEqual([
+			expect.objectContaining({ name: "maybePublic" }),
+		]);
+		expect(report.unused).toHaveLength(0);
+		expect(report.orphanFiles).toHaveLength(0);
+		expect(report.warnings).toEqual([
+			expect.stringContaining("external usage is unknown"),
+		]);
+
+		await cleanup(dir);
+	});
+
 	test("--ignore excludes matching orphan files from the report", async () => {
 		const dir = await makeFixture("ignore-orphan", {
 			"helper.test.ts": "export function testHelper() {\n  return 1;\n}",
@@ -1087,17 +1183,16 @@ describe("unused --workspace cross-package consumers", () => {
 			"packages/provider/package.json": JSON.stringify({
 				name: "@scope/provider",
 				version: "1.0.0",
-				main: "src/index.ts",
 			}),
 			"packages/provider/tsconfig.json": JSON.stringify({
 				compilerOptions: {
 					strict: true,
 					baseUrl: ".",
-					paths: { "@scope/provider": ["src/index.ts"] },
+					paths: { "@scope/provider": ["src/internal.ts"] },
 				},
 				include: ["src/**/*.ts"],
 			}),
-			"packages/provider/src/index.ts": [
+			"packages/provider/src/internal.ts": [
 				"export function usedAcrossPackages() {",
 				"	return 1;",
 				"}",
@@ -1116,7 +1211,7 @@ describe("unused --workspace cross-package consumers", () => {
 					strict: true,
 					baseUrl: ".",
 					paths: {
-						"@scope/provider": ["../../packages/provider/src/index.ts"],
+						"@scope/provider": ["../../packages/provider/src/internal.ts"],
 					},
 				},
 				include: ["src/**/*.ts"],

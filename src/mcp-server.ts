@@ -271,6 +271,13 @@ export async function analyzeTool(
 			internalUsage: e.internalUsage,
 			internalRefCount: e.internalRefCount,
 		})),
+		publicApiExports: result.publicApiExports.map((e) => ({
+			name: e.name,
+			line: e.line,
+			isType: e.isType,
+			kind: e.type,
+		})),
+		publicApiTraceIncomplete: result.publicApiTraceIncomplete,
 		noExternalUsage: result.noExternalUsage,
 		externalUsageAssumed: result.externalUsageAssumed,
 		skippedFileCount: result.skippedFiles.length,
@@ -512,6 +519,24 @@ export async function unusedTool(
 		excludedEntrypointFileCount: report.excludedEntrypointFileCount,
 		excludedEntrypointFiles: report.excludedEntrypointFiles.map((file) =>
 			path.relative(absoluteDir, file)
+		),
+		publicApiExportCount: report.publicApiExportCount,
+		publicApiExports: report.publicApiExports.map((exp) => ({
+			name: exp.name,
+			file: path.relative(absoluteDir, exp.file),
+			line: exp.line,
+			isType: exp.isType,
+			kind: exp.type,
+		})),
+		unknownExternalUsageExportCount: report.unknownExternalUsageExportCount,
+		unknownExternalUsageExports: report.unknownExternalUsageExports.map(
+			(exp) => ({
+				name: exp.name,
+				file: path.relative(absoluteDir, exp.file),
+				line: exp.line,
+				isType: exp.isType,
+				kind: exp.type,
+			})
 		),
 		orphanFiles: report.orphanFiles.map((orphan) => ({
 			file: path.relative(absoluteDir, orphan.file),

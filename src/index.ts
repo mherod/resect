@@ -199,6 +199,7 @@ export type {
 export { executeUndo, undoCommand } from "./commands/undo.ts";
 // ── Commands: unused ────────────────────────────────────────────────
 export type {
+	PublicApiExport,
 	UnusedExport,
 	UnusedOptions,
 	UnusedReport,

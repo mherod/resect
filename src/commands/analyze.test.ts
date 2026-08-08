@@ -16,6 +16,152 @@ async function makeFixture(name: string, files: Record<string, string>) {
 }
 
 describe("analyze command", () => {
+	// @BDD: ANLY-005-Verified
+	test("protects package entrypoint exports while retaining private delete candidates", async () => {
+		const dir = await makeFixtureBase("analyze-package-entrypoints", {
+			"pnpm-workspace.yaml": "packages:\n  - packages/*\n",
+			"package.json": JSON.stringify({
+				name: "fixture-workspace",
+				private: true,
+				workspaces: ["packages/*"],
+			}),
+			"packages/data/tsconfig.json": JSON.stringify({
+				compilerOptions: {
+					strict: true,
+				},
+				include: ["src/**/*.ts"],
+			}),
+			"packages/data/package.json": JSON.stringify({
+				name: "@scope/data",
+				main: "./dist/index.js",
+				module: "./dist/index.js",
+				exports: {
+					".": "./dist/index.js",
+					"./subpath": "./dist/subpath.js",
+				},
+			}),
+			"packages/data/src/index.ts":
+				'export { publicValue as renamedPublicValue } from "./values";\n',
+			"packages/data/src/values.ts": [
+				"export const publicValue = 1;",
+				"export const privateValue = 2;",
+			].join("\n"),
+			"packages/data/src/subpath.ts": "export const subpathValue = 3;\n",
+			"packages/app/package.json": JSON.stringify({
+				name: "@scope/app",
+				private: true,
+			}),
+			"packages/app/tsconfig.json": JSON.stringify({
+				compilerOptions: {
+					strict: true,
+					baseUrl: ".",
+					paths: {
+						"@scope/data": ["../data/src/index.ts"],
+						"@scope/data/*": ["../data/src/*"],
+					},
+				},
+				include: ["src/**/*.ts"],
+			}),
+			"packages/app/src/main.ts": [
+				'import { renamedPublicValue } from "@scope/data";',
+				'import { subpathValue } from "@scope/data/subpath";',
+				"console.log(renamedPublicValue, subpathValue);",
+			].join("\n"),
+		});
+
+		try {
+			const projectPath = path.join(dir, "packages/data/tsconfig.json");
+			const indexFile = path.join(dir, "packages/data/src/index.ts");
+			const valuesFile = path.join(dir, "packages/data/src/values.ts");
+			const subpathFile = path.join(dir, "packages/data/src/subpath.ts");
+			const project = loadProject(projectPath, valuesFile);
+
+			const index = await analyze(indexFile, project);
+			expect(index.publicApiExports.map((item) => item.name)).toEqual([
+				"renamedPublicValue",
+			]);
+			expect(index.unusedExports).toHaveLength(0);
+			expect(index.noExternalUsage).toBeFalse();
+
+			const values = await analyze(valuesFile, project);
+			expect(values.publicApiExports.map((item) => item.name)).toEqual([
+				"publicValue",
+			]);
+			expect(values.unusedExports.map((item) => item.name)).toEqual([
+				"privateValue",
+			]);
+			expect(values.noExternalUsage).toBeFalse();
+
+			const subpath = await analyze(subpathFile, project);
+			expect(subpath.publicApiExports.map((item) => item.name)).toEqual([
+				"subpathValue",
+			]);
+			expect(subpath.unusedExports).toHaveLength(0);
+			expect(subpath.noExternalUsage).toBeFalse();
+
+			const proc = Bun.spawn([...CLI, "analyze", valuesFile], {
+				cwd: dir,
+				stdout: "pipe",
+				stderr: "pipe",
+			});
+			const [stdout, stderr] = await Promise.all([
+				new Response(proc.stdout).text(),
+				new Response(proc.stderr).text(),
+			]);
+			await proc.exited;
+			expect(proc.exitCode, stderr).toBe(0);
+			expect(stdout).toContain("Package public API exports");
+			expect(stdout).toContain("publicValue");
+			expect(stdout).toContain("privateValue");
+			expect(stdout).not.toContain("publicValue (line 1) — delete");
+		} finally {
+			await cleanup(dir);
+		}
+	});
+
+	// @BDD: ANLY-006-Verified
+	test("withholds destructive verdicts when package entrypoint tracing is incomplete", async () => {
+		const dir = await makeFixtureBase("analyze-ambiguous-entrypoint", {
+			"package.json": JSON.stringify({
+				name: "@scope/data",
+				exports: { "./*": "./dist/*.js" },
+			}),
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: { strict: true },
+				include: ["src/**/*.ts"],
+			}),
+			"src/value.ts": "export const maybePublic = 1;\n",
+		});
+
+		try {
+			const file = path.join(dir, "src/value.ts");
+			const project = loadProject(path.join(dir, "tsconfig.json"), file);
+			const result = await analyze(file, project);
+
+			expect(result.publicApiExports).toHaveLength(0);
+			expect(result.publicApiTraceIncomplete).toBeTrue();
+			expect(result.externalUsageAssumed).toBeTrue();
+			expect(result.unusedExports).toHaveLength(0);
+			expect(result.noExternalUsage).toBeFalse();
+
+			const proc = Bun.spawn([...CLI, "analyze", file], {
+				cwd: dir,
+				stdout: "pipe",
+				stderr: "pipe",
+			});
+			const [stdout, stderr] = await Promise.all([
+				new Response(proc.stdout).text(),
+				new Response(proc.stderr).text(),
+			]);
+			await proc.exited;
+			expect(proc.exitCode, stderr).toBe(0);
+			expect(stderr).toContain("Package entrypoint tracing is incomplete");
+			expect(stdout).not.toContain("delete (no refs)");
+		} finally {
+			await cleanup(dir);
+		}
+	});
+
 	// @BDD: ANLY-003-Verified
 	test("treats App Router route handlers as externally consumed", async () => {
 		const dir = await makeFixtureBase("analyze-framework-entrypoint", {

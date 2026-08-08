@@ -11,6 +11,11 @@ import {
 	findBarrelReExports,
 	mergeDependencyGraphs,
 } from "../core/graph.ts";
+import {
+	discoverPackageEntrypoints,
+	findPackagePublicApiExports,
+	isPackageEntrypointTraceIncomplete,
+} from "../core/package-entrypoints.ts";
 import { createProgram } from "../core/project.ts";
 import {
 	scanBarrelExports,
@@ -174,14 +179,36 @@ export async function analyze(
 	} = await import("./unused.ts");
 	const importedBindings = buildImportedBindingsMap(graph);
 	const fileImporters = importedBindings.get(filePath);
-	const externalUsageAssumed = isConventionEntrypointFile(
+	const conventionEntrypoint = isConventionEntrypointFile(
 		filePath,
 		options?.entrypointGlobs
 	);
+	const packageEntrypoints = await discoverPackageEntrypoints(
+		path.dirname(filePath)
+	);
+	const publicApiExports = findPackagePublicApiExports(
+		filePath,
+		exports,
+		graph,
+		packageEntrypoints.files
+	);
+	const publicApiExportSet = new Set(publicApiExports);
+	const publicApiTraceIncomplete = isPackageEntrypointTraceIncomplete(
+		filePath,
+		packageEntrypoints,
+		graph
+	);
+	const externalUsageAssumed = conventionEntrypoint || publicApiTraceIncomplete;
 	const unusedExports = externalUsageAssumed
 		? []
 		: exports
-				.filter((exp) => !isExportUsed(exp, filePath, fileImporters, graph))
+				.filter(
+					(exp) =>
+						!(
+							publicApiExportSet.has(exp) ||
+							isExportUsed(exp, filePath, fileImporters, graph)
+						)
+				)
 				.map((exp) => {
 					const internalRefCount = countInternalReferences(
 						sourceFile,
@@ -195,7 +222,9 @@ export async function analyze(
 					};
 				});
 	const noExternalUsage =
-		!externalUsageAssumed && hasNoExternalUsage(filePath, exports, graph);
+		!externalUsageAssumed &&
+		publicApiExports.length === 0 &&
+		hasNoExternalUsage(filePath, exports, graph);
 
 	return {
 		file: filePath,
@@ -205,6 +234,8 @@ export async function analyze(
 		barrelExports: barrelsWithContext,
 		unresolvable,
 		unusedExports,
+		publicApiExports,
+		publicApiTraceIncomplete,
 		noExternalUsage,
 		externalUsageAssumed,
 		skippedFiles: graph.skippedFiles,
@@ -293,7 +324,19 @@ function printAnalysis(
 		logger.empty();
 	}
 
-	if (result.externalUsageAssumed) {
+	if (result.publicApiExports.length > 0) {
+		logger.info(
+			`Package public API exports (${result.publicApiExports.length}): ${result.publicApiExports.map((exp) => exp.name).join(", ")}. These are reachable from package entrypoints and are not deletion candidates.`
+		);
+		logger.empty();
+	}
+
+	if (result.publicApiTraceIncomplete) {
+		logger.warn(
+			"Package entrypoint tracing is incomplete: external usage is unknown, so no destructive export verdict is emitted."
+		);
+		logger.empty();
+	} else if (result.externalUsageAssumed) {
 		logger.info(
 			"Framework or configured entrypoint: exports are treated as externally consumed."
 		);

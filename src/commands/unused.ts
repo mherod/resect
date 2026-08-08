@@ -17,14 +17,16 @@ import {
 	mergeDependencyGraphs,
 	withGraphSourceFile,
 } from "../core/graph.ts";
-import { readPackageJson } from "../core/package-json.ts";
+import {
+	discoverPackageEntrypoints,
+	findPackagePublicApiExports,
+	isPackageEntrypointTraceIncomplete,
+} from "../core/package-entrypoints.ts";
 import { resolveTsConfig } from "../core/project.ts";
 import { normalizePath } from "../core/resolver.ts";
 import { scanExports } from "../core/scanner.ts";
 import { withSourceFile } from "../core/source-file.ts";
-import { discoverWorkspace } from "../core/workspace.ts";
 import { buildWorkspaceGraphs } from "../core/workspace-graphs.ts";
-import { getRuntime } from "../runtime/index.ts";
 import type { ExportInfo } from "../types/analysis.ts";
 import type { ReadOnlyCommandOptions } from "../types/commands.ts";
 import type { ModuleReference, ReferenceType } from "../types/graph.ts";
@@ -63,6 +65,14 @@ export interface UnusedExport {
 	internalRefCount: number;
 }
 
+export interface PublicApiExport {
+	file: string;
+	name: string;
+	type: ExportInfo["type"];
+	isType: boolean;
+	line: number;
+}
+
 export interface OrphanFile {
 	file: string;
 	exportNames: string[];
@@ -84,6 +94,12 @@ export interface UnusedReport {
 	/** Built-in or configured entrypoint files omitted from unused/dead verdicts. */
 	excludedEntrypointFiles: string[];
 	excludedEntrypointFileCount: number;
+	/** Exports reachable from package `main`, `module`, or `exports` entrypoints. */
+	publicApiExports: PublicApiExport[];
+	publicApiExportCount: number;
+	/** Exports withheld from destructive verdicts because package entrypoint tracing is incomplete. */
+	unknownExternalUsageExports: PublicApiExport[];
+	unknownExternalUsageExportCount: number;
 	unused: UnusedExport[];
 	orphanFiles: OrphanFile[];
 	totalExports: number;
@@ -137,6 +153,10 @@ export async function findUnusedExports(
 			excludedGeneratedFileCount: 0,
 			excludedEntrypointFiles: [],
 			excludedEntrypointFileCount: 0,
+			publicApiExports: [],
+			publicApiExportCount: 0,
+			unknownExternalUsageExports: [],
+			unknownExternalUsageExportCount: 0,
 			unused: [],
 			orphanFiles: [],
 			totalExports: 0,
@@ -211,6 +231,10 @@ export async function findUnusedExportsFromGraphs(
 			excludedGeneratedFileCount: 0,
 			excludedEntrypointFiles: [],
 			excludedEntrypointFileCount: 0,
+			publicApiExports: [],
+			publicApiExportCount: 0,
+			unknownExternalUsageExports: [],
+			unknownExternalUsageExportCount: 0,
 			unused: [],
 			orphanFiles: [],
 			totalExports: 0,
@@ -257,8 +281,13 @@ export async function findUnusedExportsFromGraphs(
 	);
 
 	const unused: UnusedExport[] = [];
+	const publicApiExports: PublicApiExport[] = [];
+	const unknownExternalUsageExports: PublicApiExport[] = [];
 	const exportedFiles = new Map<string, ExportInfo[]>();
-	const entrypointFiles = await collectPackageEntrypointFiles(absoluteDir);
+	const packageEntrypoints = await discoverPackageEntrypoints(absoluteDir, {
+		includeWorkspacePackages: true,
+	});
+	const entrypointFiles = packageEntrypoints.files;
 	const excludedEntrypointFiles = new Set<string>();
 	const skippedFiles = new Set(graph.skippedFiles);
 	let totalExports = 0;
@@ -276,6 +305,11 @@ export async function findUnusedExportsFromGraphs(
 		}
 
 		const fileImporters = importedBindings.get(normalizePath(file));
+		const publicApiTraceIncomplete = isPackageEntrypointTraceIncomplete(
+			file,
+			packageEntrypoints,
+			graph
+		);
 
 		// Scan exports and count internal references from the same parsed
 		// source file, so the cross-file and same-file checks share one parse.
@@ -284,10 +318,21 @@ export async function findUnusedExportsFromGraphs(
 			checker?: ts.TypeChecker
 		): void => {
 			const exports = scanExports(sourceFile);
+			const packagePublicApiExports = new Set(
+				findPackagePublicApiExports(file, exports, graph, entrypointFiles)
+			);
 			totalExports += exports.length;
 			exportedFiles.set(normalizePath(file), exports);
 
 			for (const exp of exports) {
+				if (publicApiTraceIncomplete) {
+					unknownExternalUsageExports.push({ file, ...exp });
+					continue;
+				}
+				if (packagePublicApiExports.has(exp)) {
+					publicApiExports.push({ file, ...exp });
+					continue;
+				}
 				if (isExportUsed(exp, file, fileImporters, graph)) {
 					continue;
 				}
@@ -338,21 +383,36 @@ export async function findUnusedExportsFromGraphs(
 
 	const internalOnlyCount = unused.filter((u) => u.internalUsage).length;
 	const sortedSkippedFiles = [...skippedFiles].sort();
+	const publicApiFiles = new Set(
+		[...publicApiExports, ...unknownExternalUsageExports].map((exp) =>
+			normalizePath(exp.file)
+		)
+	);
 	const orphanFiles = computeOrphanFiles(graph, exportedFiles, {
-		entrypointFiles,
+		entrypointFiles: new Set([...entrypointFiles, ...publicApiFiles]),
 		entrypointGlobs: entrypointGlobPatterns,
 	});
 
 	return {
 		schemaVersion: UNUSED_SCHEMA_VERSION,
-		warnings:
-			excludedGeneratedFiles.size > 0
+		warnings: [
+			...(excludedGeneratedFiles.size > 0
 				? [generatedArtifactWarning(excludedGeneratedFiles.size)]
-				: [],
+				: []),
+			...(unknownExternalUsageExports.length > 0
+				? [
+						`Package entrypoint tracing is incomplete for ${unknownExternalUsageExports.length} export(s); external usage is unknown, so destructive verdicts were withheld.`,
+					]
+				: []),
+		],
 		excludedGeneratedFiles: [...excludedGeneratedFiles].sort(),
 		excludedGeneratedFileCount: excludedGeneratedFiles.size,
 		excludedEntrypointFiles: [...excludedEntrypointFiles].sort(),
 		excludedEntrypointFileCount: excludedEntrypointFiles.size,
+		publicApiExports,
+		publicApiExportCount: publicApiExports.length,
+		unknownExternalUsageExports,
+		unknownExternalUsageExportCount: unknownExternalUsageExports.length,
 		unused,
 		orphanFiles,
 		totalExports,
@@ -465,167 +525,6 @@ function isExternalUsage(ref: ModuleReference, targetFile: string): boolean {
 		normalizePath(ref.sourceFile) !== targetFile &&
 		!RE_EXPORT_TYPES.has(ref.type)
 	);
-}
-
-interface PackageJsonEntrypoints {
-	main?: unknown;
-	module?: unknown;
-	exports?: unknown;
-}
-
-async function collectPackageEntrypointFiles(
-	directory: string
-): Promise<Set<string>> {
-	const packageJsonPaths = new Set<string>();
-	const workspace = await discoverWorkspace(directory);
-	if (workspace) {
-		for (const pkg of workspace.packages) {
-			packageJsonPaths.add(pkg.packageJsonPath);
-		}
-	}
-
-	const nearestPackageJson = await findNearestPackageJson(directory);
-	if (nearestPackageJson) {
-		packageJsonPaths.add(nearestPackageJson);
-	}
-
-	const entrypointFiles = new Set<string>();
-	for (const packageJsonPath of packageJsonPaths) {
-		const packageJson =
-			await readPackageJson<PackageJsonEntrypoints>(packageJsonPath);
-		if (!packageJson) {
-			continue;
-		}
-		const packageDir = path.dirname(packageJsonPath);
-		const srcDir = await detectSourceDir(packageDir);
-		for (const specifier of collectEntrypointSpecifiers(packageJson)) {
-			for (const candidate of expandEntrypointCandidates(
-				packageDir,
-				specifier,
-				srcDir
-			)) {
-				if (await getRuntime().fs.exists(candidate)) {
-					entrypointFiles.add(normalizePath(candidate));
-				}
-			}
-		}
-	}
-
-	return entrypointFiles;
-}
-
-async function findNearestPackageJson(
-	startDir: string
-): Promise<string | null> {
-	let current = path.resolve(startDir);
-
-	while (current !== path.dirname(current)) {
-		const candidate = path.join(current, "package.json");
-		if (await getRuntime().fs.exists(candidate)) {
-			return candidate;
-		}
-		current = path.dirname(current);
-	}
-
-	return null;
-}
-
-async function detectSourceDir(
-	packageDir: string
-): Promise<string | undefined> {
-	for (const candidate of ["src", "source"]) {
-		if (await getRuntime().fs.exists(path.join(packageDir, candidate))) {
-			return candidate;
-		}
-	}
-	return undefined;
-}
-
-function collectEntrypointSpecifiers(
-	packageJson: PackageJsonEntrypoints
-): string[] {
-	const specifiers: string[] = [];
-	if (typeof packageJson.main === "string") {
-		specifiers.push(packageJson.main);
-	}
-	if (typeof packageJson.module === "string") {
-		specifiers.push(packageJson.module);
-	}
-	collectExportSpecifiers(packageJson.exports, specifiers);
-	return specifiers;
-}
-
-function collectExportSpecifiers(value: unknown, specifiers: string[]): void {
-	if (typeof value === "string") {
-		specifiers.push(value);
-		return;
-	}
-	if (Array.isArray(value)) {
-		for (const item of value) {
-			collectExportSpecifiers(item, specifiers);
-		}
-		return;
-	}
-	if (value && typeof value === "object") {
-		for (const nested of Object.values(value)) {
-			collectExportSpecifiers(nested, specifiers);
-		}
-	}
-}
-
-function expandEntrypointCandidates(
-	packageDir: string,
-	specifier: string,
-	srcDir: string | undefined
-): string[] {
-	if (
-		specifier.includes("*") ||
-		path.isAbsolute(specifier) ||
-		/^[a-z]+:/i.test(specifier)
-	) {
-		return [];
-	}
-
-	const relativeSpecifier = specifier.replace(/^\.\//, "");
-	const candidates = new Set<string>();
-	addExtensionCandidates(
-		path.resolve(packageDir, relativeSpecifier),
-		candidates
-	);
-
-	if (srcDir) {
-		const parts = relativeSpecifier.split(/[\\/]/);
-		const [firstPart, ...rest] = parts;
-		if (firstPart && ["dist", "build", "lib"].includes(firstPart)) {
-			addExtensionCandidates(
-				path.resolve(packageDir, srcDir, ...rest),
-				candidates
-			);
-		}
-	}
-
-	return Array.from(candidates);
-}
-
-function addExtensionCandidates(
-	basePath: string,
-	candidates: Set<string>
-): void {
-	candidates.add(basePath);
-	const parsed = path.parse(basePath);
-	const withoutExtension = parsed.ext
-		? path.join(parsed.dir, parsed.name)
-		: basePath;
-
-	for (const extension of [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"]) {
-		candidates.add(`${withoutExtension}${extension}`);
-	}
-
-	if (!parsed.ext) {
-		for (const extension of [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"]) {
-			candidates.add(path.join(basePath, `index${extension}`));
-		}
-	}
 }
 
 // Position guards shared by the name-based and checker-based reference
@@ -909,6 +808,30 @@ export async function unusedCommand(options: UnusedOptions): Promise<void> {
 		if (verbose) {
 			for (const file of report.excludedEntrypointFiles) {
 				logger.info(`   ${path.relative(absoluteDir, file)}`);
+			}
+		}
+		logger.empty();
+	}
+
+	if (report.publicApiExportCount > 0) {
+		logger.info(
+			`↪ Protected ${report.publicApiExportCount} package public API export(s) from unused/dead verdicts.`
+		);
+		if (verbose) {
+			for (const exp of report.publicApiExports) {
+				logger.info(`   ${path.relative(absoluteDir, exp.file)}: ${exp.name}`);
+			}
+		}
+		logger.empty();
+	}
+
+	if (report.unknownExternalUsageExportCount > 0) {
+		logger.warn(
+			`⚠️  Package entrypoint tracing is incomplete for ${report.unknownExternalUsageExportCount} export(s); external usage is unknown, so destructive verdicts were withheld.`
+		);
+		if (verbose) {
+			for (const exp of report.unknownExternalUsageExports) {
+				logger.warn(`   ${path.relative(absoluteDir, exp.file)}: ${exp.name}`);
 			}
 		}
 		logger.empty();

@@ -12,6 +12,10 @@ export interface AnalysisResult {
 		diagnostic: string;
 	}>;
 	unusedExports: UnusedExportInfo[];
+	/** Exports reachable from package `main`, `module`, or `exports` entrypoints. */
+	publicApiExports: ExportInfo[];
+	/** True when package entrypoint files could not be resolved or scanned completely. */
+	publicApiTraceIncomplete: boolean;
 	noExternalUsage: boolean;
 	/** True when framework/configuration dispatch makes static imports incomplete. */
 	externalUsageAssumed: boolean;
