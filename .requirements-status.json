@@ -2,9 +2,9 @@
   "schemaVersion": 2,
   "projectId": "mherod/resect",
   "requirementsFile": "REQUIREMENTS.md",
-  "requirementsSha256": "da36f6e6a5256290a0743645489b64c7dacd25514f8b95c2a71b2b1d7b5db5d3",
-  "sourceCommit": "1cd467042bc09e1b4ed3db016817dd8efb3c2964",
-  "generatedAt": "2026-08-08T07:30:49Z",
+  "requirementsSha256": "82fa3996fd9b8410f3873a255d39e2bcdfd3b180268cba2dfa67096fd31e95f4",
+  "sourceCommit": "cbf65872d8ce00c5e505192686402a0b0c3271a5",
+  "generatedAt": "2026-08-08T08:03:22Z",
   "validator": {
     "name": "generate-requirements",
     "version": "2.0.0",
@@ -13,15 +13,15 @@
   "validation": {
     "structure": {
       "status": "PASS",
-      "receiptId": "STRUCT-20260808-006",
+      "receiptId": "STRUCT-20260808-007",
       "validator": "validate-bdd",
       "validatorVersion": "2.0.0",
       "command": "bun scripts/validate-bdd.js /Users/matthew.herod/Development/resect/REQUIREMENTS.md --status-log /Users/matthew.herod/Development/resect/.requirements-status.json",
-      "requirementsSha256": "da36f6e6a5256290a0743645489b64c7dacd25514f8b95c2a71b2b1d7b5db5d3",
-      "sourceCommit": "1cd467042bc09e1b4ed3db016817dd8efb3c2964",
-      "generatedAt": "2026-08-08T07:30:49Z",
+      "requirementsSha256": "82fa3996fd9b8410f3873a255d39e2bcdfd3b180268cba2dfa67096fd31e95f4",
+      "sourceCommit": "cbf65872d8ce00c5e505192686402a0b0c3271a5",
+      "generatedAt": "2026-08-08T08:03:22Z",
       "counts": {
-        "checked": 48,
+        "checked": 51,
         "errors": 0,
         "warnings": 0
       },
@@ -31,45 +31,46 @@
     },
     "documentQuality": {
       "status": "PASS",
-      "receiptId": "QUALITY-20260808-006",
+      "receiptId": "QUALITY-20260808-007",
       "validator": "generate-requirements-manual-review",
       "validatorVersion": "2.0.0",
       "command": "generate-requirements 2.0 manual review of REQUIREMENTS.md",
-      "requirementsSha256": "da36f6e6a5256290a0743645489b64c7dacd25514f8b95c2a71b2b1d7b5db5d3",
-      "sourceCommit": "1cd467042bc09e1b4ed3db016817dd8efb3c2964",
-      "generatedAt": "2026-08-08T07:30:49Z",
+      "requirementsSha256": "82fa3996fd9b8410f3873a255d39e2bcdfd3b180268cba2dfa67096fd31e95f4",
+      "sourceCommit": "cbf65872d8ce00c5e505192686402a0b0c3271a5",
+      "generatedAt": "2026-08-08T08:03:22Z",
       "counts": {
-        "checked": 48,
+        "checked": 51,
         "errors": 0,
         "warnings": 0
       },
       "notes": [
-        "Reviewed all 48 scenarios for product-first wording, one-trigger atomicity, actor and limitation coverage, lifecycle mapping, cross-cutting applicability, and decision completeness.",
+        "Reviewed all 51 scenarios for product-first wording, one-trigger atomicity, actor and limitation coverage, lifecycle mapping, cross-cutting applicability, and decision completeness.",
+        "Long-scan liveness is split into atomic interactive, JSON, and non-interactive scenarios, uses the existing Operator boundary, remains CLI-only by default, and is explicitly an interaction affordance rather than analytics or telemetry.",
         "CommonJS interop behavior is split into atomic move and exported-identifier rename scenarios, uses the existing Operator boundary, and adds no new lifecycle or cross-cutting category.",
         "Framework-dispatched entrypoint safety is explicit across built-in valid App Router locations, ordinary same-stem controls, caller-configured globs, human-readable advice, and structured CLI, MCP, and library results.",
         "CLI stream lifecycle behavior separates the expected closed-stdout alternative exit from unexpected stdout and stderr failures, while remaining outside MCP and library surfaces.",
-        "Reviewed the V1/P1 priority concentration: the 29 source-backed P1 scenarios represent important non-critical safety, reliability, and parity behavior, while the four launch-critical scenarios remain P0; retain the independently grounded priorities."
+        "The 29 source-backed V1/P1 scenarios now represent 56.9% of the V1 slice, below the priority-skew warning threshold, while the four launch-critical scenarios remain P0."
       ]
     },
     "implementation": {
       "status": "PASS",
-      "receiptId": "IMPL-20260808-006",
+      "receiptId": "IMPL-20260808-007",
       "validator": "bun-test-plus-clause-audit",
       "validatorVersion": "1.3.14+generate-requirements-2.0.0",
-      "command": "bun test src/core/scanner.test.ts src/commands/move.test.ts src/commands/rename.test.ts src/commands/alias.test.ts --timeout=20000 --parallel=4 && pnpm run check && pnpm run lint && pnpm run typecheck && pnpm run build:lib && pnpm run build && pnpm run verify:size",
-      "requirementsSha256": "da36f6e6a5256290a0743645489b64c7dacd25514f8b95c2a71b2b1d7b5db5d3",
-      "sourceCommit": "1cd467042bc09e1b4ed3db016817dd8efb3c2964",
-      "generatedAt": "2026-08-08T07:30:49Z",
+      "command": "bun test src/core/concurrency.test.ts src/core/graph.test.ts src/cli-logger.test.ts src/commands/audit.test.ts src/commands/unused.test.ts src/commands/tidy.test.ts --timeout=20000 --parallel=4 && bun test --timeout=20000 --parallel=4 && pnpm run check && pnpm run lint && pnpm run typecheck && pnpm run build:lib && pnpm run build && pnpm run verify:size",
+      "requirementsSha256": "82fa3996fd9b8410f3873a255d39e2bcdfd3b180268cba2dfa67096fd31e95f4",
+      "sourceCommit": "cbf65872d8ce00c5e505192686402a0b0c3271a5",
+      "generatedAt": "2026-08-08T08:03:22Z",
       "counts": {
-        "checked": 48,
+        "checked": 51,
         "errors": 0,
         "warnings": 0
       },
       "notes": [
-        "The CLI stream focus passed 13 tests with 0 failures and 32 assertions across 2 files, including human-readable and JSON closed-pipe subprocesses plus unexpected stdout and stderr failures.",
-        "The issue-focused scanner, move, rename, and alias suites passed 49 tests with 0 failures and 165 assertions across 4 files.",
-        "The enabled pre-commit hook passed 487 affected tests with 0 failures and 1808 assertions across 51 files, then passed the strict 0.95 similarity scan, compiled binary build, supported global install, and formatting gate.",
-        "Biome checks, ESLint, TypeScript, the library build, compiled binary build, and configured tarball-size preflight passed for source commit 1cd467042bc09e1b4ed3db016817dd8efb3c2964.",
+        "The issue-focused concurrency, graph, logger, audit, unused, and tidy suites passed 122 tests with 0 failures and 374 assertions across 6 files in 37.59 seconds.",
+        "The full suite passed 968 tests with 0 failures across 73 files in 63.11 seconds; a preceding transient failure passed in isolation before the clean full rerun.",
+        "The enabled pre-commit hook passed 769 affected tests with 0 failures and 2392 assertions across 60 files, then passed the strict 0.95 similarity scan, compiled binary build, supported global install, and formatting gate.",
+        "Biome checks, ESLint, TypeScript, the library build, compiled binary build, and configured tarball-size preflight passed for source commit cbf65872d8ce00c5e505192686402a0b0c3271a5.",
         "MOVE-001 through MOVE-003 map to src/commands/move.test.ts and src/commands/move.ts at source commit 52106e7.",
         "MOVE-004 and REN-001 map to src/core/scanner.test.ts, src/commands/move.test.ts, src/commands/rename.test.ts, src/commands/alias.test.ts, src/core/scanner.ts, src/core/updater.ts, src/commands/rename.ts, and src/commands/alias.ts at source commit 1cd4670.",
         "TIDY-001, TIDY-002, and ROLL-001 map to src/commands/tidy.test.ts, src/core/rollback.test.ts, src/commands/tidy.ts, and src/core/rollback.ts at source commit 52106e7.",
@@ -85,33 +86,34 @@
         "ANLY-001 and ANLY-002 map to src/core/generated-artifacts.ts, src/core/generated-artifacts.test.ts, src/commands/audit.test.ts, src/commands/naming.test.ts, src/commands/unused.test.ts, src/mcp-server.ts, and src/types/naming.ts at source commit dc4c1d4.",
         "ANLY-003 and ANLY-004 map to src/core/framework-conventions.ts, src/core/framework-conventions.test.ts, src/commands/analyze.test.ts, src/commands/unused.test.ts, src/mcp-entrypoints.test.ts, src/mcp-schema-parity.test.ts, src/mcp-server.ts, and src/index.ts at source commit 5cefe8c.",
         "BARL-001 and BARL-002 map to src/core/framework-conventions.ts, src/commands/barrel.ts, src/commands/barrel.test.ts, src/mcp-server.ts, and src/index.test.ts at source commit dc4c1d4.",
-        "CLI-001 and CLI-002 map to src/cli-stream-errors.ts, src/cli-stream-errors.test.ts, src/cli.ts, and src/cli.test.ts at source commit bd18769."
+        "CLI-001 and CLI-002 map to src/cli-stream-errors.ts, src/cli-stream-errors.test.ts, src/cli.ts, and src/cli.test.ts at source commit bd18769.",
+        "CLI-003 through CLI-005 map to src/core/concurrency.ts, src/core/graph.ts, src/cli-logger.ts, src/commands/audit.ts, src/commands/unused.ts, src/commands/tidy.ts, their focused tests, and the public option types at source commit cbf6587."
       ]
     }
   },
   "metrics": {
-    "totalScenarios": 48,
+    "totalScenarios": 51,
     "byDelivery": {
-      "V1": 48,
+      "V1": 51,
       "V2": 0,
       "LATER": 0,
       "UNSLICED": 0
     },
     "byDecision": {
-      "DECIDED": 48,
+      "DECIDED": 51,
       "OPEN": 0
     },
     "byPriority": {
       "P0": 4,
       "P1": 29,
-      "P2": 15,
+      "P2": 18,
       "P3": 0
     },
     "priorityByDelivery": {
       "V1": {
         "P0": 4,
         "P1": 29,
-        "P2": 15,
+        "P2": 18,
         "P3": 0
       },
       "V2": {
@@ -134,15 +136,15 @@
       }
     },
     "byFidelity": {
-      "VERIFIED": 48,
+      "VERIFIED": 51,
       "DRIFTED": 0,
       "MISSING": 0,
       "UNTESTABLE": 0
     },
     "coverage": {
       "v1Decided": {
-        "eligible": 48,
-        "verified": 48,
+        "eligible": 51,
+        "verified": 51,
         "percentage": 100
       },
       "v1LaunchCritical": {
@@ -184,20 +186,12 @@
     "fidelityNoteMismatchIds": [],
     "orphanAnchorIds": [],
     "preamble": {
-      "linesBeforeFirstScenario": 109,
-      "percentageBeforeFirstScenario": 19.6,
+      "linesBeforeFirstScenario": 110,
+      "percentageBeforeFirstScenario": 18.8,
       "warning": false,
       "disposition": null
     },
-    "prioritySkew": [
-      {
-        "delivery": "V1",
-        "tier": "P1",
-        "percentage": 60.4,
-        "warning": true,
-        "disposition": "Retain the independently grounded priorities: the 29 P1 scenarios are important non-critical safety, reliability, and parity behavior, while the four launch-critical scenarios remain P0."
-      }
-    ]
+    "prioritySkew": []
   },
   "regressions": [],
   "retiredScenarioIds": []
