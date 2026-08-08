@@ -1,5 +1,6 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
+import { isFrameworkConventionFile } from "../core/framework-conventions.ts";
 import { type DependencyGraph, withGraphSourceFile } from "../core/graph.ts";
 import { loadProject } from "../core/project.ts";
 import { findSubpathExportForFile, normalizePath } from "../core/resolver.ts";
@@ -105,7 +106,10 @@ export function buildBarrelReport(
 		barrels,
 		wildcardBarrels: barrels.filter((b) => b.wildcardCount > 0),
 		chainedBarrels: barrels.filter((b) => b.reExportsBarrels.length > 0),
-		unusedBarrels: barrels.filter((b) => b.consumers === 0),
+		unusedBarrels: barrels.filter(
+			(barrel) =>
+				barrel.consumers === 0 && !isFrameworkConventionFile(barrel.barrel)
+		),
 		subpathShadowing,
 	};
 }

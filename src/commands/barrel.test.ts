@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import path from "node:path";
 import type { BarrelScan } from "../types/barrel.ts";
-import { CLI, cleanup, makeFixture } from "./__test-helpers.ts";
+import { CLI, captureOutput, cleanup, makeFixture } from "./__test-helpers.ts";
 import {
 	type BarrelReportContext,
+	barrelCommand,
 	barrelReportToJson,
 	buildBarrelReport,
 } from "./barrel.ts";
@@ -114,6 +116,40 @@ describe("buildBarrelReport", () => {
 		]);
 	});
 
+	// @BDD: BARL-001-Verified
+	// @BDD: BARL-002-Verified
+	test("keeps framework metadata barrels observable without marking them unused", () => {
+		const frameworkBarrels = [
+			"/repo/app/twitter-image.tsx",
+			"/repo/app/blog/opengraph-image.tsx",
+			"/repo/src/app/sitemap.ts",
+		];
+		const ordinaryBarrels = [
+			"/repo/lib/twitter-image.tsx",
+			"/repo/packages/app/lib/twitter-image.tsx",
+		];
+		const scans: BarrelScan[] = [...frameworkBarrels, ...ordinaryBarrels].map(
+			(barrel) => ({
+				barrel,
+				entries: [{ type: "named", name: "value", from: "./source" }],
+				reExportedFiles: [path.join(path.dirname(barrel), "source.ts")],
+			})
+		);
+
+		const report = buildBarrelReport(
+			scans,
+			makeContext({ consumersOf: () => 0 })
+		);
+
+		expect(report.barrels.map(({ barrel }) => barrel)).toEqual([
+			...frameworkBarrels,
+			...ordinaryBarrels,
+		]);
+		expect(report.unusedBarrels.map(({ barrel }) => barrel)).toEqual(
+			ordinaryBarrels
+		);
+	});
+
 	test("reports sub-path export shadowing (#93) and dedupes per barrel+file", () => {
 		const scans: BarrelScan[] = [
 			{
@@ -193,6 +229,78 @@ describe("buildBarrelReport", () => {
 });
 
 describe("barrel command coverage", () => {
+	// @BDD: BARL-001-Verified
+	// @BDD: BARL-002-Verified
+	test("filters framework metadata barrels consistently in JSON and human output", async () => {
+		const dir = await makeFixture(
+			"barrel-framework-entrypoints",
+			{
+				"tsconfig.json": JSON.stringify({
+					compilerOptions: { jsx: "preserve", strict: true },
+					include: ["app/**/*", "lib/**/*"],
+				}),
+				"app/metadata-source.ts": [
+					'export const alt = "Example";',
+					"export const size = { width: 1200, height: 630 };",
+					'export const contentType = "image/png";',
+					"export default function Image() { return null; }",
+				].join("\n"),
+				"app/twitter-image.tsx":
+					'export { alt, contentType, default, size } from "./metadata-source";\n',
+				"app/blog/metadata-source.ts": "export const image = 1;\n",
+				"app/blog/opengraph-image.tsx":
+					'export { image } from "./metadata-source";\n',
+				"app/sitemap-source.ts": "export const sitemap = 1;\n",
+				"app/sitemap.ts": 'export { sitemap } from "./sitemap-source";\n',
+				"lib/metadata-source.ts": "export const ordinary = 1;\n",
+				"lib/twitter-image.tsx":
+					'export { ordinary } from "./metadata-source";\n',
+			},
+			{ outsideRepo: true }
+		);
+
+		try {
+			const jsonResult = await captureOutput(async () => {
+				await barrelCommand({ directory: dir, json: true });
+			});
+			const report = JSON.parse(jsonResult.stdout);
+			expect(
+				report.barrels.map(({ barrel }: { barrel: string }) => barrel)
+			).toEqual(
+				expect.arrayContaining([
+					"app/twitter-image.tsx",
+					"app/blog/opengraph-image.tsx",
+					"app/sitemap.ts",
+					"lib/twitter-image.tsx",
+				])
+			);
+			expect(
+				report.unusedBarrels.map(({ barrel }: { barrel: string }) => barrel)
+			).toEqual(["lib/twitter-image.tsx"]);
+
+			const humanResult = await captureOutput(async () => {
+				await barrelCommand({ directory: dir });
+			});
+			expect(humanResult.stdout).toContain("Unused barrels (1, no importers)");
+			expect(humanResult.stdout).toContain("lib/twitter-image.tsx");
+			expect(humanResult.stdout).not.toContain("app/twitter-image.tsx");
+			expect(humanResult.stdout).not.toContain("app/blog/opengraph-image.tsx");
+			expect(humanResult.stdout).not.toContain("app/sitemap.ts");
+		} finally {
+			await cleanup(dir);
+		}
+	});
+
+	test("MCP barrel analysis serializes the shared report", async () => {
+		const serverSource = await Bun.file(
+			path.resolve(import.meta.dir, "../mcp-server.ts")
+		).text();
+		expect(serverSource).toContain(
+			"const { report, baseDir } = await analyzeBarrels({"
+		);
+		expect(serverSource).toContain("barrelReportToJson(report, baseDir)");
+	});
+
 	test("surfaces skipped files in JSON and human output", async () => {
 		const dir = await makeFixture("barrel-skipped-file", {
 			"tsconfig.json": JSON.stringify({
