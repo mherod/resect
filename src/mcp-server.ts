@@ -90,6 +90,7 @@ import {
 } from "./commands/tidy.ts";
 import { executeUndo } from "./commands/undo.ts";
 import { findUnusedExports } from "./commands/unused.ts";
+import { createFrameworkGeneratedArtifactClassifier } from "./core/generated-artifacts.ts";
 import { isWorktreeDirty } from "./core/git.ts";
 import { buildDependencyGraph } from "./core/graph.ts";
 import {
@@ -418,14 +419,20 @@ async function auditTool(
 	}
 	const projectConfig = loadProject(tsconfigPath);
 	const graph = await buildDependencyGraph(projectConfig);
+	const frameworkClassifier = await createFrameworkGeneratedArtifactClassifier([
+		tsconfigPath,
+	]);
 	const thresholds = {
 		fanOutThreshold: options.fanOutThreshold ?? 10,
 		fanInThreshold: options.fanInThreshold ?? 10,
 		exportThreshold: options.exportThreshold ?? 8,
 	};
-	const report = buildAuditReport(graph, thresholds, [
-		{ graph, project: projectConfig },
-	]);
+	const report = buildAuditReport(
+		graph,
+		thresholds,
+		[{ graph, project: projectConfig }],
+		frameworkClassifier
+	);
 	return jsonText({
 		...auditReportToJson(report, absoluteDir),
 		thresholds,
@@ -488,6 +495,11 @@ async function unusedTool(
 			path.relative(absoluteDir, file)
 		),
 		coverageIncomplete: report.coverageIncomplete,
+		warnings: report.warnings,
+		excludedGeneratedFileCount: report.excludedGeneratedFileCount,
+		excludedGeneratedFiles: report.excludedGeneratedFiles.map((file) =>
+			path.relative(absoluteDir, file)
+		),
 		orphanFiles: report.orphanFiles.map((orphan) => ({
 			file: path.relative(absoluteDir, orphan.file),
 			exportNames: orphan.exportNames,

@@ -1,6 +1,11 @@
 import path from "node:path";
 import ts from "typescript";
 import { logger } from "../cli-logger.ts";
+import {
+	createFrameworkGeneratedArtifactClassifier,
+	excludeFrameworkGeneratedArtifacts,
+	generatedArtifactWarning,
+} from "../core/generated-artifacts.ts";
 import { filterGitignored } from "../core/git.ts";
 import type { DependencyGraph } from "../core/graph.ts";
 import {
@@ -95,6 +100,9 @@ export interface OrphanFile {
 
 export interface UnusedReport {
 	schemaVersion: typeof UNUSED_SCHEMA_VERSION;
+	warnings: string[];
+	excludedGeneratedFiles: string[];
+	excludedGeneratedFileCount: number;
 	unused: UnusedExport[];
 	orphanFiles: OrphanFile[];
 	totalExports: number;
@@ -142,6 +150,9 @@ export async function findUnusedExports(
 	if (!tsconfigPath) {
 		return {
 			schemaVersion: UNUSED_SCHEMA_VERSION,
+			warnings: [],
+			excludedGeneratedFiles: [],
+			excludedGeneratedFileCount: 0,
 			unused: [],
 			orphanFiles: [],
 			totalExports: 0,
@@ -189,14 +200,30 @@ export async function findUnusedExportsFromGraphs(
 	options?: { ignore?: string; entrypointGlobs?: string | string[] }
 ): Promise<UnusedReport> {
 	const absoluteDir = path.resolve(directory);
-
+	const frameworkClassifier = await createFrameworkGeneratedArtifactClassifier(
+		graphs.map(({ tsconfigPath }) => tsconfigPath)
+	);
+	const excludedGeneratedFiles = new Set<string>();
+	const filteredGraphs = graphs.map((result) => {
+		const filtered = excludeFrameworkGeneratedArtifacts(
+			result.graph,
+			frameworkClassifier
+		);
+		for (const artifact of filtered.excludedGeneratedFiles) {
+			excludedGeneratedFiles.add(artifact.file);
+		}
+		return { ...result, graph: filtered.graph };
+	});
 	const graph =
-		graphs.length > 1
-			? mergeDependencyGraphs(graphs.map((result) => result.graph))
-			: graphs[0]?.graph;
+		filteredGraphs.length > 1
+			? mergeDependencyGraphs(filteredGraphs.map((result) => result.graph))
+			: filteredGraphs[0]?.graph;
 	if (!graph) {
 		return {
 			schemaVersion: UNUSED_SCHEMA_VERSION,
+			warnings: [],
+			excludedGeneratedFiles: [],
+			excludedGeneratedFileCount: 0,
 			unused: [],
 			orphanFiles: [],
 			totalExports: 0,
@@ -215,9 +242,15 @@ export async function findUnusedExportsFromGraphs(
 	const importedBindings = new Map<string, Set<string>>();
 	const scannedConfigs: string[] = [];
 
-	for (const { tsconfigPath: configPath, graph } of graphs) {
+	for (const {
+		tsconfigPath: configPath,
+		graph: projectGraph,
+	} of filteredGraphs) {
 		scannedConfigs.push(configPath);
-		mergeImportedBindings(importedBindings, buildImportedBindingsMap(graph));
+		mergeImportedBindings(
+			importedBindings,
+			buildImportedBindingsMap(projectGraph)
+		);
 	}
 
 	// Candidate files: those under the target directory, across all configs.
@@ -324,6 +357,12 @@ export async function findUnusedExportsFromGraphs(
 
 	return {
 		schemaVersion: UNUSED_SCHEMA_VERSION,
+		warnings:
+			excludedGeneratedFiles.size > 0
+				? [generatedArtifactWarning(excludedGeneratedFiles.size)]
+				: [],
+		excludedGeneratedFiles: [...excludedGeneratedFiles].sort(),
+		excludedGeneratedFileCount: excludedGeneratedFiles.size,
 		unused,
 		orphanFiles,
 		totalExports,
@@ -869,6 +908,18 @@ export async function unusedCommand(options: UnusedOptions): Promise<void> {
 	logger.info(
 		`📊 Scanned ${report.totalExports} export(s) across ${report.totalFiles} file(s)\n`
 	);
+
+	if (report.excludedGeneratedFileCount > 0) {
+		logger.warn(
+			`⚠️  ${generatedArtifactWarning(report.excludedGeneratedFileCount)}`
+		);
+		if (verbose) {
+			for (const file of report.excludedGeneratedFiles) {
+				logger.warn(`   ${path.relative(absoluteDir, file)}`);
+			}
+		}
+		logger.empty();
+	}
 
 	if (report.coverageIncomplete) {
 		logger.warn(

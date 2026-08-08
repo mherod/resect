@@ -269,6 +269,69 @@ describe("buildAuditReport", () => {
 });
 
 describe("audit command coverage", () => {
+	// @BDD: ANLY-001-Verified
+	// @BDD: ANLY-002-Verified
+	test("excludes Next-generated declarations and reports the shared warning", async () => {
+		const dir = await makeFixture("audit-next-generated", {
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: { strict: true },
+				include: [
+					"app/**/*.tsx",
+					"types/**/*.d.ts",
+					".next/types/**/*.ts",
+					".next/dev/types/**/*.ts",
+				],
+			}),
+			"app/page.tsx": "export const pageValue = 1;\n",
+			"types/authored.d.ts": "export interface AuthoredValue { id: string }\n",
+			".next/types/cache-life.d.ts":
+				"export declare const generatedCache: string;\n",
+			".next/dev/types/route-metadata.d.ts":
+				"export declare const generatedRoute: string;\n",
+		});
+
+		try {
+			const jsonProc = Bun.spawn(
+				[...CLI, "audit", dir, "--json", "--export-threshold", "0"],
+				{ stdout: "pipe", stderr: "pipe" }
+			);
+			const [stdout, stderr] = await Promise.all([
+				new Response(jsonProc.stdout).text(),
+				new Response(jsonProc.stderr).text(),
+			]);
+			await jsonProc.exited;
+			expect(jsonProc.exitCode, stderr).toBe(0);
+			const report = JSON.parse(stdout);
+			expect(report.excludedGeneratedFileCount).toBe(2);
+			expect(
+				report.excludedGeneratedFiles.map(({ file }: { file: string }) => file)
+			).toEqual([
+				".next/dev/types/route-metadata.d.ts",
+				".next/types/cache-life.d.ts",
+			]);
+			expect(report.warnings).toContain(
+				"Excluded 2 framework-generated TypeScript file(s) from analysis."
+			);
+			expect(report.largeExportSurface).toContainEqual(
+				expect.objectContaining({ file: "types/authored.d.ts" })
+			);
+
+			const humanProc = Bun.spawn([...CLI, "audit", dir], {
+				stdout: "pipe",
+				stderr: "pipe",
+			});
+			await new Response(humanProc.stdout).text();
+			const humanStderr = await new Response(humanProc.stderr).text();
+			await humanProc.exited;
+			expect(humanProc.exitCode).toBe(0);
+			expect(humanStderr).toContain(
+				"Excluded 2 framework-generated TypeScript file(s) from analysis."
+			);
+		} finally {
+			await cleanup(dir);
+		}
+	});
+
 	test("excludes imported outDir declarations while retaining authored declarations", async () => {
 		const dir = await makeFixture("audit-generated-output", {
 			"package.json": JSON.stringify({
