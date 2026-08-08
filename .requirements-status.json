@@ -2,9 +2,9 @@
   "schemaVersion": 2,
   "projectId": "mherod/resect",
   "requirementsFile": "REQUIREMENTS.md",
-  "requirementsSha256": "dd3646b9336e134396b9929e3832f2df844ad4852f251c8b34473135c080844d",
-  "sourceCommit": "10a2b3b74d778315a945393430b56139188318d5",
-  "generatedAt": "2026-08-07T16:28:47Z",
+  "requirementsSha256": "9ff9714fcd91145e28fa241edb60e8155ee8a022b01bb2d5c7c230c69f542cad",
+  "sourceCommit": "7016141450ba0d916a00c088e76e6955422d10b7",
+  "generatedAt": "2026-08-08T04:17:43Z",
   "validator": {
     "name": "generate-requirements",
     "version": "2.0.0",
@@ -13,15 +13,15 @@
   "validation": {
     "structure": {
       "status": "PASS",
-      "receiptId": "STRUCT-20260807-001",
+      "receiptId": "STRUCT-20260808-001",
       "validator": "validate-bdd",
       "validatorVersion": "2.0.0",
       "command": "bun $HOME/.agents/skills/generate-requirements/scripts/validate-bdd.js REQUIREMENTS.md --status-log .requirements-status.json",
-      "requirementsSha256": "dd3646b9336e134396b9929e3832f2df844ad4852f251c8b34473135c080844d",
-      "sourceCommit": "10a2b3b74d778315a945393430b56139188318d5",
-      "generatedAt": "2026-08-07T16:11:07Z",
+      "requirementsSha256": "9ff9714fcd91145e28fa241edb60e8155ee8a022b01bb2d5c7c230c69f542cad",
+      "sourceCommit": "7016141450ba0d916a00c088e76e6955422d10b7",
+      "generatedAt": "2026-08-08T04:17:43Z",
       "counts": {
-        "checked": 36,
+        "checked": 38,
         "errors": 0,
         "warnings": 0
       },
@@ -31,41 +31,41 @@
     },
     "documentQuality": {
       "status": "PASS",
-      "receiptId": "QUALITY-20260807-001",
+      "receiptId": "QUALITY-20260808-001",
       "validator": "generate-requirements-manual-review",
       "validatorVersion": "2.0.0",
       "command": "generate-requirements 2.0 manual review of REQUIREMENTS.md",
-      "requirementsSha256": "dd3646b9336e134396b9929e3832f2df844ad4852f251c8b34473135c080844d",
-      "sourceCommit": "10a2b3b74d778315a945393430b56139188318d5",
-      "generatedAt": "2026-08-07T16:11:07Z",
+      "requirementsSha256": "9ff9714fcd91145e28fa241edb60e8155ee8a022b01bb2d5c7c230c69f542cad",
+      "sourceCommit": "7016141450ba0d916a00c088e76e6955422d10b7",
+      "generatedAt": "2026-08-08T04:17:43Z",
       "counts": {
-        "checked": 36,
+        "checked": 38,
         "errors": 0,
         "warnings": 0
       },
       "notes": [
-        "Reviewed all 36 scenarios for product-first wording, one-trigger atomicity, actor and limitation coverage, lifecycle mapping, cross-cutting applicability, and decision completeness.",
-        "Journal retention, guarded undo, user-initiated reversibility, and public-surface parity are explicit; no preamble or priority-skew warning was computed."
+        "Reviewed all 38 scenarios for product-first wording, one-trigger atomicity, actor and limitation coverage, lifecycle mapping, cross-cutting applicability, and decision completeness.",
+        "Framework-generated exclusions are explicit across the shared analysis actor group, default and configured Next output boundaries, human and machine-readable results, and authored declaration preservation; no preamble or priority-skew warning was computed."
       ]
     },
     "implementation": {
       "status": "PASS",
-      "receiptId": "IMPL-20260807-001",
+      "receiptId": "IMPL-20260808-001",
       "validator": "bun-test-plus-clause-audit",
       "validatorVersion": "1.3.14+generate-requirements-2.0.0",
-      "command": "bun test src/core/journal.test.ts src/core/git.test.ts src/commands/undo.test.ts src/commands/journal-integration.test.ts src/commands/option-flags.test.ts src/commands/command-spec.test.ts src/mcp-schema-parity.test.ts --timeout=20000 --parallel=4 && ./node_modules/.bin/biome check --no-errors-on-unmatched . && ./node_modules/.bin/eslint src --max-warnings 0 && bun x tsc --noEmit",
-      "requirementsSha256": "dd3646b9336e134396b9929e3832f2df844ad4852f251c8b34473135c080844d",
-      "sourceCommit": "10a2b3b74d778315a945393430b56139188318d5",
-      "generatedAt": "2026-08-07T16:28:47Z",
+      "command": "bun test src/core/generated-artifacts.test.ts src/commands/audit.test.ts src/commands/naming.test.ts src/commands/unused.test.ts src/mcp-schema-parity.test.ts src/index.test.ts --timeout=20000 --parallel=4 && bun test --timeout=20000 --parallel=4 && pnpm run check && pnpm run lint && pnpm run typecheck && pnpm run build:lib && pnpm run verify:size",
+      "requirementsSha256": "9ff9714fcd91145e28fa241edb60e8155ee8a022b01bb2d5c7c230c69f542cad",
+      "sourceCommit": "7016141450ba0d916a00c088e76e6955422d10b7",
+      "generatedAt": "2026-08-08T04:17:43Z",
       "counts": {
-        "checked": 36,
+        "checked": 38,
         "errors": 0,
-        "warnings": 1
+        "warnings": 0
       },
       "notes": [
-        "The journal, undo, CLI integration, command roster, option flag, Git guard, and MCP parity focus passed 67 tests with 0 failures and 424 assertions; Biome, ESLint, and TypeScript checks also passed against the audited worktree.",
-        "The complete bare Bun suite passed 914 tests with 0 failures and 2483 assertions across 67 files after making subprocess access to the local tsc binary explicit and correcting extension removal for resolved paths whose parent directories contain dots.",
-        "The exact pnpm scripts and configured tarball-size preflight could not run because Corepack timed out against the configured internal registry; installed local check equivalents were used without changing registry policy.",
+        "The generated-artifact, audit, naming, unused, MCP parity, and library focus passed 115 tests with 0 failures and 390 assertions across 6 files.",
+        "The complete Bun suite passed 933 tests with 0 failures and 2594 assertions across 69 files; the guarded commit additionally passed 702 affected tests with 0 failures and 2214 assertions across 55 files.",
+        "Biome checks, ESLint, TypeScript, the library build, the compiled binary hook build, the strict 0.95 similarity scan, and the configured tarball-size preflight passed against source commit 7016141.",
         "MOVE-001 through MOVE-003 map to src/commands/move.test.ts and src/commands/move.ts at source commit 52106e7.",
         "TIDY-001, TIDY-002, and ROLL-001 map to src/commands/tidy.test.ts, src/core/rollback.test.ts, src/commands/tidy.ts, and src/core/rollback.ts at source commit 52106e7.",
         "CFG-001 through CFG-006 map to src/core/project-config.test.ts, src/commands/config-defaults.test.ts, src/commands/discover.test.ts, and their corresponding implementation files at source commit 52106e7.",
@@ -76,32 +76,33 @@
         "AUDIT-001 through AUDIT-004 map to src/commands/audit.test.ts, src/commands/audit.ts, and src/mcp-server.ts at source commit 52106e7.",
         "NAM-001 through NAM-003 map to src/commands/naming.test.ts, src/commands/naming.ts, src/commands/registry.ts, src/mcp-server.ts, src/types/naming.ts, and src/index.test.ts; 50 focused tests passed with 0 failures and 154 assertions.",
         "JOUR-001 and JOUR-002 map to src/core/journal.ts, src/core/journal.test.ts, src/commands/journal-integration.test.ts, the move, rename, alias, tidy, MCP, registry, and library surfaces.",
-        "UNDO-001 through UNDO-005 map to src/core/journal.ts, src/core/journal.test.ts, src/commands/undo.ts, src/commands/undo.test.ts, src/commands/journal-integration.test.ts, src/commands/registry.ts, src/mcp-server.ts, and src/index.ts."
+        "UNDO-001 through UNDO-005 map to src/core/journal.ts, src/core/journal.test.ts, src/commands/undo.ts, src/commands/undo.test.ts, src/commands/journal-integration.test.ts, src/commands/registry.ts, src/mcp-server.ts, and src/index.ts.",
+        "ANLY-001 and ANLY-002 map to src/core/generated-artifacts.ts, src/core/generated-artifacts.test.ts, src/commands/audit.test.ts, src/commands/naming.test.ts, src/commands/unused.test.ts, src/mcp-server.ts, and src/types/naming.ts at source commit 7016141."
       ]
     }
   },
   "metrics": {
-    "totalScenarios": 36,
+    "totalScenarios": 38,
     "byDelivery": {
-      "V1": 36,
+      "V1": 38,
       "V2": 0,
       "LATER": 0,
       "UNSLICED": 0
     },
     "byDecision": {
-      "DECIDED": 36,
+      "DECIDED": 38,
       "OPEN": 0
     },
     "byPriority": {
       "P0": 4,
-      "P1": 20,
+      "P1": 22,
       "P2": 12,
       "P3": 0
     },
     "priorityByDelivery": {
       "V1": {
         "P0": 4,
-        "P1": 20,
+        "P1": 22,
         "P2": 12,
         "P3": 0
       },
@@ -125,15 +126,15 @@
       }
     },
     "byFidelity": {
-      "VERIFIED": 36,
+      "VERIFIED": 38,
       "DRIFTED": 0,
       "MISSING": 0,
       "UNTESTABLE": 0
     },
     "coverage": {
       "v1Decided": {
-        "eligible": 36,
-        "verified": 36,
+        "eligible": 38,
+        "verified": 38,
         "percentage": 100
       },
       "v1LaunchCritical": {
@@ -175,8 +176,8 @@
     "fidelityNoteMismatchIds": [],
     "orphanAnchorIds": [],
     "preamble": {
-      "linesBeforeFirstScenario": 102,
-      "percentageBeforeFirstScenario": 23.3,
+      "linesBeforeFirstScenario": 104,
+      "percentageBeforeFirstScenario": 22.6,
       "warning": false,
       "disposition": null
     },
