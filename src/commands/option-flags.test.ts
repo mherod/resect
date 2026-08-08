@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { parseArgs } from "node:util";
 import type { CliValues } from "./option-flags.ts";
 import {
+	findUnsupportedOptions,
 	OPTION_FLAGS,
 	PARSE_ARGS_OPTIONS,
 	preprocessArgs,
@@ -350,5 +351,32 @@ describe("preprocessArgs (#173)", () => {
 			"--",
 			"-n=false",
 		]);
+	});
+});
+
+describe("command option validation (#191)", () => {
+	test("accepts supported long, canonicalized short, and repeatable values", () => {
+		const { values } = parseArgs({
+			args: [
+				"-p",
+				"tsconfig.json",
+				"--rename-specifier=a=b",
+				"--rename-specifier=c=d",
+			],
+			options: PARSE_ARGS_OPTIONS,
+		});
+
+		expect(
+			findUnsupportedOptions(values as CliValues, [
+				"project",
+				"rename-specifier",
+			])
+		).toEqual([]);
+	});
+
+	test("reports every unsupported canonical option name", () => {
+		expect(
+			findUnsupportedOptions({ force: true, out: "report.json" }, ["verbose"])
+		).toEqual(["force", "out"]);
 	});
 });

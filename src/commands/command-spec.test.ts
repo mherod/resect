@@ -5,6 +5,7 @@ import {
 	commandSpec,
 	formatCommandList,
 } from "./command-spec.ts";
+import { OPTION_FLAGS } from "./option-flags.ts";
 import { COMMANDS } from "./registry.ts";
 
 /**
@@ -106,6 +107,37 @@ describe("command prose derivation", () => {
 		// Every command's tool references mcpDescription("<name>").
 		for (const { name } of COMMAND_SPECS) {
 			expect(source).toContain(`description: mcpDescription("${name}")`);
+		}
+	});
+});
+
+describe("command option capabilities (#191)", () => {
+	test("every parsed command option is supported by at least one command", () => {
+		const globalOptions = new Set(["help", "version"]);
+		const parsedCommandOptions = new Set(
+			Object.keys(OPTION_FLAGS).filter((option) => !globalOptions.has(option))
+		);
+		const supportedOptions = new Set<string>(
+			COMMANDS.flatMap((command) => [...command.options])
+		);
+
+		expect(supportedOptions).toEqual(parsedCommandOptions);
+	});
+
+	test("each command documents exactly its supported options", () => {
+		for (const command of COMMANDS) {
+			const documentedOptions = new Set<string>();
+			for (const match of command.helpText.matchAll(
+				/^\s+(?:-[a-z],\s+)?--([a-z][a-z-]*)/gm
+			)) {
+				const option = match[1];
+				if (option) {
+					documentedOptions.add(option);
+				}
+			}
+
+			expect(new Set<string>(command.options)).toEqual(documentedOptions);
+			expect(new Set(command.options).size).toBe(command.options.length);
 		}
 	});
 });

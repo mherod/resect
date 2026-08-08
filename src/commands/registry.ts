@@ -22,7 +22,7 @@ import {
 	isInDomain,
 	PREFER_STRATEGIES,
 } from "./option-domains.ts";
-import type { CliValues } from "./option-flags.ts";
+import type { CliValues, OptionName } from "./option-flags.ts";
 
 export type { CliValues } from "./option-flags.ts";
 
@@ -49,6 +49,7 @@ function requireArg(
 interface CommandDef {
 	name: string;
 	helpText: string;
+	options: readonly OptionName[];
 	run: (args: string[], values: CliValues) => Promise<void> | void;
 }
 
@@ -56,6 +57,20 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "move",
 		helpText: cliHelp("move"),
+		options: [
+			"batch",
+			"dry-run",
+			"force",
+			"journal",
+			"json",
+			"verbose",
+			"verify",
+			"no-verify",
+			"project",
+			"workspace",
+			"transform",
+			"prefer",
+		],
 		run: async ([source, target], values) => {
 			if (values.batch && (source || target)) {
 				logger.error(
@@ -114,6 +129,17 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "rename",
 		helpText: cliHelp("rename"),
+		options: [
+			"dry-run",
+			"force",
+			"journal",
+			"json",
+			"verbose",
+			"project",
+			"workspace",
+			"verify",
+			"no-verify",
+		],
 		run: async ([file, oldName, newName], values) => {
 			if (!(file && oldName && newName)) {
 				logger.error(
@@ -141,6 +167,7 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "undo",
 		helpText: cliHelp("undo"),
+		options: ["dry-run", "force", "json", "project", "verify", "no-verify"],
 		run: async ([id], values) => {
 			await undoCommand({
 				id,
@@ -156,6 +183,7 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "analyze",
 		helpText: cliHelp("analyze"),
+		options: ["verbose", "project", "workspace", "only-related-to"],
 		run: async ([file], values) => {
 			requireArg("analyze", "<file>", file);
 			await analyzeCommand({
@@ -171,6 +199,7 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "analyze-impact",
 		helpText: cliHelp("analyze-impact"),
+		options: ["verbose", "project", "workspace"],
 		run: async ([source, target], values) => {
 			requireArg("analyze-impact", "<source>", source);
 			requireArg("analyze-impact", "<target>", target);
@@ -187,6 +216,7 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "affected",
 		helpText: cliHelp("affected"),
+		options: ["verbose", "project", "workspace", "json"],
 		run: async (files, values) => {
 			if (files.length === 0) {
 				logger.error("Error: affected requires at least one <file> argument");
@@ -206,6 +236,7 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "discover",
 		helpText: cliHelp("discover"),
+		options: ["verbose", "workspace", "only-related-to"],
 		run: async ([directory], values) => {
 			requireArg("discover", "<directory>", directory);
 			await discoverCommand({
@@ -220,6 +251,7 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "workspace",
 		helpText: cliHelp("workspace"),
+		options: ["verbose", "json"],
 		run: async ([directory], values) => {
 			requireArg("workspace", "<directory>", directory);
 			await workspaceCommand({
@@ -233,6 +265,7 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "deps",
 		helpText: cliHelp("deps"),
+		options: ["fix", "dry-run", "force", "strict", "json"],
 		run: async ([directory], values) => {
 			requireArg("deps", "<directory>", directory);
 			await depsCommand({
@@ -249,6 +282,7 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "find",
 		helpText: cliHelp("find"),
+		options: ["project", "type", "verbose", "workspace", "only-related-to"],
 		run: async ([query], values) => {
 			requireArg("find", "<query>", query);
 			if (!values.project) {
@@ -275,6 +309,19 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "alias",
 		helpText: cliHelp("alias"),
+		options: [
+			"prefer",
+			"rename-specifier",
+			"dry-run",
+			"force",
+			"journal",
+			"json",
+			"verbose",
+			"verify",
+			"no-verify",
+			"project",
+			"workspace",
+		],
 		run: async ([target], values) => {
 			requireArg("alias", "<target>", target);
 			const renameSpecifiers = values["rename-specifier"] ?? [];
@@ -309,6 +356,24 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "similar",
 		helpText: cliHelp("similar"),
+		options: [
+			"project",
+			"json",
+			"threshold",
+			"max-groups",
+			"strict",
+			"workspace",
+			"name-threshold",
+			"same-name-only",
+			"skip-same-file",
+			"only-related-to",
+			"min-lines",
+			"skip-directives",
+			"skip-wrappers",
+			"kinds",
+			"bucket",
+			"format",
+		],
 		run: async ([directory], values) => {
 			requireArg("similar", "<directory>", directory);
 			const rawThreshold = values.threshold;
@@ -385,6 +450,24 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "extract-common",
 		helpText: cliHelp("extract-common"),
+		options: [
+			"project",
+			"threshold",
+			"dry-run",
+			"force",
+			"json",
+			"strict",
+			"group",
+			"workspace",
+			"output",
+			"skip-same-file",
+			"only-related-to",
+			"min-lines",
+			"skip-directives",
+			"name-threshold",
+			"same-name-only",
+			"skip-wrappers",
+		],
 		run: async ([directory], values) => {
 			requireArg("extract-common", "<directory>", directory);
 			const rawThreshold = values.threshold;
@@ -423,6 +506,7 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "extract-component",
 		helpText: cliHelp("extract-component"),
+		options: ["json", "dry-run", "force", "verbose", "project"],
 		run: async ([file, selector, newFile], values) => {
 			if (!(file && selector && newFile)) {
 				logger.error(
@@ -447,6 +531,16 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "test-relocation",
 		helpText: cliHelp("test-relocation"),
+		options: [
+			"project",
+			"workspace",
+			"verbose",
+			"json",
+			"fix",
+			"dry-run",
+			"force",
+			"convention-threshold",
+		],
 		run: async ([directory], values) => {
 			requireArg("test-relocation", "<directory>", directory);
 			const rawConventionThreshold = values["convention-threshold"];
@@ -494,6 +588,15 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "mock-cleanup",
 		helpText: cliHelp("mock-cleanup"),
+		options: [
+			"project",
+			"json",
+			"fix",
+			"dry-run",
+			"force",
+			"verify",
+			"no-verify",
+		],
 		run: async ([directory], values) => {
 			requireArg("mock-cleanup", "<directory>", directory);
 			try {
@@ -516,6 +619,19 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "naming",
 		helpText: cliHelp("naming"),
+		options: [
+			"project",
+			"workspace",
+			"verbose",
+			"json",
+			"fix",
+			"force",
+			"dry-run",
+			"min-siblings",
+			"majority-threshold",
+			"case",
+			"include-tests",
+		],
 		run: async ([directory], values) => {
 			requireArg("naming", "<directory>", directory);
 			const rawMinSiblings = values["min-siblings"];
@@ -579,6 +695,7 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "organise",
 		helpText: cliHelp("organise"),
+		options: ["project", "json", "verbose", "ignore"],
 		run: async ([directory], values) => {
 			requireArg("organise", "<directory>", directory);
 			try {
@@ -599,6 +716,25 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "tidy",
 		helpText: cliHelp("tidy"),
+		options: [
+			"project",
+			"json",
+			"workspace",
+			"verbose",
+			"experimental",
+			"scope",
+			"out",
+			"fix",
+			"dry-run",
+			"fix-category",
+			"alias-prefer",
+			"force",
+			"journal",
+			"max-changes",
+			"fan-out-threshold",
+			"fan-in-threshold",
+			"export-threshold",
+		],
 		run: async ([directory], values) => {
 			requireArg("tidy", "<directory>", directory);
 			try {
@@ -662,6 +798,14 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "audit",
 		helpText: cliHelp("audit"),
+		options: [
+			"project",
+			"json",
+			"workspace",
+			"fan-out-threshold",
+			"fan-in-threshold",
+			"export-threshold",
+		],
 		run: async ([directory], values) => {
 			requireArg("audit", "<directory>", directory);
 			await auditCommand({
@@ -685,6 +829,14 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "unused",
 		helpText: cliHelp("unused"),
+		options: [
+			"project",
+			"json",
+			"verbose",
+			"ignore",
+			"workspace",
+			"entrypoint-globs",
+		],
 		run: async ([directory], values) => {
 			requireArg("unused", "<directory>", directory);
 			const { unusedCommand: cmd } = await import("./unused.ts");
@@ -703,6 +855,7 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "barrel",
 		helpText: cliHelp("barrel"),
+		options: ["project", "json", "workspace", "verbose"],
 		run: async ([directory], values) => {
 			requireArg("barrel", "<directory>", directory);
 			try {
@@ -723,6 +876,15 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "inline",
 		helpText: cliHelp("inline"),
+		options: [
+			"dry-run",
+			"force",
+			"verbose",
+			"verify",
+			"no-verify",
+			"project",
+			"json",
+		],
 		run: async ([barrelFile], values) => {
 			requireArg("inline", "<barrel-file>", barrelFile);
 			await inlineCommand({

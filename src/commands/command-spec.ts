@@ -116,6 +116,7 @@ Arguments:
 
 Options:
   --verbose          Show detailed reference information
+  -p, --project      Path to project directory or tsconfig.json
   --workspace        Scan across all workspace packages
   --only-related-to  Filter referencedBy results to a file, folder, or glob pattern
 
@@ -147,7 +148,9 @@ Arguments:
   target    Proposed destination path
 
 Options:
-  --verbose    Show resolved source/target paths
+  -p, --project   Path to project directory or tsconfig.json
+  --workspace     Scan across all workspace packages
+  --verbose       Show resolved source/target paths
 
 Output includes:
   • Impacted files (direct + indirect importers)
@@ -304,6 +307,7 @@ Options:
   --json          Emit structured edits as JSON (use with --dry-run)
   --force         Allow operation when git worktree has uncommitted changes
   --journal       Record the applied operation for a later resect undo
+  --verify        Enable type checking verification, overriding project config
   --no-verify     Disable type checking verification (enabled by default)
   --verbose       Show detailed changes
   --workspace     Scan across all workspace packages
@@ -342,10 +346,12 @@ Arguments:
   target    Destination path for the file
 
 Options:
+  -p, --project     Path to project directory or tsconfig.json
   -n, --dry-run     Preview changes without modifying files
   --json            Emit structured edits as JSON (use with --dry-run)
   --force           Allow operation when git worktree has uncommitted changes
   --journal         Record the applied operation for a later resect undo
+  --verify          Enable type checking verification, overriding project config
   --no-verify       Disable type checking verification (enabled by default)
   --verbose         Show detailed information about each change
   --workspace       Scan across all workspace packages
@@ -394,12 +400,14 @@ Arguments:
   newName    New name for the export
 
 Options:
+  -p, --project   Path to project directory or tsconfig.json
   -n, --dry-run   Preview changes without modifying files
   --json          Emit structured edits as JSON (use with --dry-run)
   --force         Allow operation when git worktree has uncommitted changes
   --journal       Record the applied operation for a later resect undo
   --verbose       Show detailed information about each change
   --workspace     Scan across all workspace packages
+  --verify        Enable type checking verification, overriding project config
   --no-verify     Disable type checking verification (enabled by default)
 
 Features:
@@ -437,6 +445,7 @@ Options:
   -n, --dry-run   Preview the files that would be restored
   --force         Override unrelated or diverged-work safeguards
   --json          Output the structured undo result
+  --verify        Enable type checking verification, overriding project config
   --no-verify     Skip the post-undo typecheck
 
 Examples:
@@ -472,6 +481,7 @@ Options:
   --only-related-to Only show groups related to a file or folder (path or glob)
   --min-lines       Exclude declarations with fewer body lines (filters thin wrappers)
   --skip-directives Skip functions containing compile-time directives
+  --skip-wrappers   Skip thin wrapper functions (single return + call expression)
   --kinds           Comma-separated list of declaration kinds to include:
                     function, type, interface (default: all)
   --bucket          Filter groups by similarity bucket: exact, high, or medium
@@ -532,6 +542,7 @@ Options:
   --only-related-to  Only process groups related to a file or folder (path or glob)
   --min-lines        Exclude functions with fewer body lines (filters thin wrappers)
   --skip-directives  Skip functions containing compile-time directives
+  --skip-wrappers    Skip thin wrapper functions (single return + call expression)
   --name-threshold   Name similarity threshold 0.0–1.0 for filtering groups by function name
   --same-name-only   Only group functions with identical names
   --workspace        Scan across all workspace packages
@@ -580,6 +591,7 @@ Options:
   -n, --dry-run   Preview the locate + classify + codegen report; write nothing
   --force         Override the dirty-worktree guard and call-site conflict check
   --json          Output the result/report as JSON
+  --verbose       Show detailed information about each change
   -p, --project   Path to project directory or tsconfig.json
 
 Examples:
@@ -640,6 +652,7 @@ Options:
   -p, --project   Path to project directory or tsconfig.json
   --json          Output results as JSON
   --workspace     Scan across all workspace packages
+  --verbose       Show detailed output
 
 Findings:
   Sub-path export shadowing — files reachable through a barrel that ALSO have a
@@ -674,6 +687,7 @@ Arguments:
 Options:
   -n, --dry-run   Preview changes without modifying files
   --force         Allow operation when git worktree has uncommitted changes
+  --verify        Enable type checking verification, overriding project config
   --no-verify     Disable type checking verification (enabled by default)
   --verbose       Show detailed information about each change
   --json          Output results as JSON
@@ -745,10 +759,12 @@ Arguments:
   directory    Path to the project directory to scan
 
 Options:
+  -p, --project Path to project directory or tsconfig.json
   --json        Output results as JSON
   --fix         Remove orphan factory keys and run type checking
   -n, --dry-run Preview even when --fix is set
   --force       Allow --fix when the git worktree is dirty
+  --verify      Enable type checking verification, overriding project config
   --no-verify   Skip type checking verification (not recommended)
 
 Examples:
@@ -772,6 +788,9 @@ Arguments:
   directory    Path to the project directory to scan
 
 Options:
+  -p, --project              Path to project directory or tsconfig.json
+  --workspace                Scan across all workspace packages
+  --verbose                  Show detailed information about each change
   --json                    Output results as JSON
   --fix                     Move tests via the existing move pipeline
   -n, --dry-run             Preview even when --fix is set
@@ -799,6 +818,8 @@ Arguments:
   directory    Path to the project directory to scan
 
 Options:
+  -p, --project          Path to project directory or tsconfig.json
+  --verbose              Show detailed information about each change
   --json                  Output results as JSON
   --workspace             Scan across workspace packages
   --min-siblings          Minimum files in a directory before auditing (default: 3)
@@ -835,6 +856,7 @@ Arguments:
   directory    Path to the project directory to scan
 
 Options:
+  -p, --project Path to project directory or tsconfig.json
   --json        Output results as JSON
   --ignore      Glob pattern to exclude files (e.g. "*.generated.ts")
   --verbose     Show detailed output
@@ -866,6 +888,7 @@ Arguments:
   directory    Path to the project directory to scan
 
 Options:
+  -p, --project          Path to project directory or tsconfig.json
   --experimental         Required in 1.x to opt into the unstable tidy schema
   --json                 Output results as JSON
   --scope                Only show findings whose source file is under this path
@@ -873,12 +896,16 @@ Options:
   --workspace            Scan across all workspace packages where supported
   --fix                  Apply safe fixes (dead-exports, alias-normalisation)
   --fix=<categories>     Apply comma-separated tidy fix categories
+  --fix-category=<name>  Apply one tidy fix category (repeatable)
   -n, --dry-run         Plan selected fixes and emit their diffs without writing
   --alias-prefer=<s>     Alias-normalisation strategy: alias, relative, or shortest
   --max-changes          Abort --fix when planned changes exceed this limit (default: 50)
   --force                Allow --fix when the git worktree is dirty
   --journal              Record the applied fix batch for a later resect undo
   --verbose              Show extra operational messages
+  --fan-out-threshold    Flag files with more than N imports
+  --fan-in-threshold     Flag files with more than N consumers
+  --export-threshold     Flag files with more than N exports
 
 Examples:
   ${CLI_NAME} tidy src --experimental
