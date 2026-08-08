@@ -4,7 +4,12 @@ import path from "node:path";
 import { buildDependencyGraph } from "../core/graph.ts";
 import { loadProject } from "../core/project.ts";
 import { bunRuntime, setRuntime } from "../runtime/index.ts";
-import { captureOutput, makeTempDir, runCli } from "./__test-helpers.ts";
+import {
+	captureOutput,
+	makeTempDir,
+	runCli,
+	runGitCommand,
+} from "./__test-helpers.ts";
 import { moveCommand, moveModule } from "./move.ts";
 
 const tempDirs: string[] = [];
@@ -13,23 +18,6 @@ async function tempDir(): Promise<string> {
 	const dir = await makeTempDir("move");
 	tempDirs.push(dir);
 	return dir;
-}
-
-async function expectGit(cwd: string, args: string[]): Promise<string> {
-	const proc = Bun.spawn(["git", ...args], {
-		cwd,
-		stdout: "pipe",
-		stderr: "pipe",
-	});
-	const stdout = await new Response(proc.stdout).text();
-	const stderr = await new Response(proc.stderr).text();
-	await proc.exited;
-	if (proc.exitCode !== 0) {
-		throw new Error(
-			`git ${args.join(" ")} failed with ${proc.exitCode ?? 0}: ${stderr}`
-		);
-	}
-	return stdout;
 }
 
 async function makeMoveCliProject(): Promise<{
@@ -270,6 +258,27 @@ describe("moveModule", () => {
 		}
 	});
 
+	test("stages an ordinary move as a git rename", async () => {
+		const { sourcePath, targetPath } = await makeMoveCliProject();
+		const dir = path.dirname(path.dirname(sourcePath));
+		await runGitCommand(dir, ["init", "--template="]);
+		await runGitCommand(dir, ["config", "user.name", "Resect Test"]);
+		await runGitCommand(dir, [
+			"config",
+			"user.email",
+			"resect@example.invalid",
+		]);
+		await runGitCommand(dir, ["add", "."]);
+		await runGitCommand(dir, ["commit", "-m", "initial"]);
+
+		await captureOutput(async () =>
+			moveCommand({ source: sourcePath, target: targetPath, verify: false })
+		);
+
+		const status = await runGitCommand(dir, ["status", "--porcelain=v1"]);
+		expect(status).toContain("R  src/source.ts -> src/nested/source.ts");
+	});
+
 	test("handles same-directory case-only renames and updates importers", async () => {
 		const dir = await tempDir();
 		const srcDir = path.join(dir, "src", "utils");
@@ -300,11 +309,15 @@ describe("moveModule", () => {
 			path.join(srcDir, "consumer.ts"),
 			'import { bar } from "./Foo";\nexport const value = bar();\n'
 		);
-		await expectGit(dir, ["init"]);
-		await expectGit(dir, ["config", "user.name", "Resect Test"]);
-		await expectGit(dir, ["config", "user.email", "resect@example.invalid"]);
-		await expectGit(dir, ["add", "."]);
-		await expectGit(dir, ["commit", "-m", "initial"]);
+		await runGitCommand(dir, ["init"]);
+		await runGitCommand(dir, ["config", "user.name", "Resect Test"]);
+		await runGitCommand(dir, [
+			"config",
+			"user.email",
+			"resect@example.invalid",
+		]);
+		await runGitCommand(dir, ["add", "."]);
+		await runGitCommand(dir, ["commit", "-m", "initial"]);
 
 		const source = path.join(srcDir, "Foo.ts");
 		const target = path.join(srcDir, "foo.ts");
@@ -319,11 +332,10 @@ describe("moveModule", () => {
 		const consumer = await readFile(path.join(srcDir, "consumer.ts"), "utf-8");
 		expect(consumer).toContain('from "./foo"');
 
-		await expectGit(dir, ["add", "-A"]);
-		const status = await expectGit(dir, ["status", "--porcelain"]);
+		const status = await runGitCommand(dir, ["status", "--porcelain"]);
 		expect(status).toContain("R");
-		await expectGit(dir, ["commit", "-m", "case rename"]);
-		const log = await expectGit(dir, [
+		await runGitCommand(dir, ["commit", "-m", "case rename"]);
+		const log = await runGitCommand(dir, [
 			"log",
 			"--follow",
 			"--oneline",

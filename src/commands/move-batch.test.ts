@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import path from "node:path";
 import { buildDependencyGraph } from "../core/graph.ts";
-import { CLI, cleanup, makeFixture } from "./__test-helpers.ts";
+import { CLI, cleanup, makeFixture, runGitCommand } from "./__test-helpers.ts";
 import { setupCommandContext } from "./command-context.ts";
 import { moveModule, runPackageBuilds } from "./move.ts";
 import {
@@ -42,6 +42,14 @@ async function makeBatchFixture(name: string): Promise<string> {
 	return dir;
 }
 
+async function commitBatchFixture(dir: string): Promise<void> {
+	await runGitCommand(dir, ["init", "--template="]);
+	await runGitCommand(dir, ["config", "user.name", "Resect Test"]);
+	await runGitCommand(dir, ["config", "user.email", "resect@example.invalid"]);
+	await runGitCommand(dir, ["add", "."]);
+	await runGitCommand(dir, ["commit", "-m", "initial"]);
+}
+
 describe("move batch manifest", () => {
 	test("validates a non-empty array of exact source/target pairs", () => {
 		expect(
@@ -73,6 +81,7 @@ describe("move batch manifest", () => {
 describe("move batch execution", () => {
 	test("dry-run previews every move without writing", async () => {
 		const dir = await makeBatchFixture("dry-run");
+		await commitBatchFixture(dir);
 		const result = await moveBatch({
 			baseDir: dir,
 			dryRun: true,
@@ -95,6 +104,7 @@ describe("move batch execution", () => {
 				(reference) => reference.newSpecifier === "./b"
 			)
 		).toBe(true);
+		expect(await runGitCommand(dir, ["status", "--porcelain=v1"])).toBe("");
 	});
 
 	test("a later move sees importer edits made by an earlier move", async () => {
@@ -114,6 +124,25 @@ describe("move batch execution", () => {
 		expect(movedA).not.toContain("./domain/b");
 		expect(await Bun.file(path.join(dir, "src/a.ts")).exists()).toBe(false);
 		expect(await Bun.file(path.join(dir, "src/b.ts")).exists()).toBe(false);
+	});
+
+	test("stages every successful batch entry as a git rename", async () => {
+		const dir = await makeBatchFixture("git-renames");
+		await commitBatchFixture(dir);
+
+		const result = await moveBatch({
+			baseDir: dir,
+			verify: false,
+			moves: [
+				{ source: "src/b.ts", target: "src/domain/b.ts" },
+				{ source: "src/c.ts", target: "src/domain/c.ts" },
+			],
+		});
+
+		expect(result.success).toBe(true);
+		const status = await runGitCommand(dir, ["status", "--porcelain=v1"]);
+		expect(status).toContain("R  src/b.ts -> src/domain/b.ts");
+		expect(status).toContain("R  src/c.ts -> src/domain/c.ts");
 	});
 
 	test("builds context and graph once, guards once, and wraps one verify gate", async () => {

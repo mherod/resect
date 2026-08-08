@@ -11,7 +11,7 @@ export const CLI = ["bun", path.resolve(import.meta.dir, "../cli.ts")];
 export async function runGitCommand(
 	cwd: string,
 	args: string[]
-): Promise<void> {
+): Promise<string> {
 	const proc = Bun.spawn(["git", ...args], {
 		cwd,
 		stdout: "pipe",
@@ -25,6 +25,7 @@ export async function runGitCommand(
 	if (proc.exitCode !== 0) {
 		throw new Error(`git ${args.join(" ")} failed: ${stdout}${stderr}`);
 	}
+	return stdout;
 }
 
 /**

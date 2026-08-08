@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, realpath, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { getRuntime } from "../runtime/index.ts";
 import type { Runtime } from "../runtime/types.ts";
+import { findGitRoot, toGitPath } from "./git.ts";
 
 const caseSensitivityCache = new Map<string, boolean>();
 
@@ -110,22 +111,6 @@ async function createGitMove(
 			);
 		}
 	};
-}
-
-async function toGitPath(root: string, candidate: string): Promise<string> {
-	const dir = await realpath(path.dirname(candidate)).catch(() =>
-		path.resolve(path.dirname(candidate))
-	);
-	return path.relative(root, path.join(dir, path.basename(candidate)));
-}
-
-async function findGitRoot(dir: string): Promise<string | null> {
-	const result = await runGit(dir, ["rev-parse", "--show-toplevel"]);
-	if (result.exitCode !== 0) {
-		return null;
-	}
-	const root = result.stdout.trim();
-	return root ? realpath(root) : null;
 }
 
 async function twoStepMove(

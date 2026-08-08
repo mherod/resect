@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rename, rm } from "node:fs/promises";
 import path from "node:path";
-import { ensureCleanWorktree, isWorktreeDirty } from "./git";
+import { ensureCleanWorktree, isWorktreeDirty, stageMove } from "./git";
 
 // Use a project-local tmp base to avoid macOS /tmp filesystem race conditions.
 // Each test creates its own subdirectory and cleans up via try/finally.
@@ -16,17 +16,21 @@ async function cleanupDir(dir: string): Promise<void> {
 	await rm(dir, { recursive: true, force: true }).catch(() => undefined);
 }
 
-async function git(cwd: string, ...args: string[]): Promise<void> {
+async function git(cwd: string, ...args: string[]): Promise<string> {
 	const proc = Bun.spawn(["git", ...args], {
 		cwd,
 		stdout: "pipe",
 		stderr: "pipe",
 	});
-	const stderr = await new Response(proc.stderr).text();
+	const [stdout, stderr] = await Promise.all([
+		new Response(proc.stdout).text(),
+		new Response(proc.stderr).text(),
+	]);
 	await proc.exited;
 	if (proc.exitCode !== 0) {
 		throw new Error(`git ${args.join(" ")} failed: ${stderr}`);
 	}
+	return stdout;
 }
 
 async function initRepo(dir: string): Promise<void> {
@@ -34,6 +38,63 @@ async function initRepo(dir: string): Promise<void> {
 	await git(dir, "config", "user.email", "test@test.com");
 	await git(dir, "config", "user.name", "Test");
 }
+
+describe("stageMove", () => {
+	test("stages only the source and destination as a rename", async () => {
+		const dir = await makeTmpDir();
+		try {
+			await initRepo(dir);
+			const source = path.join(dir, "source.ts");
+			const target = path.join(dir, "moved.ts");
+			const unrelated = path.join(dir, "unrelated.ts");
+			await Bun.write(source, "export const value = 1;\n");
+			await Bun.write(unrelated, "export const unrelated = 1;\n");
+			await git(dir, "add", ".");
+			await git(dir, "commit", "-m", "init");
+
+			await rename(source, target);
+			await Bun.write(unrelated, "export const unrelated = 2;\n");
+
+			expect(await stageMove(source, target)).toBe(true);
+			const status = await git(dir, "status", "--porcelain=v1");
+			expect(status).toContain("R  source.ts -> moved.ts");
+			expect(status).toContain(" M unrelated.ts");
+		} finally {
+			await cleanupDir(dir);
+		}
+	});
+
+	test("is a no-op outside a Git worktree", async () => {
+		const { tmpdir } = await import("node:os");
+		const dir = await mkdtemp(path.join(tmpdir(), "resect-stage-nogit-"));
+		try {
+			expect(
+				await stageMove(
+					path.join(dir, "source.ts"),
+					path.join(dir, "target.ts")
+				)
+			).toBe(false);
+		} finally {
+			await cleanupDir(dir);
+		}
+	});
+
+	test("leaves an untracked move unstaged inside a Git worktree", async () => {
+		const dir = await makeTmpDir();
+		try {
+			await initRepo(dir);
+			const source = path.join(dir, "source.ts");
+			const target = path.join(dir, "moved.ts");
+			await Bun.write(source, "export const value = 1;\n");
+			await rename(source, target);
+
+			expect(await stageMove(source, target)).toBe(false);
+			expect(await git(dir, "status", "--porcelain=v1")).toBe("?? moved.ts\n");
+		} finally {
+			await cleanupDir(dir);
+		}
+	});
+});
 
 describe("isWorktreeDirty", () => {
 	test("returns false for a clean repo", async () => {

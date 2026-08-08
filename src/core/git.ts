@@ -51,6 +51,101 @@ export async function filterGitignored(
 	}
 }
 
+/** Resolve the repository root containing `dir`, or `null` outside Git. */
+export async function findGitRoot(dir: string): Promise<string | null> {
+	try {
+		const { stdout, exitCode } = await getRuntime().process.exec(
+			["git", "rev-parse", "--show-toplevel"],
+			{ cwd: dir }
+		);
+		if (exitCode !== 0) {
+			return null;
+		}
+		const root = stdout.trim();
+		if (!root) {
+			return null;
+		}
+		const { realpath } = await import("node:fs/promises");
+		return await realpath(root).catch(() => path.resolve(root));
+	} catch {
+		return null;
+	}
+}
+
+/** Resolve `candidate` to the path Git expects relative to `root`. */
+export async function toGitPath(
+	root: string,
+	candidate: string
+): Promise<string> {
+	const { realpath } = await import("node:fs/promises");
+	const directory = await realpath(path.dirname(candidate)).catch(() =>
+		path.resolve(path.dirname(candidate))
+	);
+	return path.relative(root, path.join(directory, path.basename(candidate)));
+}
+
+function isWithinGitRoot(relative: string): boolean {
+	if (
+		!relative ||
+		relative === ".." ||
+		relative.startsWith(`..${path.sep}`) ||
+		path.isAbsolute(relative)
+	) {
+		return false;
+	}
+	return true;
+}
+
+/**
+ * Stage only a move's source and destination so Git records the relocation as
+ * one indexed rename. Returns `false` without error outside a Git worktree,
+ * for an untracked source, or when either path falls outside the source
+ * repository.
+ */
+export async function stageMove(from: string, to: string): Promise<boolean> {
+	const root = await findGitRoot(path.dirname(from));
+	if (!root) {
+		return false;
+	}
+	const [fromPath, toPath] = await Promise.all([
+		toGitPath(root, from),
+		toGitPath(root, to),
+	]);
+	if (!(isWithinGitRoot(fromPath) && isWithinGitRoot(toPath))) {
+		return false;
+	}
+	const tracked = await getRuntime().process.exec(
+		[
+			"git",
+			"--literal-pathspecs",
+			"ls-files",
+			"--error-unmatch",
+			"--",
+			fromPath,
+		],
+		{ cwd: root }
+	);
+	if (tracked.exitCode === 1) {
+		return false;
+	}
+	if (tracked.exitCode !== 0) {
+		throw new Error(
+			`Could not inspect move source: ${tracked.stderr.trim() || `git ls-files exited ${tracked.exitCode}`}`
+		);
+	}
+
+	const { stderr, exitCode } = await getRuntime().process.exec(
+		["git", "--literal-pathspecs", "add", "-A", "--", fromPath, toPath],
+		{ cwd: root }
+	);
+	if (exitCode !== 0) {
+		throw new Error(
+			`Could not stage move: ${stderr.trim() || `git add exited ${exitCode}`}`
+		);
+	}
+	return true;
+}
+
 /**
  * Check whether the git working tree at `dir` has uncommitted changes
  * (staged, unstaged, or untracked files).

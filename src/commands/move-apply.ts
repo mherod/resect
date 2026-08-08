@@ -11,6 +11,7 @@ import {
 	safeCaseRename,
 	shouldUseSafeCaseRename,
 } from "../core/filesystem-case.ts";
+import { stageMove } from "../core/git.ts";
 import {
 	buildDependencyGraph,
 	type DependencyGraph,
@@ -654,9 +655,10 @@ async function moveFileWithContent(
 	if (await shouldUseSafeCaseRename(sourcePath, targetPath)) {
 		await safeCaseRename(rt, sourcePath, targetPath);
 		await rt.fs.writeFile(targetPath, content);
-		return;
+	} else {
+		await rt.fs.writeFile(targetPath, content);
+		await rt.fs.deleteFile(sourcePath);
 	}
 
-	await rt.fs.writeFile(targetPath, content);
-	await rt.fs.deleteFile(sourcePath);
+	await stageMove(sourcePath, targetPath);
 }
