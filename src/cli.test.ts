@@ -1,4 +1,43 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+const CLI = ["bun", path.resolve(import.meta.dir, "cli.ts")];
+const JSON_PIPE_FIXTURE_FILE_COUNT = 800;
+const JSON_PIPE_EXPORTS_PER_FILE = 12;
+const HUMAN_PIPELINE = 'bun "$@" | head -n 1';
+const JSON_PIPELINE = 'bun "$@" | head -c 1';
+
+async function runWithClosedStdout(args: string[], pipeline: string) {
+	const child = Bun.spawn(
+		[
+			"bash",
+			"-o",
+			"pipefail",
+			"-c",
+			pipeline,
+			"resect-pipeline",
+			...CLI.slice(1),
+			...args,
+		],
+		{
+			stdout: "pipe",
+			stderr: "pipe",
+		}
+	);
+	const [stdout, stderr, exitCode] = await Promise.all([
+		new Response(child.stdout).text(),
+		new Response(child.stderr).text(),
+		child.exited,
+	]);
+
+	return {
+		exitCode,
+		stderr,
+		stdout,
+	};
+}
 
 describe("cli", () => {
 	test("--version returns version", async () => {
@@ -78,5 +117,55 @@ describe("cli", () => {
 
 		expect(exitCode).toBe(0);
 		expect(stdout).toContain("Usage: resect discover <directory> [options]");
+	});
+
+	test("exits quietly when a human-output reader closes stdout", async () => {
+		const result = await runWithClosedStdout(
+			["discover", process.cwd()],
+			HUMAN_PIPELINE
+		);
+
+		expect(result.stdout.length).toBeGreaterThan(0);
+		expect(result.exitCode).toBe(0);
+		expect(result.stderr).not.toContain("EPIPE");
+	});
+
+	test("exits quietly when a JSON-output reader closes stdout", async () => {
+		const fixtureRoot = await mkdtemp(
+			path.join(tmpdir(), "resect-cli-json-pipe-")
+		);
+
+		try {
+			await Bun.write(
+				path.join(fixtureRoot, "tsconfig.json"),
+				JSON.stringify({ include: ["src/**/*.ts"] })
+			);
+			await Promise.all(
+				Array.from(
+					{ length: JSON_PIPE_FIXTURE_FILE_COUNT },
+					async (_, index) => {
+						await Bun.write(
+							path.join(fixtureRoot, "src", `file-${index}.ts`),
+							Array.from(
+								{ length: JSON_PIPE_EXPORTS_PER_FILE },
+								(__, exportIndex) =>
+									`export const value${index}_${exportIndex} = ${exportIndex};`
+							).join("\n")
+						);
+					}
+				)
+			);
+
+			const result = await runWithClosedStdout(
+				["audit", fixtureRoot, "--json"],
+				JSON_PIPELINE
+			);
+
+			expect(result.stdout).toHaveLength(1);
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).not.toContain("EPIPE");
+		} finally {
+			await rm(fixtureRoot, { recursive: true, force: true });
+		}
 	});
 });

@@ -3,6 +3,7 @@
 import { parseArgs } from "node:util";
 import { version } from "../package.json";
 import { logger } from "./cli-logger.ts";
+import { installCliStdoutErrorHandler } from "./cli-stream-errors.ts";
 import { CLI_NAME, formatCommandList } from "./commands/command-spec.ts";
 import { applyResectConfigToCliValues } from "./commands/config-defaults.ts";
 import {
@@ -16,6 +17,8 @@ import {
 	loadResectConfig,
 	resolveResectConfig,
 } from "./core/project-config.ts";
+
+installCliStdoutErrorHandler();
 
 const cliArgs = Bun.argv.slice(2);
 const rawArgs = preprocessArgs(cliArgs);
