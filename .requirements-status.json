@@ -2,9 +2,9 @@
   "schemaVersion": 2,
   "projectId": "mherod/resect",
   "requirementsFile": "REQUIREMENTS.md",
-  "requirementsSha256": "3a9a164c6f508c5544b9851d2a317c13cc742380f2b0c9ee45a3d8255b9ad8fc",
-  "sourceCommit": "5cefe8c6a1c65f4fa42e56ea11404d38a338d7e8",
-  "generatedAt": "2026-08-08T06:17:46Z",
+  "requirementsSha256": "4749e2d78169354594d7ff6d4086f6b80737319a24f95fd2877d566688b5c2c4",
+  "sourceCommit": "c8818b789d57833411fbc8087dbb873923277a69",
+  "generatedAt": "2026-08-08T06:41:48Z",
   "validator": {
     "name": "generate-requirements",
     "version": "2.0.0",
@@ -13,15 +13,15 @@
   "validation": {
     "structure": {
       "status": "PASS",
-      "receiptId": "STRUCT-20260808-004",
+      "receiptId": "STRUCT-20260808-005",
       "validator": "validate-bdd",
       "validatorVersion": "2.0.0",
       "command": "bun scripts/validate-bdd.js /Users/matthew.herod/Development/resect/REQUIREMENTS.md --status-log /Users/matthew.herod/Development/resect/.requirements-status.json",
-      "requirementsSha256": "3a9a164c6f508c5544b9851d2a317c13cc742380f2b0c9ee45a3d8255b9ad8fc",
-      "sourceCommit": "5cefe8c6a1c65f4fa42e56ea11404d38a338d7e8",
-      "generatedAt": "2026-08-08T06:17:46Z",
+      "requirementsSha256": "4749e2d78169354594d7ff6d4086f6b80737319a24f95fd2877d566688b5c2c4",
+      "sourceCommit": "c8818b789d57833411fbc8087dbb873923277a69",
+      "generatedAt": "2026-08-08T06:41:48Z",
       "counts": {
-        "checked": 44,
+        "checked": 46,
         "errors": 0,
         "warnings": 0
       },
@@ -31,42 +31,43 @@
     },
     "documentQuality": {
       "status": "PASS",
-      "receiptId": "QUALITY-20260808-004",
+      "receiptId": "QUALITY-20260808-005",
       "validator": "generate-requirements-manual-review",
       "validatorVersion": "2.0.0",
       "command": "generate-requirements 2.0 manual review of REQUIREMENTS.md",
-      "requirementsSha256": "3a9a164c6f508c5544b9851d2a317c13cc742380f2b0c9ee45a3d8255b9ad8fc",
-      "sourceCommit": "5cefe8c6a1c65f4fa42e56ea11404d38a338d7e8",
-      "generatedAt": "2026-08-08T06:17:46Z",
+      "requirementsSha256": "4749e2d78169354594d7ff6d4086f6b80737319a24f95fd2877d566688b5c2c4",
+      "sourceCommit": "c8818b789d57833411fbc8087dbb873923277a69",
+      "generatedAt": "2026-08-08T06:41:48Z",
       "counts": {
-        "checked": 44,
+        "checked": 46,
         "errors": 0,
         "warnings": 0
       },
       "notes": [
-        "Reviewed all 44 scenarios for product-first wording, one-trigger atomicity, actor and limitation coverage, lifecycle mapping, cross-cutting applicability, and decision completeness.",
+        "Reviewed all 46 scenarios for product-first wording, one-trigger atomicity, actor and limitation coverage, lifecycle mapping, cross-cutting applicability, and decision completeness.",
         "Framework-dispatched entrypoint safety is explicit across built-in valid App Router locations, ordinary same-stem controls, caller-configured globs, human-readable advice, and structured CLI, MCP, and library results.",
-        "Reviewed the V1/P1 priority concentration: the 27 source-backed P1 scenarios represent important non-critical safety and parity behavior, while the four launch-critical scenarios remain P0; retain the independently grounded priorities."
+        "CLI stream lifecycle behavior separates the expected closed-stdout alternative exit from unexpected stdout and stderr failures, while remaining outside MCP and library surfaces.",
+        "Reviewed the V1/P1 priority concentration: the 29 source-backed P1 scenarios represent important non-critical safety, reliability, and parity behavior, while the four launch-critical scenarios remain P0; retain the independently grounded priorities."
       ]
     },
     "implementation": {
       "status": "PASS",
-      "receiptId": "IMPL-20260808-004",
+      "receiptId": "IMPL-20260808-005",
       "validator": "bun-test-plus-clause-audit",
       "validatorVersion": "1.3.14+generate-requirements-2.0.0",
-      "command": "bun test --timeout=20000 src/core/framework-conventions.test.ts src/commands/analyze.test.ts src/commands/unused.test.ts src/mcp-entrypoints.test.ts src/mcp-schema-parity.test.ts --parallel=4 && bun test --timeout=20000 --parallel=4 && pnpm run check && pnpm run lint && pnpm run typecheck && pnpm run build:lib && pnpm run verify:size",
-      "requirementsSha256": "3a9a164c6f508c5544b9851d2a317c13cc742380f2b0c9ee45a3d8255b9ad8fc",
-      "sourceCommit": "5cefe8c6a1c65f4fa42e56ea11404d38a338d7e8",
-      "generatedAt": "2026-08-08T06:17:46Z",
+      "command": "bun test src/cli-stream-errors.test.ts src/cli.test.ts --timeout=20000 --parallel=4 && bun test --timeout=20000 --parallel=4 && pnpm run check && pnpm run lint && pnpm run typecheck && pnpm run build:lib && pnpm run verify:size",
+      "requirementsSha256": "4749e2d78169354594d7ff6d4086f6b80737319a24f95fd2877d566688b5c2c4",
+      "sourceCommit": "c8818b789d57833411fbc8087dbb873923277a69",
+      "generatedAt": "2026-08-08T06:41:48Z",
       "counts": {
-        "checked": 44,
+        "checked": 46,
         "errors": 0,
         "warnings": 0
       },
       "notes": [
-        "The framework convention, analyze, unused, and MCP focus passed 73 tests with 0 failures and 344 assertions across 5 files.",
-        "The complete Bun suite passed 947 tests with 0 failures across 71 files using the hook-required four-way parallelism; the guarded implementation commit additionally passed 716 affected tests with 0 failures and 2347 assertions across 57 files.",
-        "Biome checks, ESLint, TypeScript, the library build, the compiled binary hook build, the strict 0.95 similarity scan, the supported global install, and the configured tarball-size preflight passed; PR #200 CI run 31243361689 revalidated typecheck, lint, the full suite, and package size at source commit 5cefe8c.",
+        "The CLI stream focus passed 13 tests with 0 failures and 32 assertions across 2 files, including human-readable and JSON closed-pipe subprocesses plus unexpected stdout and stderr failures.",
+        "The complete Bun suite passed 954 tests with 0 failures across 72 files using the hook-required four-way parallelism.",
+        "Biome checks, ESLint, TypeScript, the library build, the compiled binary hook build, the strict 0.95 similarity scan, the supported global install, and the configured tarball-size preflight passed at source commit c8818b7.",
         "MOVE-001 through MOVE-003 map to src/commands/move.test.ts and src/commands/move.ts at source commit 52106e7.",
         "TIDY-001, TIDY-002, and ROLL-001 map to src/commands/tidy.test.ts, src/core/rollback.test.ts, src/commands/tidy.ts, and src/core/rollback.ts at source commit 52106e7.",
         "CFG-001 through CFG-006 map to src/core/project-config.test.ts, src/commands/config-defaults.test.ts, src/commands/discover.test.ts, and their corresponding implementation files at source commit 52106e7.",
@@ -80,32 +81,33 @@
         "UNDO-001 through UNDO-005 map to src/core/journal.ts, src/core/journal.test.ts, src/commands/undo.ts, src/commands/undo.test.ts, src/commands/journal-integration.test.ts, src/commands/registry.ts, src/mcp-server.ts, and src/index.ts.",
         "ANLY-001 and ANLY-002 map to src/core/generated-artifacts.ts, src/core/generated-artifacts.test.ts, src/commands/audit.test.ts, src/commands/naming.test.ts, src/commands/unused.test.ts, src/mcp-server.ts, and src/types/naming.ts at source commit dc4c1d4.",
         "ANLY-003 and ANLY-004 map to src/core/framework-conventions.ts, src/core/framework-conventions.test.ts, src/commands/analyze.test.ts, src/commands/unused.test.ts, src/mcp-entrypoints.test.ts, src/mcp-schema-parity.test.ts, src/mcp-server.ts, and src/index.ts at source commit 5cefe8c.",
-        "BARL-001 and BARL-002 map to src/core/framework-conventions.ts, src/commands/barrel.ts, src/commands/barrel.test.ts, src/mcp-server.ts, and src/index.test.ts at source commit dc4c1d4."
+        "BARL-001 and BARL-002 map to src/core/framework-conventions.ts, src/commands/barrel.ts, src/commands/barrel.test.ts, src/mcp-server.ts, and src/index.test.ts at source commit dc4c1d4.",
+        "CLI-001 and CLI-002 map to src/cli-stream-errors.ts, src/cli-stream-errors.test.ts, src/cli.ts, and src/cli.test.ts at source commit c8818b7."
       ]
     }
   },
   "metrics": {
-    "totalScenarios": 44,
+    "totalScenarios": 46,
     "byDelivery": {
-      "V1": 44,
+      "V1": 46,
       "V2": 0,
       "LATER": 0,
       "UNSLICED": 0
     },
     "byDecision": {
-      "DECIDED": 44,
+      "DECIDED": 46,
       "OPEN": 0
     },
     "byPriority": {
       "P0": 4,
-      "P1": 27,
+      "P1": 29,
       "P2": 13,
       "P3": 0
     },
     "priorityByDelivery": {
       "V1": {
         "P0": 4,
-        "P1": 27,
+        "P1": 29,
         "P2": 13,
         "P3": 0
       },
@@ -129,15 +131,15 @@
       }
     },
     "byFidelity": {
-      "VERIFIED": 44,
+      "VERIFIED": 46,
       "DRIFTED": 0,
       "MISSING": 0,
       "UNTESTABLE": 0
     },
     "coverage": {
       "v1Decided": {
-        "eligible": 44,
-        "verified": 44,
+        "eligible": 46,
+        "verified": 46,
         "percentage": 100
       },
       "v1LaunchCritical": {
@@ -179,8 +181,8 @@
     "fidelityNoteMismatchIds": [],
     "orphanAnchorIds": [],
     "preamble": {
-      "linesBeforeFirstScenario": 107,
-      "percentageBeforeFirstScenario": 20.7,
+      "linesBeforeFirstScenario": 108,
+      "percentageBeforeFirstScenario": 20.0,
       "warning": false,
       "disposition": null
     },
@@ -188,9 +190,9 @@
       {
         "delivery": "V1",
         "tier": "P1",
-        "percentage": 61.4,
+        "percentage": 63.0,
         "warning": true,
-        "disposition": "Retain the independently grounded priorities: the 27 P1 scenarios are important non-critical safety and parity behavior, while the four launch-critical scenarios remain P0."
+        "disposition": "Retain the independently grounded priorities: the 29 P1 scenarios are important non-critical safety, reliability, and parity behavior, while the four launch-critical scenarios remain P0."
       }
     ]
   },
