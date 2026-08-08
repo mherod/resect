@@ -2,26 +2,26 @@
   "schemaVersion": 2,
   "projectId": "mherod/resect",
   "requirementsFile": "REQUIREMENTS.md",
-  "requirementsSha256": "82fa3996fd9b8410f3873a255d39e2bcdfd3b180268cba2dfa67096fd31e95f4",
-  "sourceCommit": "cbf65872d8ce00c5e505192686402a0b0c3271a5",
-  "generatedAt": "2026-08-08T08:03:22Z",
+  "requirementsSha256": "678e358ece741314f663792613f5f051e443c5cf2a47fc26d0f37dda11cd330c",
+  "sourceCommit": "593c69b9fe2b7acd9ebe0397c25fd303ce6c0435",
+  "generatedAt": "2026-08-08T08:57:04Z",
   "validator": {
     "name": "generate-requirements",
     "version": "2.0.0",
-    "command": "bun scripts/validate-bdd.js /Users/matthew.herod/Development/resect/REQUIREMENTS.md --status-log /Users/matthew.herod/Development/resect/.requirements-status.json"
+    "command": "bun /Users/matthew.herod/.codex/skills/generate-requirements/scripts/validate-bdd.js /Users/matthew.herod/Development/resect/REQUIREMENTS.md --status-log /Users/matthew.herod/Development/resect/.requirements-status.json"
   },
   "validation": {
     "structure": {
       "status": "PASS",
-      "receiptId": "STRUCT-20260808-007",
+      "receiptId": "STRUCT-20260808-008",
       "validator": "validate-bdd",
       "validatorVersion": "2.0.0",
-      "command": "bun scripts/validate-bdd.js /Users/matthew.herod/Development/resect/REQUIREMENTS.md --status-log /Users/matthew.herod/Development/resect/.requirements-status.json",
-      "requirementsSha256": "82fa3996fd9b8410f3873a255d39e2bcdfd3b180268cba2dfa67096fd31e95f4",
-      "sourceCommit": "cbf65872d8ce00c5e505192686402a0b0c3271a5",
-      "generatedAt": "2026-08-08T08:03:22Z",
+      "command": "bun /Users/matthew.herod/.codex/skills/generate-requirements/scripts/validate-bdd.js /Users/matthew.herod/Development/resect/REQUIREMENTS.md --status-log /Users/matthew.herod/Development/resect/.requirements-status.json",
+      "requirementsSha256": "678e358ece741314f663792613f5f051e443c5cf2a47fc26d0f37dda11cd330c",
+      "sourceCommit": "593c69b9fe2b7acd9ebe0397c25fd303ce6c0435",
+      "generatedAt": "2026-08-08T08:57:04Z",
       "counts": {
-        "checked": 51,
+        "checked": 53,
         "errors": 0,
         "warnings": 0
       },
@@ -31,54 +31,57 @@
     },
     "documentQuality": {
       "status": "PASS",
-      "receiptId": "QUALITY-20260808-007",
+      "receiptId": "QUALITY-20260808-008",
       "validator": "generate-requirements-manual-review",
       "validatorVersion": "2.0.0",
       "command": "generate-requirements 2.0 manual review of REQUIREMENTS.md",
-      "requirementsSha256": "82fa3996fd9b8410f3873a255d39e2bcdfd3b180268cba2dfa67096fd31e95f4",
-      "sourceCommit": "cbf65872d8ce00c5e505192686402a0b0c3271a5",
-      "generatedAt": "2026-08-08T08:03:22Z",
+      "requirementsSha256": "678e358ece741314f663792613f5f051e443c5cf2a47fc26d0f37dda11cd330c",
+      "sourceCommit": "593c69b9fe2b7acd9ebe0397c25fd303ce6c0435",
+      "generatedAt": "2026-08-08T08:57:04Z",
       "counts": {
-        "checked": 51,
+        "checked": 53,
         "errors": 0,
         "warnings": 0
       },
       "notes": [
-        "Reviewed all 51 scenarios for product-first wording, one-trigger atomicity, actor and limitation coverage, lifecycle mapping, cross-cutting applicability, and decision completeness.",
+        "Reviewed all 53 scenarios for product-first wording, one-trigger atomicity, actor and limitation coverage, lifecycle mapping, cross-cutting applicability, and decision completeness.",
+        "Successful Git staging is split into atomic single-move and batch scenarios, uses the existing Operator boundary, preserves unrelated worktree changes, and explicitly excludes dry-run, untracked, and non-Git moves.",
         "Long-scan liveness is split into atomic interactive, JSON, and non-interactive scenarios, uses the existing Operator boundary, remains CLI-only by default, and is explicitly an interaction affordance rather than analytics or telemetry.",
         "CommonJS interop behavior is split into atomic move and exported-identifier rename scenarios, uses the existing Operator boundary, and adds no new lifecycle or cross-cutting category.",
         "Framework-dispatched entrypoint safety is explicit across built-in valid App Router locations, ordinary same-stem controls, caller-configured globs, human-readable advice, and structured CLI, MCP, and library results.",
         "CLI stream lifecycle behavior separates the expected closed-stdout alternative exit from unexpected stdout and stderr failures, while remaining outside MCP and library surfaces.",
-        "The 29 source-backed V1/P1 scenarios now represent 56.9% of the V1 slice, below the priority-skew warning threshold, while the four launch-critical scenarios remain P0."
+        "The 31 source-backed V1/P1 scenarios now represent 58.5% of the V1 slice, below the priority-skew warning threshold, while the four launch-critical scenarios remain P0."
       ]
     },
     "implementation": {
       "status": "PASS",
-      "receiptId": "IMPL-20260808-007",
+      "receiptId": "IMPL-20260808-008",
       "validator": "bun-test-plus-clause-audit",
       "validatorVersion": "1.3.14+generate-requirements-2.0.0",
-      "command": "bun test src/core/concurrency.test.ts src/core/graph.test.ts src/cli-logger.test.ts src/commands/audit.test.ts src/commands/unused.test.ts src/commands/tidy.test.ts --timeout=20000 --parallel=4 && bun test --timeout=20000 --parallel=4 && pnpm run check && pnpm run lint && pnpm run typecheck && pnpm run build:lib && pnpm run build && pnpm run verify:size",
-      "requirementsSha256": "82fa3996fd9b8410f3873a255d39e2bcdfd3b180268cba2dfa67096fd31e95f4",
-      "sourceCommit": "cbf65872d8ce00c5e505192686402a0b0c3271a5",
-      "generatedAt": "2026-08-08T08:03:22Z",
+      "command": "bun test src/commands/move.test.ts src/commands/move-batch.test.ts src/core/git.test.ts src/core/filesystem-case.test.ts src/core/rollback.test.ts --timeout=20000 --parallel=4 && pnpm test && pnpm run check && pnpm run lint && pnpm run typecheck && pnpm run build:lib && pnpm run build && pnpm run verify:size",
+      "requirementsSha256": "678e358ece741314f663792613f5f051e443c5cf2a47fc26d0f37dda11cd330c",
+      "sourceCommit": "593c69b9fe2b7acd9ebe0397c25fd303ce6c0435",
+      "generatedAt": "2026-08-08T08:57:04Z",
       "counts": {
-        "checked": 51,
+        "checked": 53,
         "errors": 0,
         "warnings": 0
       },
       "notes": [
-        "The issue-focused concurrency, graph, logger, audit, unused, and tidy suites passed 122 tests with 0 failures and 374 assertions across 6 files in 37.59 seconds.",
-        "The full suite passed 968 tests with 0 failures across 73 files in 63.11 seconds; a preceding transient failure passed in isolation before the clean full rerun.",
-        "The enabled pre-commit hook passed 769 affected tests with 0 failures and 2392 assertions across 60 files, then passed the strict 0.95 similarity scan, compiled binary build, supported global install, and formatting gate.",
-        "Biome checks, ESLint, TypeScript, the library build, compiled binary build, and configured tarball-size preflight passed for source commit cbf65872d8ce00c5e505192686402a0b0c3271a5.",
+        "The focused move, batch, Git, case, and rollback suites passed 45 tests with 0 failures and 127 assertions across 5 files in 12.57 seconds.",
+        "The full suite passed 973 tests with 0 failures across 73 files in 146.39 seconds after a focused 36-test rerun verified the tracked-source boundary exposed by the first full run.",
+        "The enabled pre-commit hook passed 465 affected tests with 0 failures and 1753 assertions across 47 files, then passed the strict 0.95 similarity scan, compiled binary build, supported global install, and formatting gate.",
+        "Biome checks, ESLint, TypeScript, the library build, compiled binary build, and configured tarball-size preflight passed for source commit 593c69b9fe2b7acd9ebe0397c25fd303ce6c0435.",
         "MOVE-001 through MOVE-003 map to src/commands/move.test.ts and src/commands/move.ts at source commit 52106e7.",
         "MOVE-004 and REN-001 map to src/core/scanner.test.ts, src/commands/move.test.ts, src/commands/rename.test.ts, src/commands/alias.test.ts, src/core/scanner.ts, src/core/updater.ts, src/commands/rename.ts, and src/commands/alias.ts at source commit 1cd4670.",
+        "MOVE-005 maps to src/core/git.ts, src/core/git.test.ts, src/core/filesystem-case.ts, src/commands/move-apply.ts, and src/commands/move.test.ts at source commit 593c69b.",
         "TIDY-001, TIDY-002, and ROLL-001 map to src/commands/tidy.test.ts, src/core/rollback.test.ts, src/commands/tidy.ts, and src/core/rollback.ts at source commit 52106e7.",
         "CFG-001 through CFG-006 map to src/core/project-config.test.ts, src/commands/config-defaults.test.ts, src/commands/discover.test.ts, and their corresponding implementation files at source commit 52106e7.",
         "TRNS-001 and TRNS-002 map to src/commands/move-transform.test.ts and src/commands/move.ts at source commit 52106e7.",
         "TRNS-003 maps to src/core/transform-config.test.ts, src/commands/command-spec.test.ts, src/core/config-module.ts, and src/core/transform-config.ts; 30 focused tests passed with 0 failures and 211 assertions.",
         "BATCH-001 through BATCH-005 map to src/commands/move-batch.test.ts and src/commands/move-batch.ts at source commit 52106e7.",
         "BATCH-006 and BATCH-007 map to src/mcp-server.ts plus src/mcp-schema-parity.test.ts at source commit 52106e7; these are explicit implementation locators in place of BDD anchors.",
+        "BATCH-008 maps to src/core/git.ts, src/commands/move-apply.ts, and src/commands/move-batch.test.ts at source commit 593c69b.",
         "AUDIT-001 through AUDIT-004 map to src/commands/audit.test.ts, src/commands/audit.ts, and src/mcp-server.ts at source commit 52106e7.",
         "NAM-001 through NAM-005 map to src/core/framework-conventions.ts, src/core/framework-conventions.test.ts, src/commands/naming.test.ts, src/commands/naming.ts, src/commands/registry.ts, src/mcp-server.ts, src/types/naming.ts, and src/index.test.ts; the direct framework and naming focus passed 30 tests with 0 failures and 157 assertions.",
         "JOUR-001 and JOUR-002 map to src/core/journal.ts, src/core/journal.test.ts, src/commands/journal-integration.test.ts, the move, rename, alias, tidy, MCP, registry, and library surfaces.",
@@ -92,27 +95,27 @@
     }
   },
   "metrics": {
-    "totalScenarios": 51,
+    "totalScenarios": 53,
     "byDelivery": {
-      "V1": 51,
+      "V1": 53,
       "V2": 0,
       "LATER": 0,
       "UNSLICED": 0
     },
     "byDecision": {
-      "DECIDED": 51,
+      "DECIDED": 53,
       "OPEN": 0
     },
     "byPriority": {
       "P0": 4,
-      "P1": 29,
+      "P1": 31,
       "P2": 18,
       "P3": 0
     },
     "priorityByDelivery": {
       "V1": {
         "P0": 4,
-        "P1": 29,
+        "P1": 31,
         "P2": 18,
         "P3": 0
       },
@@ -136,15 +139,15 @@
       }
     },
     "byFidelity": {
-      "VERIFIED": 51,
+      "VERIFIED": 53,
       "DRIFTED": 0,
       "MISSING": 0,
       "UNTESTABLE": 0
     },
     "coverage": {
       "v1Decided": {
-        "eligible": 51,
-        "verified": 51,
+        "eligible": 53,
+        "verified": 53,
         "percentage": 100
       },
       "v1LaunchCritical": {
@@ -186,8 +189,8 @@
     "fidelityNoteMismatchIds": [],
     "orphanAnchorIds": [],
     "preamble": {
-      "linesBeforeFirstScenario": 110,
-      "percentageBeforeFirstScenario": 18.8,
+      "linesBeforeFirstScenario": 112,
+      "percentageBeforeFirstScenario": 18.5,
       "warning": false,
       "disposition": null
     },
