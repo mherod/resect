@@ -62,6 +62,9 @@ export const OPTION_FLAGS = {
 	batch: { type: "string" },
 } as const satisfies Record<string, FlagSpec>;
 
+/** A canonical long-form option name accepted by the CLI parser. */
+export type OptionName = keyof typeof OPTION_FLAGS;
+
 /** The exact object shape `parseArgs({ options })` expects. */
 export const PARSE_ARGS_OPTIONS = OPTION_FLAGS as NonNullable<
 	ParseArgsConfig["options"]
@@ -189,3 +192,14 @@ type DerivedCliValues = {
 export type CliValues = Omit<DerivedCliValues, "entrypoint-globs"> & {
 	"entrypoint-globs"?: string | string[];
 };
+
+/** Return explicitly supplied options that the selected command does not use. */
+export function findUnsupportedOptions(
+	values: CliValues,
+	supportedOptions: readonly OptionName[]
+): OptionName[] {
+	const supported = new Set<OptionName>(supportedOptions);
+	return (Object.keys(values) as OptionName[]).filter(
+		(option) => !supported.has(option)
+	);
+}

@@ -5,7 +5,11 @@ import { version } from "../package.json";
 import { logger } from "./cli-logger.ts";
 import { CLI_NAME, formatCommandList } from "./commands/command-spec.ts";
 import { applyResectConfigToCliValues } from "./commands/config-defaults.ts";
-import { PARSE_ARGS_OPTIONS, preprocessArgs } from "./commands/option-flags.ts";
+import {
+	findUnsupportedOptions,
+	PARSE_ARGS_OPTIONS,
+	preprocessArgs,
+} from "./commands/option-flags.ts";
 import type { CliValues } from "./commands/registry.ts";
 import { COMMANDS } from "./commands/registry.ts";
 import {
@@ -127,6 +131,22 @@ async function main() {
 	if (!cmd) {
 		logger.error(`Unknown command: ${command}`);
 		showHelp();
+		process.exit(1);
+	}
+
+	const unsupportedOptions = findUnsupportedOptions(
+		values as CliValues,
+		cmd.options
+	);
+	if (unsupportedOptions.length > 0) {
+		const formattedOptions = unsupportedOptions
+			.map((option) => `--${option}`)
+			.join(", ");
+		const verb = unsupportedOptions.length === 1 ? "is" : "are";
+		logger.error(
+			`Error: ${formattedOptions} ${verb} not supported by '${command}'`
+		);
+		logger.error(`Run '${CLI_NAME} ${command} --help' for usage`);
 		process.exit(1);
 	}
 
