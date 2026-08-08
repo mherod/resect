@@ -183,7 +183,13 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "analyze",
 		helpText: cliHelp("analyze"),
-		options: ["verbose", "project", "workspace", "only-related-to"],
+		options: [
+			"verbose",
+			"project",
+			"workspace",
+			"only-related-to",
+			"entrypoint-globs",
+		],
 		run: async ([file], values) => {
 			requireArg("analyze", "<file>", file);
 			await analyzeCommand({
@@ -192,6 +198,7 @@ export const COMMANDS: CommandDef[] = [
 				project: values.project,
 				workspace: values.workspace,
 				onlyRelatedTo: values["only-related-to"],
+				entrypointGlobs: values["entrypoint-globs"],
 			});
 		},
 	},

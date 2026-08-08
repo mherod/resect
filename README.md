@@ -315,6 +315,7 @@ Understand a module's place in your codebase.
 ```bash
 resect analyze src/components/Button.tsx --verbose
 resect analyze src/core/resolver.ts -p .
+resect analyze hooks/dispatch.ts --entrypoint-globs="hooks/**"
 ```
 
 Shows:
@@ -324,6 +325,8 @@ Shows:
 - Barrel files that re-export this module
 - **Unresolvable imports** — specifiers that cannot be resolved, with line numbers and diagnostics
 - **Project-wide unresolvable imports** — all broken imports across the entire project, shown at the end
+
+Static imports cannot reveal exports invoked by a framework or manifest. `analyze` therefore treats recognized Next.js App Router files (for example `page`, `layout`, `route`, and metadata code files under `app/`) as externally consumed instead of recommending that their exports be deleted. Use repeatable `--entrypoint-globs` for custom filename-dispatched entrypoints such as hooks or scripts; the library and MCP surfaces accept the equivalent `entrypointGlobs` option and report `externalUsageAssumed: true`.
 
 ### `analyze-impact <source> <target>`
 
@@ -472,12 +475,15 @@ Find exports and files that no other file in the project imports.
 resect unused src                            # Scan for unused exports
 resect unused src --json                     # JSON output for tooling
 resect unused src --ignore="*.test.ts"       # Exclude test files
+resect unused . --entrypoint-globs="hooks/**" # Add custom entrypoints
 resect unused src --verbose                  # Detailed output
 ```
 
 A per-export hit is a **de-export** signal, not automatically a **delete** signal. Each result carries `internalUsage` / `internalRefCount`: when `internalUsage` is `false` the symbol is referenced nowhere and is safe to delete; when `true`, it is still called within its own file, so only the `export` keyword is redundant — deleting the symbol would break its own module. The report also returns aggregate `deadCount` and `internalOnlyCount`.
 
-The report also includes `orphanFiles`: exported files with `noExternalUsage:true`, meaning no external file imports the module or a barrel that re-exports it. Package entrypoints from `package.json` `main`, `module`, or `exports` are excluded from this list because they are public API by definition. This top-level JSON field is experimental during the 1.x series and is marked with `schemaVersion: "1-experimental"`.
+The report also includes `orphanFiles`: exported files with `noExternalUsage:true`, meaning no external file imports the module or a barrel that re-exports it. Package entrypoints from `package.json` `main`, `module`, or `exports` are excluded from this list because they are public API by definition. Recognized Next.js App Router code entrypoints and files matched by `--entrypoint-globs` are excluded from both unused-export and orphan-file verdicts; structured output records them as `excludedEntrypointFiles` / `excludedEntrypointFileCount`. This top-level JSON schema is experimental during the 1.x series and is marked with `schemaVersion: "1-experimental"`.
+
+This built-in handling is deliberately location-aware: an `app/api/example/route.ts` handler is framework-consumed, while an ordinary `lib/route.ts` remains analyzable. For frameworks, manifests, or dispatchers outside the built-in App Router conventions, configure one or more entrypoint globs rather than trusting static-import-only delete advice.
 
 Usage is counted across **every tsconfig discovered in the project**, not just the one that resolves for the scan directory — so an export consumed only by a sibling config (e.g. `scripts/` on a `tsconfig.scripts.json`) is not falsely reported dead. The scanned set is returned as `scannedConfigs` / `scannedFileCount`. The `--ignore` glob excludes files only as reported *candidates*; ignored files (e.g. tests) still count as *usage* sources, so a test-only export is not reported dead.
 
@@ -759,7 +765,7 @@ Under Bun the default runtime works out of the box; subpath entry points `@mhero
 | `--bucket` | | Restrict similar output to `exact`, `high`, or `medium` |
 | `--format` | | Output format for `similar`: `compact` |
 | `--ignore` | | Glob of files to exclude as reported candidates (unused/organise) |
-| `--entrypoint-globs` | | Extra globs treated as public entrypoints (unused); repeatable |
+| `--entrypoint-globs` | | Extra globs treated as public entrypoints (analyze/unused); repeatable |
 | `--fan-out-threshold` | | Flag files importing more than N modules (audit/tidy) |
 | `--fan-in-threshold` | | Flag files imported by more than N files (audit/tidy) |
 | `--export-threshold` | | Flag files exporting more than N symbols (audit/tidy) |

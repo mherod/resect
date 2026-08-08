@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
+import { loadProject } from "../core/project.ts";
 import { CLI, cleanup, makeFixture as makeFixtureBase } from "./__test-helpers";
+import { analyze } from "./analyze.ts";
 
 async function makeFixture(name: string, files: Record<string, string>) {
 	const dir = await makeFixtureBase(`analyze-${name}`, {
@@ -14,6 +16,74 @@ async function makeFixture(name: string, files: Record<string, string>) {
 }
 
 describe("analyze command", () => {
+	// @BDD: ANLY-003-Verified
+	test("treats App Router route handlers as externally consumed", async () => {
+		const dir = await makeFixtureBase("analyze-framework-entrypoint", {
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: { strict: true },
+				include: ["src/**/*.ts"],
+			}),
+			"src/app/api/example/route.ts": [
+				"export async function GET() { return Response.json({ ok: true }); }",
+				"export async function POST() { return Response.json({ ok: true }); }",
+			].join("\n"),
+			"src/lib/route.ts": "export function GET() { return 'ordinary'; }\n",
+		});
+		try {
+			const routeFile = path.join(dir, "src/app/api/example/route.ts");
+			const ordinaryFile = path.join(dir, "src/lib/route.ts");
+			const project = loadProject(path.join(dir, "tsconfig.json"), routeFile);
+
+			const routeResult = await analyze(routeFile, project);
+			expect(routeResult.externalUsageAssumed).toBeTrue();
+			expect(routeResult.unusedExports).toHaveLength(0);
+			expect(routeResult.noExternalUsage).toBeFalse();
+
+			const ordinaryResult = await analyze(ordinaryFile, project);
+			expect(ordinaryResult.externalUsageAssumed).toBeFalse();
+			expect(ordinaryResult.unusedExports.map((item) => item.name)).toContain(
+				"GET"
+			);
+			expect(ordinaryResult.noExternalUsage).toBeTrue();
+		} finally {
+			await cleanup(dir);
+		}
+	});
+
+	// @BDD: ANLY-004-Verified
+	test("CLI analyze respects built-in and configured entrypoints", async () => {
+		const dir = await makeFixtureBase("analyze-configured-entrypoint", {
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: { strict: true },
+				include: ["**/*.ts"],
+			}),
+			"app/api/example/route.ts": "export async function GET() {}\n",
+			"hooks/dispatch.ts": "export function runHook() {}\n",
+		});
+		try {
+			for (const args of [
+				[path.join(dir, "app/api/example/route.ts")],
+				[path.join(dir, "hooks/dispatch.ts"), "--entrypoint-globs=hooks/**"],
+			]) {
+				const proc = Bun.spawn([...CLI, "analyze", ...args], {
+					stdout: "pipe",
+					stderr: "pipe",
+				});
+				const [stdout, stderr] = await Promise.all([
+					new Response(proc.stdout).text(),
+					new Response(proc.stderr).text(),
+				]);
+				await proc.exited;
+				expect(proc.exitCode, stderr).toBe(0);
+				expect(stdout).toContain("treated as externally consumed");
+				expect(stdout).not.toContain("delete (no refs)");
+				expect(stdout).not.toContain("No external usage");
+			}
+		} finally {
+			await cleanup(dir);
+		}
+	});
+
 	test("warns when project graph coverage is incomplete", async () => {
 		const dir = await makeFixture("skipped-file", {
 			"tsconfig.json": JSON.stringify({

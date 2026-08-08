@@ -214,17 +214,25 @@ function findTool(
 	});
 }
 
-async function analyzeTool(
+export async function analyzeTool(
 	file: string,
-	project?: string
+	options: {
+		project?: string;
+		entrypointGlobs?: string | string[];
+	} = {}
 ): Promise<CallToolResult> {
 	const absolutePath = path.resolve(file);
-	const tsconfigPath = resolveTsConfig(project, path.dirname(absolutePath));
+	const tsconfigPath = resolveTsConfig(
+		options.project,
+		path.dirname(absolutePath)
+	);
 	if (!tsconfigPath) {
 		return tsconfigNotFound(absolutePath);
 	}
 	const projectConfig = loadProject(tsconfigPath, absolutePath);
-	const result = await analyze(absolutePath, projectConfig);
+	const result = await analyze(absolutePath, projectConfig, {
+		entrypointGlobs: options.entrypointGlobs,
+	});
 	const root = projectConfig.rootDir;
 	return jsonText({
 		file: path.relative(root, result.file),
@@ -264,6 +272,7 @@ async function analyzeTool(
 			internalRefCount: e.internalRefCount,
 		})),
 		noExternalUsage: result.noExternalUsage,
+		externalUsageAssumed: result.externalUsageAssumed,
 		skippedFileCount: result.skippedFiles.length,
 		skippedFiles: result.skippedFiles.map((file) => path.relative(root, file)),
 		coverageIncomplete: result.skippedFiles.length > 0,
@@ -455,7 +464,7 @@ async function barrelTool(
 	return jsonText(barrelReportToJson(report, baseDir));
 }
 
-async function unusedTool(
+export async function unusedTool(
 	directory: string,
 	options: {
 		project?: string;
@@ -498,6 +507,10 @@ async function unusedTool(
 		warnings: report.warnings,
 		excludedGeneratedFileCount: report.excludedGeneratedFileCount,
 		excludedGeneratedFiles: report.excludedGeneratedFiles.map((file) =>
+			path.relative(absoluteDir, file)
+		),
+		excludedEntrypointFileCount: report.excludedEntrypointFileCount,
+		excludedEntrypointFiles: report.excludedEntrypointFiles.map((file) =>
 			path.relative(absoluteDir, file)
 		),
 		orphanFiles: report.orphanFiles.map((orphan) => ({
@@ -883,11 +896,17 @@ server.registerTool(
 				.describe(
 					"Optional path to the project root or tsconfig.json. Omit to auto-resolve the nearest tsconfig that owns the file (recommended)"
 				),
+			entrypointGlobs: z
+				.union([z.string(), z.array(z.string())])
+				.optional()
+				.describe(
+					"Optional glob pattern(s) for filename-dispatched entrypoints whose exports should be treated as externally consumed"
+				),
 		},
 	},
-	async ({ file, project }) => {
+	async ({ file, project, entrypointGlobs }) => {
 		return withErrorHandling(async () => {
-			return analyzeTool(file, project);
+			return analyzeTool(file, { project, entrypointGlobs });
 		});
 	}
 );

@@ -1,6 +1,10 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
 import {
+	type EntrypointGlobs,
+	isConventionEntrypointFile,
+} from "../core/framework-conventions.ts";
+import {
 	buildDependencyGraph,
 	buildProjectGraphs,
 	findAllReferences,
@@ -24,6 +28,11 @@ import { setupCommandContext } from "./command-context.ts";
 export interface AnalyzeOptions extends ReadOnlyCommandOptions {
 	file: string;
 	onlyRelatedTo?: string;
+	entrypointGlobs?: EntrypointGlobs;
+}
+
+export interface AnalyzeFileOptions {
+	entrypointGlobs?: EntrypointGlobs;
 }
 
 export async function analyzeCommand(options: AnalyzeOptions): Promise<void> {
@@ -33,6 +42,7 @@ export async function analyzeCommand(options: AnalyzeOptions): Promise<void> {
 		project: projectArg,
 		workspace = false,
 		onlyRelatedTo,
+		entrypointGlobs,
 	} = options;
 
 	const absolutePath = path.resolve(file);
@@ -49,7 +59,7 @@ export async function analyzeCommand(options: AnalyzeOptions): Promise<void> {
 	}
 
 	const { extraProjects, project, workspace: workspaceInfo } = context;
-	const result = await analyze(absolutePath, project);
+	const result = await analyze(absolutePath, project, { entrypointGlobs });
 
 	// When workspace mode is enabled, find cross-package references
 	if (workspace && workspaceInfo && workspaceInfo.packages.length > 0) {
@@ -103,7 +113,8 @@ export async function analyzeCommand(options: AnalyzeOptions): Promise<void> {
 
 export async function analyze(
 	filePath: string,
-	project: ProjectConfig
+	project: ProjectConfig,
+	options?: AnalyzeFileOptions
 ): Promise<AnalysisResult> {
 	// .vue files cannot be parsed via createProgram — use the Vue-aware parseSourceFile instead.
 	// For non-vue files, fall back to parseSourceFile if the program can't resolve the file
@@ -163,21 +174,28 @@ export async function analyze(
 	} = await import("./unused.ts");
 	const importedBindings = buildImportedBindingsMap(graph);
 	const fileImporters = importedBindings.get(filePath);
-	const unusedExports = exports
-		.filter((exp) => !isExportUsed(exp, filePath, fileImporters, graph))
-		.map((exp) => {
-			const internalRefCount = countInternalReferences(
-				sourceFile,
-				exp,
-				internalRefChecker
-			);
-			return {
-				...exp,
-				internalUsage: internalRefCount > 0,
-				internalRefCount,
-			};
-		});
-	const noExternalUsage = hasNoExternalUsage(filePath, exports, graph);
+	const externalUsageAssumed = isConventionEntrypointFile(
+		filePath,
+		options?.entrypointGlobs
+	);
+	const unusedExports = externalUsageAssumed
+		? []
+		: exports
+				.filter((exp) => !isExportUsed(exp, filePath, fileImporters, graph))
+				.map((exp) => {
+					const internalRefCount = countInternalReferences(
+						sourceFile,
+						exp,
+						internalRefChecker
+					);
+					return {
+						...exp,
+						internalUsage: internalRefCount > 0,
+						internalRefCount,
+					};
+				});
+	const noExternalUsage =
+		!externalUsageAssumed && hasNoExternalUsage(filePath, exports, graph);
 
 	return {
 		file: filePath,
@@ -188,6 +206,7 @@ export async function analyze(
 		unresolvable,
 		unusedExports,
 		noExternalUsage,
+		externalUsageAssumed,
 		skippedFiles: graph.skippedFiles,
 	};
 }
@@ -274,7 +293,12 @@ function printAnalysis(
 		logger.empty();
 	}
 
-	if (result.noExternalUsage) {
+	if (result.externalUsageAssumed) {
+		logger.info(
+			"Framework or configured entrypoint: exports are treated as externally consumed."
+		);
+		logger.empty();
+	} else if (result.noExternalUsage) {
 		logger.info(
 			"No external usage: every export in this file is unused outside the file."
 		);

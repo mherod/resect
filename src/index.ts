@@ -17,7 +17,10 @@ export type {
 } from "./commands/alias.ts";
 export { aliasCommand, planAliasEdits } from "./commands/alias.ts";
 // ── Commands: analyze ───────────────────────────────────────────────
-export type { AnalyzeOptions } from "./commands/analyze.ts";
+export type {
+	AnalyzeFileOptions,
+	AnalyzeOptions,
+} from "./commands/analyze.ts";
 export { analyze, analyzeCommand } from "./commands/analyze.ts";
 // ── Commands: analyze-impact ────────────────────────────────────────
 export type { AnalyzeImpactOptions } from "./commands/analyze-impact.ts";

@@ -14,7 +14,9 @@ const NEXT_APP_ROUTER_CONVENTIONS = new Map<string, AppRouterConventionScope>([
 	["apple-icon", "route-segment"],
 	["default", "route-segment"],
 	["error", "route-segment"],
+	["forbidden", "app-root"],
 	["global-error", "app-root"],
+	["global-not-found", "app-root"],
 	["icon", "route-segment"],
 	["layout", "route-segment"],
 	["loading", "route-segment"],
@@ -27,7 +29,10 @@ const NEXT_APP_ROUTER_CONVENTIONS = new Map<string, AppRouterConventionScope>([
 	["sitemap", "route-segment"],
 	["template", "route-segment"],
 	["twitter-image", "route-segment"],
+	["unauthorized", "app-root"],
 ]);
+
+export type EntrypointGlobs = string | readonly string[];
 
 /**
  * Monorepo directories that hold packages rather than route segments; an `app`
@@ -128,4 +133,52 @@ export function isFrameworkConventionFile(
 	}
 
 	return scope === "route-segment" || appRootIndex === segments.length - 2;
+}
+
+export function normalizeEntrypointGlobs(
+	globs: EntrypointGlobs | undefined
+): readonly string[] {
+	if (!globs) {
+		return [];
+	}
+	return typeof globs === "string" ? [globs] : globs;
+}
+
+/**
+ * Match an absolute or relative file path against caller-configured entrypoint
+ * globs. Relative suffix matching keeps patterns such as `hooks/**` useful when
+ * command internals operate on absolute project paths.
+ */
+export function matchesEntrypointGlob(
+	filePath: string,
+	globs: EntrypointGlobs | undefined
+): boolean {
+	const basename = path.basename(filePath);
+	const segments = filePath.split(path.sep).filter(Boolean);
+	for (const pattern of normalizeEntrypointGlobs(globs)) {
+		const glob = new Bun.Glob(pattern);
+		if (glob.match(filePath) || glob.match(basename)) {
+			return true;
+		}
+		for (let index = 0; index < segments.length - 1; index++) {
+			if (glob.match(segments.slice(index).join(path.sep))) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+/**
+ * True when a file is consumed externally either by a built-in framework
+ * filename contract or by an explicit caller-supplied entrypoint glob.
+ */
+export function isConventionEntrypointFile(
+	filePath: string,
+	globs?: EntrypointGlobs
+): boolean {
+	return (
+		isFrameworkConventionFile(filePath) ||
+		matchesEntrypointGlob(filePath, globs)
+	);
 }

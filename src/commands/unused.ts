@@ -2,6 +2,10 @@ import path from "node:path";
 import ts from "typescript";
 import { logger } from "../cli-logger.ts";
 import {
+	isConventionEntrypointFile,
+	normalizeEntrypointGlobs,
+} from "../core/framework-conventions.ts";
+import {
 	createFrameworkGeneratedArtifactClassifier,
 	excludeFrameworkGeneratedArtifacts,
 	generatedArtifactWarning,
@@ -40,34 +44,6 @@ export interface UnusedOptions extends ReadOnlyCommandOptions {
 	entrypointGlobs?: string | string[];
 }
 
-function normalizeGlobs(
-	globs: string | string[] | undefined
-): readonly string[] {
-	if (!globs) {
-		return [];
-	}
-	return Array.isArray(globs) ? globs : [globs];
-}
-
-function matchesAnyGlob(file: string, patterns: readonly string[]): boolean {
-	const basename = path.basename(file);
-	// Also build relative-path suffixes so a pattern like "hooks/**" matches
-	// absolute paths like "/project/hooks/dispatch.ts".
-	const segments = file.split(path.sep).filter(Boolean);
-	for (const pattern of patterns) {
-		const glob = new Bun.Glob(pattern);
-		if (glob.match(file) || glob.match(basename)) {
-			return true;
-		}
-		for (let i = 0; i < segments.length - 1; i++) {
-			if (glob.match(segments.slice(i).join(path.sep))) {
-				return true;
-			}
-		}
-	}
-	return false;
-}
-
 export interface UnusedExport {
 	file: string;
 	name: string;
@@ -103,6 +79,9 @@ export interface UnusedReport {
 	warnings: string[];
 	excludedGeneratedFiles: string[];
 	excludedGeneratedFileCount: number;
+	/** Built-in or configured entrypoint files omitted from unused/dead verdicts. */
+	excludedEntrypointFiles: string[];
+	excludedEntrypointFileCount: number;
 	unused: UnusedExport[];
 	orphanFiles: OrphanFile[];
 	totalExports: number;
@@ -153,6 +132,8 @@ export async function findUnusedExports(
 			warnings: [],
 			excludedGeneratedFiles: [],
 			excludedGeneratedFileCount: 0,
+			excludedEntrypointFiles: [],
+			excludedEntrypointFileCount: 0,
 			unused: [],
 			orphanFiles: [],
 			totalExports: 0,
@@ -224,6 +205,8 @@ export async function findUnusedExportsFromGraphs(
 			warnings: [],
 			excludedGeneratedFiles: [],
 			excludedGeneratedFileCount: 0,
+			excludedEntrypointFiles: [],
+			excludedEntrypointFileCount: 0,
 			unused: [],
 			orphanFiles: [],
 			totalExports: 0,
@@ -265,11 +248,14 @@ export async function findUnusedExportsFromGraphs(
 	// CANDIDATES only — ignored files (e.g. tests) still contribute to the usage
 	// graph above, so a test-only export is not falsely reported dead.
 	const ignorePattern = options?.ignore ? new Bun.Glob(options.ignore) : null;
-	const entrypointGlobPatterns = normalizeGlobs(options?.entrypointGlobs);
+	const entrypointGlobPatterns = normalizeEntrypointGlobs(
+		options?.entrypointGlobs
+	);
 
 	const unused: UnusedExport[] = [];
 	const exportedFiles = new Map<string, ExportInfo[]>();
 	const entrypointFiles = await collectPackageEntrypointFiles(absoluteDir);
+	const excludedEntrypointFiles = new Set<string>();
 	const skippedFiles = new Set(graph.skippedFiles);
 	let totalExports = 0;
 
@@ -280,10 +266,8 @@ export async function findUnusedExportsFromGraphs(
 		) {
 			continue;
 		}
-		if (
-			entrypointGlobPatterns.length > 0 &&
-			matchesAnyGlob(file, entrypointGlobPatterns)
-		) {
+		if (isConventionEntrypointFile(file, entrypointGlobPatterns)) {
+			excludedEntrypointFiles.add(normalizePath(file));
 			continue;
 		}
 
@@ -363,6 +347,8 @@ export async function findUnusedExportsFromGraphs(
 				: [],
 		excludedGeneratedFiles: [...excludedGeneratedFiles].sort(),
 		excludedGeneratedFileCount: excludedGeneratedFiles.size,
+		excludedEntrypointFiles: [...excludedEntrypointFiles].sort(),
+		excludedEntrypointFileCount: excludedEntrypointFiles.size,
 		unused,
 		orphanFiles,
 		totalExports,
@@ -414,7 +400,7 @@ export function computeOrphanFiles(
 		if (exports.length === 0 || entrypointFiles.has(normalizePath(file))) {
 			continue;
 		}
-		if (entrypointGlobs.length > 0 && matchesAnyGlob(file, entrypointGlobs)) {
+		if (isConventionEntrypointFile(file, entrypointGlobs)) {
 			continue;
 		}
 
@@ -908,6 +894,18 @@ export async function unusedCommand(options: UnusedOptions): Promise<void> {
 	logger.info(
 		`📊 Scanned ${report.totalExports} export(s) across ${report.totalFiles} file(s)\n`
 	);
+
+	if (report.excludedEntrypointFileCount > 0) {
+		logger.info(
+			`↪ Excluded ${report.excludedEntrypointFileCount} framework or configured entrypoint file(s) from unused/dead verdicts.`
+		);
+		if (verbose) {
+			for (const file of report.excludedEntrypointFiles) {
+				logger.info(`   ${path.relative(absoluteDir, file)}`);
+			}
+		}
+		logger.empty();
+	}
 
 	if (report.excludedGeneratedFileCount > 0) {
 		logger.warn(
