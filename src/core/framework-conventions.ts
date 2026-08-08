@@ -1,24 +1,32 @@
 import path from "node:path";
 
+type AppRouterConventionScope = "app-root" | "route-segment";
+
 /**
- * Next.js App Router filenames whose meaning comes from their name and position
- * in the route tree rather than from what they export.
+ * Next.js App Router code filenames whose meaning comes from their name and
+ * position rather than from what they export. The scope keeps root-only
+ * conventions from exempting ordinary same-stem files in nested route segments.
  *
  * https://nextjs.org/docs/app/getting-started/project-structure
+ * https://nextjs.org/docs/app/api-reference/file-conventions/metadata
  */
-const NEXT_APP_ROUTER_STEMS = new Set([
-	"default",
-	"error",
-	"global-error",
-	"layout",
-	"loading",
-	"not-found",
-	"opengraph-image",
-	"page",
-	"route",
-	"sitemap",
-	"template",
-	"twitter-image",
+const NEXT_APP_ROUTER_CONVENTIONS = new Map<string, AppRouterConventionScope>([
+	["apple-icon", "route-segment"],
+	["default", "route-segment"],
+	["error", "route-segment"],
+	["global-error", "app-root"],
+	["icon", "route-segment"],
+	["layout", "route-segment"],
+	["loading", "route-segment"],
+	["manifest", "app-root"],
+	["not-found", "route-segment"],
+	["opengraph-image", "route-segment"],
+	["page", "route-segment"],
+	["robots", "app-root"],
+	["route", "route-segment"],
+	["sitemap", "route-segment"],
+	["template", "route-segment"],
+	["twitter-image", "route-segment"],
 ]);
 
 /**
@@ -42,15 +50,18 @@ const WORKSPACE_CONTAINER_SEGMENTS = new Set([
  * recognised while rejecting the package-name case. This only ever narrows the
  * exemption, so it cannot create a new one.
  */
-export function hasAppRouterRootSegment(filePath: string): boolean {
-	const segments = filePath.split(path.sep);
-	return segments.some((segment, index) => {
+function findAppRouterRootSegmentIndex(segments: string[]): number {
+	return segments.findIndex((segment, index) => {
 		if (segment !== "app") {
 			return false;
 		}
 		const parent = segments[index - 1];
 		return parent === undefined || !WORKSPACE_CONTAINER_SEGMENTS.has(parent);
 	});
+}
+
+export function hasAppRouterRootSegment(filePath: string): boolean {
+	return findAppRouterRootSegmentIndex(filePath.split(path.sep)) !== -1;
 }
 
 /**
@@ -105,7 +116,16 @@ export function isFrameworkConventionFile(
 	stem?: string
 ): boolean {
 	const resolvedStem = stem ?? path.basename(filePath, path.extname(filePath));
-	return (
-		NEXT_APP_ROUTER_STEMS.has(resolvedStem) && hasAppRouterRootSegment(filePath)
-	);
+	const scope = NEXT_APP_ROUTER_CONVENTIONS.get(resolvedStem);
+	if (!scope) {
+		return false;
+	}
+
+	const segments = filePath.split(path.sep);
+	const appRootIndex = findAppRouterRootSegmentIndex(segments);
+	if (appRootIndex === -1) {
+		return false;
+	}
+
+	return scope === "route-segment" || appRootIndex === segments.length - 2;
 }

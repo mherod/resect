@@ -2,26 +2,26 @@
   "schemaVersion": 2,
   "projectId": "mherod/resect",
   "requirementsFile": "REQUIREMENTS.md",
-  "requirementsSha256": "79b8d78ceb8690add5f4675da39b2913747b342266ea3f8695ff748642f59e78",
-  "sourceCommit": "02a09a3ca6b16b1ce803f9bc1e1b213961a013f4",
-  "generatedAt": "2026-08-08T04:49:24Z",
+  "requirementsSha256": "0c24c3789050de5062e8a231474e57311391308f74b7d4218b0fb666684f72c1",
+  "sourceCommit": "0f748f3a0b2d092e39d7902e295106ad3447194c",
+  "generatedAt": "2026-08-08T05:19:41Z",
   "validator": {
     "name": "generate-requirements",
     "version": "2.0.0",
-    "command": "bun $HOME/.agents/skills/generate-requirements/scripts/validate-bdd.js REQUIREMENTS.md --status-log .requirements-status.json"
+    "command": "bun scripts/validate-bdd.js /Users/matthew.herod/Development/resect/REQUIREMENTS.md --status-log /Users/matthew.herod/Development/resect/.requirements-status.json"
   },
   "validation": {
     "structure": {
       "status": "PASS",
-      "receiptId": "STRUCT-20260808-002",
+      "receiptId": "STRUCT-20260808-003",
       "validator": "validate-bdd",
       "validatorVersion": "2.0.0",
-      "command": "bun $HOME/.agents/skills/generate-requirements/scripts/validate-bdd.js REQUIREMENTS.md --status-log .requirements-status.json",
-      "requirementsSha256": "79b8d78ceb8690add5f4675da39b2913747b342266ea3f8695ff748642f59e78",
-      "sourceCommit": "02a09a3ca6b16b1ce803f9bc1e1b213961a013f4",
-      "generatedAt": "2026-08-08T04:49:24Z",
+      "command": "bun scripts/validate-bdd.js /Users/matthew.herod/Development/resect/REQUIREMENTS.md --status-log /Users/matthew.herod/Development/resect/.requirements-status.json",
+      "requirementsSha256": "0c24c3789050de5062e8a231474e57311391308f74b7d4218b0fb666684f72c1",
+      "sourceCommit": "0f748f3a0b2d092e39d7902e295106ad3447194c",
+      "generatedAt": "2026-08-08T05:19:41Z",
       "counts": {
-        "checked": 40,
+        "checked": 42,
         "errors": 0,
         "warnings": 0
       },
@@ -31,42 +31,41 @@
     },
     "documentQuality": {
       "status": "PASS",
-      "receiptId": "QUALITY-20260808-002",
+      "receiptId": "QUALITY-20260808-003",
       "validator": "generate-requirements-manual-review",
       "validatorVersion": "2.0.0",
       "command": "generate-requirements 2.0 manual review of REQUIREMENTS.md",
-      "requirementsSha256": "79b8d78ceb8690add5f4675da39b2913747b342266ea3f8695ff748642f59e78",
-      "sourceCommit": "02a09a3ca6b16b1ce803f9bc1e1b213961a013f4",
-      "generatedAt": "2026-08-08T04:49:24Z",
+      "requirementsSha256": "0c24c3789050de5062e8a231474e57311391308f74b7d4218b0fb666684f72c1",
+      "sourceCommit": "0f748f3a0b2d092e39d7902e295106ad3447194c",
+      "generatedAt": "2026-08-08T05:19:41Z",
       "counts": {
-        "checked": 40,
+        "checked": 42,
         "errors": 0,
         "warnings": 0
       },
       "notes": [
-        "Reviewed all 40 scenarios for product-first wording, one-trigger atomicity, actor and limitation coverage, lifecycle mapping, cross-cutting applicability, and decision completeness.",
-        "Framework-aware barrel analysis is explicit across the shared analysis actor group, valid App Router locations, same-basename controls, structural inventory, unused findings, and CLI, MCP, and library surfaces; no preamble or priority-skew warning was computed."
+        "Reviewed all 42 scenarios for product-first wording, one-trigger atomicity, actor and limitation coverage, lifecycle mapping, cross-cutting applicability, and decision completeness.",
+        "Framework-aware naming safety is explicit across human-readable and structured findings, valid App Router locations, ordinary and invalid-location controls, no-op suppression, and apply planning; no preamble or priority-skew warning was computed."
       ]
     },
     "implementation": {
       "status": "PASS",
-      "receiptId": "IMPL-20260808-002",
+      "receiptId": "IMPL-20260808-003",
       "validator": "bun-test-plus-clause-audit",
       "validatorVersion": "1.3.14+generate-requirements-2.0.0",
-      "command": "bun test src/commands/barrel.test.ts src/commands/command-spec.test.ts src/mcp-schema-parity.test.ts src/index.test.ts --timeout=20000 --parallel=4 && bun test --timeout=20000 && pnpm run check && pnpm run lint && pnpm run typecheck && pnpm run build:lib && pnpm run verify:size",
-      "requirementsSha256": "79b8d78ceb8690add5f4675da39b2913747b342266ea3f8695ff748642f59e78",
-      "sourceCommit": "02a09a3ca6b16b1ce803f9bc1e1b213961a013f4",
-      "generatedAt": "2026-08-08T04:49:24Z",
+      "command": "bun test src/core/framework-conventions.test.ts src/commands/naming.test.ts src/commands/organise.test.ts src/commands/barrel.test.ts --parallel=4 && bun test --timeout=20000 --parallel=4 && pnpm run check && pnpm run lint && pnpm run typecheck && pnpm run build:lib && pnpm run verify:size",
+      "requirementsSha256": "0c24c3789050de5062e8a231474e57311391308f74b7d4218b0fb666684f72c1",
+      "sourceCommit": "0f748f3a0b2d092e39d7902e295106ad3447194c",
+      "generatedAt": "2026-08-08T05:19:41Z",
       "counts": {
-        "checked": 40,
+        "checked": 42,
         "errors": 0,
         "warnings": 0
       },
       "notes": [
-        "The barrel, command-specification, MCP parity, and library focus passed 62 tests with 0 failures and 397 assertions across 4 files.",
-        "The repository-guide canonical complete Bun suite passed 936 tests with 0 failures and 2605 assertions across 69 files; the guarded commit additionally passed 65 affected tests with 0 failures and 404 assertions across 5 files.",
-        "Exploratory full-suite runs with forced four-way parallelism produced rotating unrelated 20-second timeouts; each sampled timeout passed in isolation before the canonical sequential full suite passed.",
-        "Biome checks, ESLint, TypeScript, the library build, the compiled binary hook build, the strict 0.95 similarity scan, and the configured tarball-size preflight passed against source commit 02a09a3.",
+        "The framework-convention, naming, organise, and barrel focus passed 57 tests with 0 failures and 220 assertions across 4 files.",
+        "The complete Bun suite passed 942 tests with 0 failures and 2672 assertions across 70 files using the hook-required four-way parallelism; the guarded implementation commit additionally passed 138 affected tests with 0 failures and 718 assertions across 9 files.",
+        "Biome checks, ESLint, TypeScript, the library build, the compiled binary hook build, the strict 0.95 similarity scan, and the configured tarball-size preflight passed against source commit 0f748f3.",
         "MOVE-001 through MOVE-003 map to src/commands/move.test.ts and src/commands/move.ts at source commit 52106e7.",
         "TIDY-001, TIDY-002, and ROLL-001 map to src/commands/tidy.test.ts, src/core/rollback.test.ts, src/commands/tidy.ts, and src/core/rollback.ts at source commit 52106e7.",
         "CFG-001 through CFG-006 map to src/core/project-config.test.ts, src/commands/config-defaults.test.ts, src/commands/discover.test.ts, and their corresponding implementation files at source commit 52106e7.",
@@ -75,7 +74,7 @@
         "BATCH-001 through BATCH-005 map to src/commands/move-batch.test.ts and src/commands/move-batch.ts at source commit 52106e7.",
         "BATCH-006 and BATCH-007 map to src/mcp-server.ts plus src/mcp-schema-parity.test.ts at source commit 52106e7; these are explicit implementation locators in place of BDD anchors.",
         "AUDIT-001 through AUDIT-004 map to src/commands/audit.test.ts, src/commands/audit.ts, and src/mcp-server.ts at source commit 52106e7.",
-        "NAM-001 through NAM-003 map to src/commands/naming.test.ts, src/commands/naming.ts, src/commands/registry.ts, src/mcp-server.ts, src/types/naming.ts, and src/index.test.ts; 50 focused tests passed with 0 failures and 154 assertions.",
+        "NAM-001 through NAM-005 map to src/core/framework-conventions.ts, src/core/framework-conventions.test.ts, src/commands/naming.test.ts, src/commands/naming.ts, src/commands/registry.ts, src/mcp-server.ts, src/types/naming.ts, and src/index.test.ts; the direct framework and naming focus passed 30 tests with 0 failures and 157 assertions.",
         "JOUR-001 and JOUR-002 map to src/core/journal.ts, src/core/journal.test.ts, src/commands/journal-integration.test.ts, the move, rename, alias, tidy, MCP, registry, and library surfaces.",
         "UNDO-001 through UNDO-005 map to src/core/journal.ts, src/core/journal.test.ts, src/commands/undo.ts, src/commands/undo.test.ts, src/commands/journal-integration.test.ts, src/commands/registry.ts, src/mcp-server.ts, and src/index.ts.",
         "ANLY-001 and ANLY-002 map to src/core/generated-artifacts.ts, src/core/generated-artifacts.test.ts, src/commands/audit.test.ts, src/commands/naming.test.ts, src/commands/unused.test.ts, src/mcp-server.ts, and src/types/naming.ts at source commit 7016141.",
@@ -84,28 +83,28 @@
     }
   },
   "metrics": {
-    "totalScenarios": 40,
+    "totalScenarios": 42,
     "byDelivery": {
-      "V1": 40,
+      "V1": 42,
       "V2": 0,
       "LATER": 0,
       "UNSLICED": 0
     },
     "byDecision": {
-      "DECIDED": 40,
+      "DECIDED": 42,
       "OPEN": 0
     },
     "byPriority": {
       "P0": 4,
-      "P1": 24,
-      "P2": 12,
+      "P1": 25,
+      "P2": 13,
       "P3": 0
     },
     "priorityByDelivery": {
       "V1": {
         "P0": 4,
-        "P1": 24,
-        "P2": 12,
+        "P1": 25,
+        "P2": 13,
         "P3": 0
       },
       "V2": {
@@ -128,15 +127,15 @@
       }
     },
     "byFidelity": {
-      "VERIFIED": 40,
+      "VERIFIED": 42,
       "DRIFTED": 0,
       "MISSING": 0,
       "UNTESTABLE": 0
     },
     "coverage": {
       "v1Decided": {
-        "eligible": 40,
-        "verified": 40,
+        "eligible": 42,
+        "verified": 42,
         "percentage": 100
       },
       "v1LaunchCritical": {
@@ -178,8 +177,8 @@
     "fidelityNoteMismatchIds": [],
     "orphanAnchorIds": [],
     "preamble": {
-      "linesBeforeFirstScenario": 105,
-      "percentageBeforeFirstScenario": 21.9,
+      "linesBeforeFirstScenario": 106,
+      "percentageBeforeFirstScenario": 21.2,
       "warning": false,
       "disposition": null
     },

@@ -78,6 +78,13 @@ const PASCAL_FUNCTION_NAMES = [
 	"RenderPanel",
 ] as const;
 
+const NEXT_METADATA_CODE_FILES = [
+	"apple-icon.tsx",
+	"icon.tsx",
+	"manifest.ts",
+	"robots.ts",
+] as const;
+
 async function makeFixture(name: string, files: Record<string, string>) {
 	return makeFixtureBase(`naming-${name}`, files, { tsconfig: true });
 }
@@ -377,7 +384,17 @@ describe("naming command", () => {
 
 	test("exempts Next.js reserved filenames inside an app router tree", async () => {
 		const dir = await makeFixture("reserved-app", {
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: { jsx: "preserve", strict: true },
+				include: ["**/*.ts", "**/*.tsx"],
+			}),
 			...withFiles(CAMEL_NAMES, functionFile),
+			...Object.fromEntries(
+				NEXT_METADATA_CODE_FILES.map((file) => [
+					`src/app/${file}`,
+					functionFile("metadata"),
+				])
+			),
 			"src/app/not-found.tsx":
 				"export default function NotFound() { return null; }\n",
 			"src/app/route.ts": "export function GET() { return 1; }\n",
@@ -400,6 +417,95 @@ describe("naming command", () => {
 		expect(flagged).not.toContain("not-found.tsx");
 		expect(flagged).not.toContain("route.ts");
 		expect(flagged).not.toContain("global-error.tsx");
+		for (const file of NEXT_METADATA_CODE_FILES) {
+			expect(flagged).not.toContain(file);
+		}
+
+		await cleanup(dir);
+	});
+
+	test("keeps metadata stems eligible outside valid App Router locations", async () => {
+		const dir = await makeFixture("metadata-nonframework", {
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: { jsx: "preserve", strict: true },
+				include: ["**/*.ts", "**/*.tsx"],
+			}),
+			...Object.fromEntries(
+				NEXT_METADATA_CODE_FILES.map((file) => [
+					`src/group/${file}`,
+					functionFile("metadata"),
+				])
+			),
+			"src/app/blog/manifest.ts": functionFile("manifest"),
+			"src/app/blog/robots.ts": functionFile("robots"),
+		});
+
+		const result = await captureOutput(async () =>
+			namingCommand({
+				directory: path.join(dir, "src"),
+				case: "PascalCase",
+				json: true,
+			})
+		);
+		const report = JSON.parse(result.stdout) as {
+			findings: Array<{ file: string; suggestedName: string }>;
+		};
+		const findings = new Map(
+			report.findings.map((finding) => [finding.file, finding.suggestedName])
+		);
+
+		expect(findings.get("group/apple-icon.tsx")).toBe("AppleIcon.tsx");
+		expect(findings.get("group/icon.tsx")).toBe("Icon.tsx");
+		expect(findings.get("group/manifest.ts")).toBe("Manifest.ts");
+		expect(findings.get("group/robots.ts")).toBe("Robots.ts");
+		expect(findings.get("app/blog/manifest.ts")).toBe("Manifest.ts");
+		expect(findings.get("app/blog/robots.ts")).toBe("Robots.ts");
+
+		await cleanup(dir);
+	});
+
+	// @BDD: NAM-004-Verified
+	test("filters the same metadata findings from JSON and human reports", async () => {
+		const dir = await makeFixture("metadata-output-parity", {
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: { jsx: "preserve", strict: true },
+				include: ["**/*.ts", "**/*.tsx"],
+			}),
+			...Object.fromEntries(
+				NEXT_METADATA_CODE_FILES.flatMap((file) => [
+					[`src/app/${file}`, functionFile("frameworkMetadata")],
+					[`src/group/${file}`, functionFile("ordinaryMetadata")],
+				])
+			),
+		});
+
+		const jsonResult = await captureOutput(async () =>
+			namingCommand({
+				directory: path.join(dir, "src"),
+				case: "PascalCase",
+				json: true,
+			})
+		);
+		const report = JSON.parse(jsonResult.stdout) as {
+			findings: Array<{ file: string; suggestedName: string }>;
+		};
+		expect(report.findings.map((finding) => finding.file)).toEqual(
+			NEXT_METADATA_CODE_FILES.map((file) => `group/${file}`)
+		);
+
+		const humanResult = await captureOutput(async () =>
+			namingCommand({
+				directory: path.join(dir, "src"),
+				case: "PascalCase",
+			})
+		);
+		expect(humanResult.stdout).toContain("Summary: 4 finding(s)");
+		expect(humanResult.stdout).not.toContain("\napp\n");
+		for (const finding of report.findings) {
+			expect(humanResult.stdout).toContain(
+				`${path.basename(finding.file)} -> ${finding.suggestedName}`
+			);
+		}
 
 		await cleanup(dir);
 	});
@@ -462,13 +568,23 @@ describe("naming command", () => {
 		await cleanup(dir);
 	});
 
+	// @BDD: NAM-005-Verified
 	test("--fix never plans a no-op or reserved-file rename", async () => {
 		const dir = await makeGitFixture("fix-reserved", {
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: { jsx: "preserve", strict: true },
+				include: ["**/*.ts", "**/*.tsx"],
+			}),
 			...withFiles(CAMEL_NAMES, functionFile),
+			...Object.fromEntries(
+				NEXT_METADATA_CODE_FILES.map((file) => [
+					`src/app/${file}`,
+					functionFile("metadata"),
+				])
+			),
 			"src/app/not-found.tsx":
 				"export default function NotFound() { return null; }\n",
 			"src/app/route.ts": "export function GET() { return 1; }\n",
-			"src/app/index.ts": "export const appIndex = 1;\n",
 			"src/app/my-widget.ts": functionFile("myWidget"),
 		});
 
@@ -478,7 +594,7 @@ describe("naming command", () => {
 				fix: true,
 				dryRun: true,
 				json: true,
-				case: "camelCase",
+				case: "PascalCase",
 			})
 		);
 		const out = JSON.parse(result.stdout) as {
@@ -490,7 +606,9 @@ describe("naming command", () => {
 		const planned = out.renames.map((r) => path.basename(r.from));
 		expect(planned).not.toContain("not-found.tsx");
 		expect(planned).not.toContain("route.ts");
-		expect(planned).not.toContain("index.ts");
+		for (const file of NEXT_METADATA_CODE_FILES) {
+			expect(planned).not.toContain(file);
+		}
 		expect(planned).toContain("my-widget.ts");
 
 		await cleanup(dir);
