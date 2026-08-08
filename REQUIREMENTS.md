@@ -9,7 +9,7 @@
 
 ## Product Ground Truth
 
-Resect is a local TypeScript and JavaScript refactoring tool exposed through a CLI, an MCP server, and a programmatic API. This baseline covers safe move failures, truthful tidy rollback, reusable rollback behavior, opt-in operation journaling and user-initiated undo, project-wide defaults, transform configuration trust and import preference, shared-context batch moves, explicit filename-casing enforcement, framework-aware naming safety, source-focused read-only analysis, and framework-aware barrel findings. Other behaviours remain outside this baseline until they receive source-backed scenarios. The host operating system controls filesystem and process access; resect adds validation, dirty-worktree protection, dry-run previews, pre-execution trust warnings, bounded local operation history, and verification boundaries but has no account, tenant, or remote session model.
+Resect is a local TypeScript and JavaScript refactoring tool exposed through a CLI, an MCP server, and a programmatic API. This baseline covers safe move failures, truthful tidy rollback, reusable rollback behavior, opt-in operation journaling and user-initiated undo, project-wide defaults, transform configuration trust and import preference, shared-context batch moves, explicit filename-casing enforcement, framework-aware naming safety, source-focused read-only analysis, framework-dispatched entrypoint safety, and framework-aware barrel findings. Other behaviours remain outside this baseline until they receive source-backed scenarios. The host operating system controls filesystem and process access; resect adds validation, dirty-worktree protection, dry-run previews, pre-execution trust warnings, bounded local operation history, and verification boundaries but has no account, tenant, or remote session model.
 
 ## Source Register
 
@@ -29,12 +29,13 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 | SRC-012 | Repository owner issue | 2026-08-08 | https://github.com/mherod/resect/issues/190 | Framework-generated TypeScript exclusion across audit, naming, and unused analysis |
 | SRC-013 | Repository owner issue | 2026-08-08 | https://github.com/mherod/resect/issues/189 | Framework metadata entrypoint treatment in barrel inventory and unused findings |
 | SRC-014 | Repository owner issue | 2026-08-08 | https://github.com/mherod/resect/issues/179 | No-op and framework-convention filename safety across naming reports and fixes |
+| SRC-015 | Repository owner issue | 2026-08-08 | https://github.com/mherod/resect/issues/150 | Framework convention entrypoint treatment in analyze and unused results |
 
 ## Delivery and Decision Register
 
 | Decision ID | Decision | State | Delivery | Sources | Reversal condition |
 |---|---|---|---|---|---|
-| DR-001 | This baseline covers the thirteen accepted issue scopes registered above. | DECIDED | V1 | SRC-001, SRC-002, SRC-003, SRC-004, SRC-005, SRC-006, SRC-008, SRC-009, SRC-010, SRC-011, SRC-012, SRC-013, SRC-014 | A repository-owner decision expands or retires the baseline. |
+| DR-001 | This baseline covers the fourteen accepted issue scopes registered above. | DECIDED | V1 | SRC-001, SRC-002, SRC-003, SRC-004, SRC-005, SRC-006, SRC-008, SRC-009, SRC-010, SRC-011, SRC-012, SRC-013, SRC-014, SRC-015 | A repository-owner decision expands or retires the baseline. |
 | DR-002 | Resect is a local developer tool without accounts, tenants, sessions, notifications, analytics, or media. | DECIDED | V1 | SRC-007 | A published contract adds one of these product surfaces. |
 | DR-003 | Filesystem and process permissions remain host concerns; resect must expose executable-config trust boundaries, report failures, and protect the workspace it mutates. | DECIDED | V1 | SRC-001, SRC-002, SRC-006, SRC-007, SRC-009 | The execution model moves into a managed remote sandbox. |
 | DR-004 | Batch moves are sequential within one process and use one setup, worktree guard, and verification boundary. | DECIDED | V1 | SRC-006 | A repository-owner decision introduces parallel or cross-process coordination. |
@@ -45,8 +46,8 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 
 | Actor | Access scope and capabilities | Limitation and direct-attempt coverage | Passive perspective |
 |---|---|---|---|
-| Operator | Invokes the CLI against a local project under host filesystem permissions. | Fatal writes, invalid config, malformed manifests, unprotected dirty mutations, unsafe undo attempts, and no-op or framework-reserved naming moves are refused or excluded; MOVE-002, CFG-004, BATCH-005, UNDO-004, NAM-005. | Resolved configuration, previews, journal identifiers, location-aware target-casing findings, source-focused metrics, generated-artifact exclusions, and framework-aware barrel findings are observable; CFG-005, BATCH-001, JOUR-001, UNDO-003, NAM-001, NAM-004, AUDIT-001, AUDIT-002, AUDIT-003, ANLY-001, ANLY-002, BARL-001, BARL-002. |
-| API Consumer | Invokes MCP or library operations against an explicitly supplied project and receives structured results. | Invalid or empty batch input and unsafe undo attempts are rejected before mutation; BATCH-007, UNDO-004. | MCP mutations and undo default to dry-run, while journal entries, location-aware target-casing findings, audit exclusions, generated-artifact exclusions, and framework-aware barrel findings are structured; JOUR-001, UNDO-003, BATCH-006, NAM-001, NAM-004, AUDIT-004, ANLY-001, ANLY-002, BARL-001, BARL-002. |
+| Operator | Invokes the CLI against a local project under host filesystem permissions. | Fatal writes, invalid config, malformed manifests, unprotected dirty mutations, unsafe undo attempts, no-op or framework-reserved naming moves, and false delete advice for convention entrypoints are refused or excluded; MOVE-002, CFG-004, BATCH-005, UNDO-004, NAM-005, ANLY-003. | Resolved configuration, previews, journal identifiers, location-aware target-casing findings, source-focused metrics, generated-artifact exclusions, framework entrypoint assumptions, and framework-aware barrel findings are observable; CFG-005, BATCH-001, JOUR-001, UNDO-003, NAM-001, NAM-004, AUDIT-001, AUDIT-002, AUDIT-003, ANLY-001, ANLY-002, ANLY-003, ANLY-004, BARL-001, BARL-002. |
+| API Consumer | Invokes MCP or library operations against an explicitly supplied project and receives structured results. | Invalid or empty batch input and unsafe undo attempts are rejected before mutation; BATCH-007, UNDO-004. | MCP mutations and undo default to dry-run, while journal entries, location-aware target-casing findings, audit exclusions, generated-artifact exclusions, framework entrypoint assumptions and exclusions, and framework-aware barrel findings are structured; JOUR-001, UNDO-003, BATCH-006, NAM-001, NAM-004, AUDIT-004, ANLY-001, ANLY-002, ANLY-003, ANLY-004, BARL-001, BARL-002. |
 
 ## Actor Groups
 
@@ -68,8 +69,8 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 
 | Coverage row | Scenario IDs or N/A | Decision or rationale |
 |---|---|---|
-| Entry | JOUR-001, CFG-001, TRNS-003, BATCH-001, BATCH-006, NAM-001, BARL-001 | Journal, configuration, transform, batch, target-casing, and barrel-analysis entry points are explicit. |
-| Passive observation | JOUR-001, UNDO-003, CFG-005, TRNS-003, BATCH-001, BATCH-006, NAM-001, NAM-003, NAM-004, AUDIT-001, AUDIT-002, AUDIT-003, AUDIT-004, ANLY-001, ANLY-002, BARL-001, BARL-002 | Operators and API consumers receive journal identifiers, resolved values, warnings, previews, or analysis output. |
+| Entry | JOUR-001, CFG-001, TRNS-003, BATCH-001, BATCH-006, NAM-001, ANLY-003, ANLY-004, BARL-001 | Journal, configuration, transform, batch, target-casing, source-analysis, and barrel-analysis entry points are explicit. |
+| Passive observation | JOUR-001, UNDO-003, CFG-005, TRNS-003, BATCH-001, BATCH-006, NAM-001, NAM-003, NAM-004, AUDIT-001, AUDIT-002, AUDIT-003, AUDIT-004, ANLY-001, ANLY-002, ANLY-003, ANLY-004, BARL-001, BARL-002 | Operators and API consumers receive journal identifiers, resolved values, warnings, previews, or analysis output. |
 | Successful exit | UNDO-001, UNDO-002, MOVE-001, BATCH-002, NAM-002, NAM-005 | Successful mutations and reversals report the applied operation while excluded naming moves remain untouched. |
 | Cancel or alternative exit | UNDO-003, BATCH-001 | Dry-run is the non-mutating alternative. |
 | Failure or timeout | UNDO-004, UNDO-005, MOVE-002, TIDY-001, TIDY-002, BATCH-004, BATCH-005, BATCH-007 | Failure paths preserve truthful outcomes. |
@@ -92,14 +93,14 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 | Security, session expiry or revocation, and abuse | APPLIES | TRNS-003 | Transform configs execute with host process privileges, so the consumer is warned before execution; SRC-009, DR-003. |
 | Audit and accountability | APPLIES | JOUR-001 | An opt-in local operation history identifies the command, inputs, timestamp, and affected files; SRC-011, DR-006. |
 | Notifications and communication preferences | N/A | — | No notification channel or preference model; DR-002; XC-NA-005. |
-| Search and discovery | APPLIES | CFG-001, CFG-005, NAM-004, AUDIT-001, ANLY-001, BARL-001 | Project configuration and configured source, output, or framework-convention boundaries are discovered and applied. |
+| Search and discovery | APPLIES | CFG-001, CFG-005, NAM-004, AUDIT-001, ANLY-001, ANLY-003, ANLY-004, BARL-001 | Project configuration and configured source, output, or framework-convention boundaries are discovered and applied. |
 | Empty and first-run states | APPLIES | UNDO-005, CFG-006, BATCH-005, BATCH-007 | Missing undo history and config are handled explicitly, and empty batches are rejected. |
 | Limits, quotas, and upgrade or denial behavior | APPLIES | JOUR-002 | Local operation history has a fixed retention limit without a plan or upgrade model; DR-006. |
 | Errors, degraded states, retry, and recovery | APPLIES | UNDO-004, UNDO-005, MOVE-002, TIDY-001, TIDY-002, ROLL-001, BATCH-004 | Mutating and reversal failures report truthfully and preserve later work unless explicitly forced. |
 | Persistence, interruption, and re-entry | APPLIES | JOUR-001, UNDO-001, UNDO-002, TIDY-002, ROLL-001 | Journal entries persist across command invocations and support a later guarded reversal. |
 | Data lifecycle, retention, deletion, and export | APPLIES | JOUR-002 | Operation history retains only the newest 20 entries; SRC-011, DR-006. |
 | Analytics and telemetry | N/A | — | No analytics or telemetry surface in baseline; DR-002; XC-NA-008. |
-| Performance, freshness, and stale-data behavior | APPLIES | CFG-001, BATCH-002, BATCH-003, NAM-004, AUDIT-001, AUDIT-002, AUDIT-003, ANLY-001, BARL-001, BARL-002 | Config and graph state are refreshed at their documented boundaries, and read-only analysis distinguishes authored structure from framework-consumed entrypoints and generated artifacts. |
+| Performance, freshness, and stale-data behavior | APPLIES | CFG-001, BATCH-002, BATCH-003, NAM-004, AUDIT-001, AUDIT-002, AUDIT-003, ANLY-001, ANLY-003, ANLY-004, BARL-001, BARL-002 | Config and graph state are refreshed at their documented boundaries, and read-only analysis distinguishes authored structure from framework-consumed entrypoints and generated artifacts. |
 | Media alternatives, captions, transcripts, and reduced motion | N/A | — | No media or motion surface; DR-002; XC-NA-009. |
 
 ## Feature: Safe Refactor Mutation and Rollback
@@ -468,6 +469,24 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 **And** a warning explains that framework-generated TypeScript was excluded
 **And** a machine-readable result identifies the excluded paths
 
+### ANLY-003 — Analysis Consumer — Protect framework convention entrypoints from delete advice
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P1 | **Fidelity:** VERIFIED | **Sources:** SRC-015
+
+**Given** a recognized App Router entrypoint in a valid location and an ordinary same-stem module elsewhere
+**When** an Analysis Consumer runs analyze or unused source analysis
+**Then** the framework entrypoint is absent from unused-export, orphan-file, and delete verdicts
+**And** the ordinary module remains analyzable
+
+### ANLY-004 — Analysis Consumer — Configure an external entrypoint convention
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P1 | **Fidelity:** VERIFIED | **Sources:** SRC-015
+
+**Given** an authored source file matches a caller-configured entrypoint glob
+**When** an Analysis Consumer invokes the CLI, MCP, or library analysis surface with that convention
+**Then** the file is treated as externally consumed rather than unused or deletable
+**And** machine-readable results identify the assumed or excluded entrypoint consistently across surfaces
+
 ## Feature: Framework-Aware Barrel Analysis
 
 ### BARL-001 — Analysis Consumer — Scope unused findings around framework metadata entrypoints
@@ -491,8 +510,8 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 
 | Layer | Status | Receipt | Current artifact |
 |---|---|---|---|
-| Structure | PASS | STRUCT-20260808-003 | [.requirements-status.json](.requirements-status.json) `validation.structure` |
-| Document quality | PASS | QUALITY-20260808-003 | [.requirements-status.json](.requirements-status.json) `validation.documentQuality` |
-| Implementation | PASS | IMPL-20260808-003 | [.requirements-status.json](.requirements-status.json) `validation.implementation` |
+| Structure | PASS | STRUCT-20260808-004 | [.requirements-status.json](.requirements-status.json) `validation.structure` |
+| Document quality | PASS | QUALITY-20260808-004 | [.requirements-status.json](.requirements-status.json) `validation.documentQuality` |
+| Implementation | PASS | IMPL-20260808-004 | [.requirements-status.json](.requirements-status.json) `validation.implementation` |
 
 The canonical validator, manual product-contract review, and focused implementation audit are independent. Counts, hashes, source commit, commands, timestamps, warning dispositions, and evidence summaries live only in the derived status artifact.

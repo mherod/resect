@@ -38,6 +38,7 @@ async function runUnusedJson(directory: string): Promise<UnusedJsonReport> {
 }
 
 describe("unused command", () => {
+	// @BDD: ANLY-003-Verified
 	test("excludes App Router entrypoints while retaining ordinary same-stem modules", async () => {
 		const dir = await makeFixtureBase("unused-framework-entrypoints", {
 			"tsconfig.json": JSON.stringify({
@@ -683,6 +684,7 @@ describe("unused command", () => {
 		await cleanup(dir);
 	});
 
+	// @BDD: ANLY-004-Verified
 	test("--entrypoint-globs excludes convention entrypoints from orphan files", async () => {
 		const dir = await makeFixture("entrypoint-globs", {
 			"hooks/dispatch.ts": "export function runHook() { return 1; }",

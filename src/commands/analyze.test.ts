@@ -16,6 +16,7 @@ async function makeFixture(name: string, files: Record<string, string>) {
 }
 
 describe("analyze command", () => {
+	// @BDD: ANLY-003-Verified
 	test("treats App Router route handlers as externally consumed", async () => {
 		const dir = await makeFixtureBase("analyze-framework-entrypoint", {
 			"tsconfig.json": JSON.stringify({
@@ -49,6 +50,7 @@ describe("analyze command", () => {
 		}
 	});
 
+	// @BDD: ANLY-004-Verified
 	test("CLI analyze respects built-in and configured entrypoints", async () => {
 		const dir = await makeFixtureBase("analyze-configured-entrypoint", {
 			"tsconfig.json": JSON.stringify({

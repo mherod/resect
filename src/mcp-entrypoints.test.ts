@@ -26,6 +26,8 @@ function parsePayload<T>(result: CallToolResult): T {
 }
 
 describe("MCP framework and configured entrypoints", () => {
+	// @BDD: ANLY-003-Verified
+	// @BDD: ANLY-004-Verified
 	test("agrees with library and CLI verdicts for assumed external usage", async () => {
 		const dir = await makeFixture("mcp-entrypoints", {
 			"tsconfig.json": JSON.stringify({
