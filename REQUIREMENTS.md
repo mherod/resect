@@ -9,7 +9,7 @@
 
 ## Product Ground Truth
 
-Resect is a local TypeScript and JavaScript refactoring tool exposed through a CLI, an MCP server, and a programmatic API. This baseline covers safe move failures, truthful tidy rollback, reusable rollback behavior, opt-in operation journaling and user-initiated undo, project-wide defaults, transform configuration trust and import preference, shared-context batch moves, explicit filename-casing enforcement, framework-aware naming safety, source-focused read-only analysis, framework-dispatched entrypoint safety, framework-aware barrel findings, and quiet CLI termination when a downstream stdout consumer closes normally. Other behaviours remain outside this baseline until they receive source-backed scenarios. The host operating system controls filesystem and process access; resect adds validation, dirty-worktree protection, dry-run previews, pre-execution trust warnings, bounded local operation history, and verification boundaries but has no account, tenant, or remote session model.
+Resect is a local TypeScript and JavaScript refactoring tool exposed through a CLI, an MCP server, and a programmatic API. This baseline covers safe move failures, CommonJS-interop-safe moves and renames, truthful tidy rollback, reusable rollback behavior, opt-in operation journaling and user-initiated undo, project-wide defaults, transform configuration trust and import preference, shared-context batch moves, explicit filename-casing enforcement, framework-aware naming safety, source-focused read-only analysis, framework-dispatched entrypoint safety, framework-aware barrel findings, and quiet CLI termination when a downstream stdout consumer closes normally. Other behaviours remain outside this baseline until they receive source-backed scenarios. The host operating system controls filesystem and process access; resect adds validation, dirty-worktree protection, dry-run previews, pre-execution trust warnings, bounded local operation history, and verification boundaries but has no account, tenant, or remote session model.
 
 ## Source Register
 
@@ -31,12 +31,13 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 | SRC-014 | Repository owner issue | 2026-08-08 | https://github.com/mherod/resect/issues/179 | No-op and framework-convention filename safety across naming reports and fixes |
 | SRC-015 | Repository owner issue | 2026-08-08 | https://github.com/mherod/resect/issues/150 | Framework convention entrypoint treatment in analyze and unused results |
 | SRC-016 | Repository owner issue | 2026-08-08 | https://github.com/mherod/resect/issues/192 | Expected closed-stdout termination and unexpected stream-error visibility |
+| SRC-017 | Repository owner issue | 2026-08-08 | https://github.com/mherod/resect/issues/136 | CommonJS interop scanning and move, rename, and specifier rewrite behavior |
 
 ## Delivery and Decision Register
 
 | Decision ID | Decision | State | Delivery | Sources | Reversal condition |
 |---|---|---|---|---|---|
-| DR-001 | This baseline covers the fifteen accepted issue scopes registered above. | DECIDED | V1 | SRC-001, SRC-002, SRC-003, SRC-004, SRC-005, SRC-006, SRC-008, SRC-009, SRC-010, SRC-011, SRC-012, SRC-013, SRC-014, SRC-015, SRC-016 | A repository-owner decision expands or retires the baseline. |
+| DR-001 | This baseline covers the sixteen accepted issue scopes registered above. | DECIDED | V1 | SRC-001, SRC-002, SRC-003, SRC-004, SRC-005, SRC-006, SRC-008, SRC-009, SRC-010, SRC-011, SRC-012, SRC-013, SRC-014, SRC-015, SRC-016, SRC-017 | A repository-owner decision expands or retires the baseline. |
 | DR-002 | Resect is a local developer tool without accounts, tenants, sessions, notifications, analytics, or media. | DECIDED | V1 | SRC-007 | A published contract adds one of these product surfaces. |
 | DR-003 | Filesystem and process permissions remain host concerns; resect must expose executable-config trust boundaries, report failures, and protect the workspace it mutates. | DECIDED | V1 | SRC-001, SRC-002, SRC-006, SRC-007, SRC-009, SRC-016 | The execution model moves into a managed remote sandbox. |
 | DR-004 | Batch moves are sequential within one process and use one setup, worktree guard, and verification boundary. | DECIDED | V1 | SRC-006 | A repository-owner decision introduces parallel or cross-process coordination. |
@@ -72,13 +73,13 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 |---|---|---|
 | Entry | JOUR-001, CFG-001, TRNS-003, BATCH-001, BATCH-006, NAM-001, ANLY-003, ANLY-004, BARL-001 | Journal, configuration, transform, batch, target-casing, source-analysis, and barrel-analysis entry points are explicit. |
 | Passive observation | JOUR-001, UNDO-003, CFG-005, TRNS-003, BATCH-001, BATCH-006, NAM-001, NAM-003, NAM-004, AUDIT-001, AUDIT-002, AUDIT-003, AUDIT-004, ANLY-001, ANLY-002, ANLY-003, ANLY-004, BARL-001, BARL-002 | Operators and API consumers receive journal identifiers, resolved values, warnings, previews, or analysis output. |
-| Successful exit | UNDO-001, UNDO-002, MOVE-001, BATCH-002, NAM-002, NAM-005 | Successful mutations and reversals report the applied operation while excluded naming moves remain untouched. |
+| Successful exit | UNDO-001, UNDO-002, MOVE-001, MOVE-004, REN-001, BATCH-002, NAM-002, NAM-005 | Successful mutations and reversals report the applied operation while excluded naming moves remain untouched. |
 | Cancel or alternative exit | UNDO-003, BATCH-001, CLI-001 | Dry-run is the non-mutating alternative, and a downstream consumer may end a successful pipeline after receiving its requested prefix. |
 | Failure or timeout | UNDO-004, UNDO-005, MOVE-002, TIDY-001, TIDY-002, BATCH-004, BATCH-005, BATCH-007, CLI-002 | Failure paths preserve truthful outcomes. |
 | Interruption and re-entry | JOUR-001, UNDO-001, TIDY-002, ROLL-001 | Journal state survives command boundaries, and interrupted verification restores the checkpoint when enabled. |
 | Illegal transitions | UNDO-004, UNDO-005, CFG-004, BATCH-005, BATCH-007 | Invalid inputs and unsafe or unavailable reversals fail before mutation. |
 | LIFE-NA-001 — System-driven transitions | N/A — commands run only on caller invocation | Decision: DR-002 |
-| Side effects | JOUR-001, UNDO-001, MOVE-001, BATCH-003, NAM-002, NAM-005 | Journal state and importer updates remain consistent with file mutations and reversals, while no-op and framework-reserved filenames remain unchanged. |
+| Side effects | JOUR-001, UNDO-001, MOVE-001, MOVE-004, REN-001, BATCH-003, NAM-002, NAM-005 | Journal state and importer updates remain consistent with file mutations and reversals, while no-op and framework-reserved filenames remain unchanged. |
 | Reversibility | UNDO-001, UNDO-002, TIDY-002, ROLL-001 | User-initiated undo and failure rollback restore the recorded pre-run state. |
 | LIFE-NA-002 — Subject and observer perspectives | N/A — no action targets another account or tenant | Decision: DR-002 |
 | Journal entry lifecycle | JOUR-001, JOUR-002, UNDO-001, UNDO-002, UNDO-005 | Entries move from recorded to retained, selected, restored, or unavailable. |
@@ -132,6 +133,22 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 **When** the Operator applies the move
 **Then** the result identifies the warning as recoverable
 **And** the warning alone does not make the move fail
+
+### MOVE-004 — Operator — Move a module consumed through import-equals
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P2 | **Fidelity:** VERIFIED | **Sources:** SRC-017
+
+**Given** an existing module is consumed through an external import-equals declaration
+**When** the Operator applies a move to that module
+**Then** the import-equals module specifier references the destination
+
+### REN-001 — Operator — Rename an identifier exported with export-equals
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P2 | **Fidelity:** VERIFIED | **Sources:** SRC-017
+
+**Given** a module exposes an identifier through an export-equals assignment
+**When** the Operator renames that exported identifier
+**Then** its declaration and export-equals assignment use the new identifier
 
 ### TIDY-001 — Operator — Report changes left applied when rollback is disabled
 
@@ -531,8 +548,8 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 
 | Layer | Status | Receipt | Current artifact |
 |---|---|---|---|
-| Structure | PASS | STRUCT-20260808-005 | [.requirements-status.json](.requirements-status.json) `validation.structure` |
-| Document quality | PASS | QUALITY-20260808-005 | [.requirements-status.json](.requirements-status.json) `validation.documentQuality` |
-| Implementation | PASS | IMPL-20260808-005 | [.requirements-status.json](.requirements-status.json) `validation.implementation` |
+| Structure | PASS | STRUCT-20260808-006 | [.requirements-status.json](.requirements-status.json) `validation.structure` |
+| Document quality | PASS | QUALITY-20260808-006 | [.requirements-status.json](.requirements-status.json) `validation.documentQuality` |
+| Implementation | PASS | IMPL-20260808-006 | [.requirements-status.json](.requirements-status.json) `validation.implementation` |
 
 The canonical validator, manual product-contract review, and focused implementation audit are independent. Counts, hashes, source commit, commands, timestamps, warning dispositions, and evidence summaries live only in the derived status artifact.
