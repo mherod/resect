@@ -142,7 +142,11 @@ describe("test-relocation command", () => {
 			path.resolve(import.meta.dir, "../mcp-server.ts"),
 			"utf8"
 		);
+		const toolSource = await readFile(
+			path.resolve(import.meta.dir, "../mcp-tools/read-only.ts"),
+			"utf8"
+		);
 		expect(serverSource).toContain('server.registerTool(\n\t"test-relocation"');
-		expect(serverSource).toContain("buildTestRelocationReport");
+		expect(toolSource).toContain("buildTestRelocationReport");
 	});
 });

@@ -818,9 +818,13 @@ describe("naming command", () => {
 			path.resolve(import.meta.dir, "../mcp-server.ts"),
 			"utf8"
 		);
+		const toolSource = await readFile(
+			path.resolve(import.meta.dir, "../mcp-tools/read-only.ts"),
+			"utf8"
+		);
 		expect(serverSource).toContain('server.registerTool(\n\t"naming"');
-		expect(serverSource).toContain("buildNamingReport");
-		expect(serverSource).toContain("applyNamingFix");
+		expect(toolSource).toContain("buildNamingReport");
+		expect(toolSource).toContain("applyNamingFix");
 		expect(serverSource).toContain("fix: z");
 		expect(serverSource).toContain("case: z");
 		expect(serverSource).toContain(".enum(FILENAME_CASING_STYLES)");

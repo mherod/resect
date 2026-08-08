@@ -292,13 +292,13 @@ describe("barrel command coverage", () => {
 	});
 
 	test("MCP barrel analysis serializes the shared report", async () => {
-		const serverSource = await Bun.file(
-			path.resolve(import.meta.dir, "../mcp-server.ts")
+		const toolSource = await Bun.file(
+			path.resolve(import.meta.dir, "../mcp-tools/read-only.ts")
 		).text();
-		expect(serverSource).toContain(
+		expect(toolSource).toContain(
 			"const { report, baseDir } = await analyzeBarrels({"
 		);
-		expect(serverSource).toContain("barrelReportToJson(report, baseDir)");
+		expect(toolSource).toContain("barrelReportToJson(report, baseDir)");
 	});
 
 	test("surfaces skipped files in JSON and human output", async () => {

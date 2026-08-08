@@ -118,35 +118,33 @@ describe("unused command", () => {
 	});
 
 	test("unused MCP tool returns orphan files", async () => {
-		const serverSource = await Bun.file(
-			path.resolve(import.meta.dir, "../mcp-server.ts")
+		const toolSource = await Bun.file(
+			path.resolve(import.meta.dir, "../mcp-tools/read-only.ts")
 		).text();
 
-		expect(serverSource).toContain("orphanFiles: report.orphanFiles.map");
-		expect(serverSource).toContain(
-			"orphanFileCount: report.orphanFiles.length"
-		);
-		expect(serverSource).toContain("skippedFileCount: report.skippedFileCount");
-		expect(serverSource).toContain(
+		expect(toolSource).toContain("orphanFiles: report.orphanFiles.map");
+		expect(toolSource).toContain("orphanFileCount: report.orphanFiles.length");
+		expect(toolSource).toContain("skippedFileCount: report.skippedFileCount");
+		expect(toolSource).toContain(
 			"coverageIncomplete: report.coverageIncomplete"
 		);
-		expect(serverSource).toContain(
+		expect(toolSource).toContain(
 			"skippedFileCount: result.skippedFiles.length"
 		);
-		expect(serverSource).toContain("...auditReportToJson(report, absoluteDir)");
-		expect(serverSource).toContain(
+		expect(toolSource).toContain("...auditReportToJson(report, absoluteDir)");
+		expect(toolSource).toContain(
 			"coverageIncomplete: report.skippedFiles.length > 0"
 		);
-		expect(serverSource).toContain(
+		expect(toolSource).toContain(
 			"excludedGeneratedFileCount: report.excludedGeneratedFileCount"
 		);
-		expect(serverSource).toContain(
+		expect(toolSource).toContain(
 			"excludedGeneratedFiles: report.excludedGeneratedFiles.map"
 		);
-		expect(serverSource).toContain(
+		expect(toolSource).toContain(
 			"excludedEntrypointFileCount: report.excludedEntrypointFileCount"
 		);
-		expect(serverSource).toContain(
+		expect(toolSource).toContain(
 			"excludedEntrypointFiles: report.excludedEntrypointFiles.map"
 		);
 	});

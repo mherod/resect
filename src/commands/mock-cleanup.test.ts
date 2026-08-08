@@ -146,9 +146,12 @@ describe("mock-cleanup command", () => {
 		const serverSource = await Bun.file(
 			path.resolve(import.meta.dir, "../mcp-server.ts")
 		).text();
+		const toolSource = await Bun.file(
+			path.resolve(import.meta.dir, "../mcp-tools/read-only.ts")
+		).text();
 
 		expect(serverSource).toContain('server.registerTool(\n\t"mock-cleanup"');
-		expect(serverSource).toContain("const dryRun = options.dryRun ?? true");
+		expect(toolSource).toContain("const dryRun = options.dryRun ?? true");
 	});
 
 	test("missing directory argument exits with error", async () => {
