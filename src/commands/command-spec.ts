@@ -346,6 +346,7 @@ Options:
   --json            Emit structured edits as JSON (use with --dry-run)
   --force           Allow operation when git worktree has uncommitted changes
   --journal         Record the applied operation for a later resect undo
+  --no-verify       Disable type checking verification (enabled by default)
   --verbose         Show detailed information about each change
   --workspace       Scan across all workspace packages
   --batch=PATH      Apply an array of { source, target } moves from a JSON file

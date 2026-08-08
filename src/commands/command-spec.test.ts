@@ -69,6 +69,13 @@ describe("command roster parity", () => {
  * deriving its prose from the spec (the drift mode this consolidation closes).
  */
 describe("command prose derivation", () => {
+	test("move help documents the default verification escape hatch (#158)", () => {
+		const moveHelp = commandSpec("move").cliHelp;
+		expect(moveHelp).toContain(
+			"--no-verify       Disable type checking verification (enabled by default)"
+		);
+	});
+
 	test("move help warns that transform configs execute as JavaScript (#147)", () => {
 		const moveHelp = commandSpec("move").cliHelp;
 		expect(moveHelp).toContain("The config is executed as");
