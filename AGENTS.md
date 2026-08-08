@@ -36,6 +36,17 @@ bun test --timeout=20000
 
 DO budget output for the full suite or filter its first run to failures, totals, and `Ran ...`. DON'T rerun hundreds of passing tests only because terminal output was truncated; poll the original process for its exit and summary.
 
+Bun's test reporter writes to stderr and flushes at exit when the stream is not
+a TTY. Neither `| tail -25` nor a redirect to a log file streams per-file
+progress: mid-run the destination holds only stdout the tests themselves
+printed, and every `pass`/`fail`/`Ran ...` line lands at once when the run
+ends. A quiet log is normal, not a hang.
+
+DON'T restart the suite because a redirect or pipe looks empty partway through.
+Wait for the process to exit, then read the totals. Capture with
+`bun test --timeout=20000 > <log> 2>&1` and wait on the `Ran ` marker rather
+than re-running (about 160s for the full suite).
+
 ## Global build and install
 
 Rebuild both compiled entrypoints, then register the checkout using the same
@@ -46,9 +57,34 @@ pnpm build
 pnpm add --global .
 ```
 
-If pnpm reports that its global bin directory is not on `PATH`, run
-`pnpm setup` once, restart the shell (or source the startup file pnpm names),
-and repeat `pnpm add --global .`.
+If pnpm reports that its global bin directory is not on `PATH`, check whether
+the shell merely lost `PNPM_HOME` before reaching for `pnpm setup`:
+
+```bash
+echo "${PNPM_HOME:-unset}"
+grep -n 'PNPM_HOME' ~/.zshrc
+```
+
+Non-interactive shells (agent tool calls, git hooks) do not source `~/.zshrc`,
+so `PNPM_HOME` is unset there and pnpm falls back to
+`~/.local/share/pnpm/bin`, which is not on `PATH`, while the profile-configured
+`$PNPM_HOME/bin` already is. Supply the profile's value for the one command:
+
+```bash
+PNPM_HOME="$HOME/Library/pnpm" pnpm add --global .
+```
+
+DON'T run `pnpm setup` to work around that error in a non-interactive shell.
+The profile is already correct; `pnpm setup` rewrites user shell configuration
+and still leaves the current shell unchanged. Reserve it for a shell that has
+genuinely never been configured.
+
+The `pnpm add --global .` step in `.husky/pre-commit` hits this same fallback
+and logs `⚠️  pnpm add --global . failed (global re-install skipped)`. That
+warning is non-fatal and does not stale the installed commands: the global
+package is a symlink to this checkout, and both bin shims import TypeScript
+sources, so committed source changes are live without a re-install. Only the
+standalone `bin/*-bin` binaries need the rebuild the hook already ran.
 
 `pnpm build` creates:
 
@@ -79,6 +115,22 @@ resect move --help | rg -- '--batch'
 Expected executable directory: `$PNPM_HOME/bin`. Expected package target: the
 current resect repository. The CLI version comes from `package.json` (`1.8.0`
 until bumped).
+
+Those four checks cover `resect` only. `command -v resect-mcp` resolves the
+shim and exits, so it passes even when the server starts, registers its tools,
+and exits without connecting a transport. DO verify `resect-mcp` with a real
+`initialize` handshake and require a JSON-RPC line on stdout:
+
+```bash
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"c","version":"1"}}}' | resect-mcp
+```
+
+Expect `resect MCP server v<version> running on stdio` on stderr and a
+`{"result":{"protocolVersion":...,"serverInfo":{"name":"resect",...}}}` line on
+stdout. Exit 0 with empty stdout and empty stderr means the server never
+connected; treat that as a failure, not as a transport quirk. Piping a single
+request and letting stdin reach EOF is a valid check — a healthy server answers
+before exiting.
 
 For a Bun-managed development link instead, run `bun link` from this
 repository and ensure `~/.bun/bin` is on `PATH`. That creates executable links
@@ -118,6 +170,32 @@ Every command has three entrypoints:
 There is no HTTP API. `src/index.test.ts`, `src/mcp-schema-parity.test.ts`, `src/commands/command-spec.test.ts`, and `src/commands/option-flags.test.ts` enforce surface parity.
 
 Declare global CLI flags in `OPTION_FLAGS` (`src/commands/option-flags.ts`). Export every command's handler and public option/report types from `src/index.ts`. See the command guide for mutation and conflict rules.
+
+`bin/resect.js` and `bin/resect-mcp.js` *import* their TypeScript entrypoints
+rather than executing them, so `import.meta.main` is false inside those modules.
+Startup behavior guarded by `import.meta.main` alone therefore never runs
+through the installed commands, while `bun src/<entry>.ts` and the compiled
+`bin/*-bin` binaries still work because both execute the module as the
+entrypoint. That asymmetry hides the failure from every local check.
+
+DON'T guard startup behavior behind a bare `import.meta.main` in a module a bin
+shim imports. Export an explicit seam and call it from the shim, keeping the
+guard for direct and compiled execution so test imports stay inert:
+
+```ts
+export function runMain(): void { /* connect transport, handle fatal errors */ }
+
+if (import.meta.main) {
+	runMain();
+}
+```
+
+Regression (b97af63): `bin/resect-mcp.js` only imported `src/mcp-server.ts`, so
+`resect-mcp` registered its tools and exited 0 with no output and no stderr,
+never connecting its stdio transport. This shipped, because `bin/resect-mcp.js`
+is the `resect-mcp` entry in `package.json#bin`. Several tests import
+`src/mcp-server.ts` directly and depend on the guard not booting a server, so
+removing the guard is not the fix.
 
 ## Requirements contract
 
