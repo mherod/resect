@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import { createSourceFileFromText } from "../core/source-file.ts";
 import { CLI, cleanup, makeFixture as makeFixtureBase } from "./__test-helpers";
-import { countInternalReferences } from "./unused.ts";
+import { countInternalReferences, findUnusedExports } from "./unused.ts";
 
 async function makeFixture(name: string, files: Record<string, string>) {
 	return makeFixtureBase(`unused-${name}`, {
@@ -14,7 +14,92 @@ async function makeFixture(name: string, files: Record<string, string>) {
 	});
 }
 
+interface UnusedJsonReport {
+	excludedEntrypointFiles: string[];
+	excludedEntrypointFileCount: number;
+	unused: Array<{ file: string }>;
+	orphanFiles: Array<{ file: string }>;
+}
+
+async function runUnusedJson(directory: string): Promise<UnusedJsonReport> {
+	const proc = Bun.spawn([...CLI, "unused", directory, "--json"], {
+		stdout: "pipe",
+		stderr: "pipe",
+	});
+	const [stdout, stderr] = await Promise.all([
+		new Response(proc.stdout).text(),
+		new Response(proc.stderr).text(),
+	]);
+	await proc.exited;
+	if (proc.exitCode !== 0) {
+		throw new Error(`unused command failed: ${stderr}`);
+	}
+	return JSON.parse(stdout) as UnusedJsonReport;
+}
+
 describe("unused command", () => {
+	test("excludes App Router entrypoints while retaining ordinary same-stem modules", async () => {
+		const dir = await makeFixtureBase("unused-framework-entrypoints", {
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: { strict: true, jsx: "preserve" },
+				include: ["src/**/*.ts", "src/**/*.tsx"],
+			}),
+			"src/app/api/example/route.ts": [
+				"export async function GET() {}",
+				"export async function POST() {}",
+			].join("\n"),
+			"src/app/layout.tsx":
+				"export default function Layout() { return null; }\n",
+			"src/app/blog/page.tsx":
+				"export default function Page() { return null; }\n",
+			"src/app/blog/apple-icon.tsx": [
+				"export const size = { width: 32, height: 32 };",
+				"export default function AppleIcon() { return null; }",
+			].join("\n"),
+			"src/app/blog/opengraph-image.tsx": [
+				"export const contentType = 'image/png';",
+				"export default function OpenGraphImage() { return null; }",
+			].join("\n"),
+			"src/app/sitemap.ts":
+				"export default function sitemap() { return []; }\n",
+			"src/lib/route.ts": "export function GET() { return 'ordinary'; }\n",
+		});
+		try {
+			const report = await runUnusedJson(dir);
+			const libraryReport = await findUnusedExports(dir);
+			const relativeUnused = report.unused.map((item: { file: string }) =>
+				path.relative(dir, item.file)
+			);
+			const relativeOrphans = report.orphanFiles.map((item: { file: string }) =>
+				path.relative(dir, item.file)
+			);
+
+			expect(relativeUnused).toEqual([path.join("src", "lib", "route.ts")]);
+			expect(relativeOrphans).toEqual([path.join("src", "lib", "route.ts")]);
+
+			const relativeExcluded = report.excludedEntrypointFiles.map(
+				(file: string) => path.relative(dir, file)
+			);
+			expect(relativeExcluded).toEqual([
+				path.join("src", "app", "api", "example", "route.ts"),
+				path.join("src", "app", "blog", "apple-icon.tsx"),
+				path.join("src", "app", "blog", "opengraph-image.tsx"),
+				path.join("src", "app", "blog", "page.tsx"),
+				path.join("src", "app", "layout.tsx"),
+				path.join("src", "app", "sitemap.ts"),
+			]);
+			expect(report.excludedEntrypointFileCount).toBe(6);
+			expect(libraryReport.excludedEntrypointFiles).toEqual(
+				report.excludedEntrypointFiles
+			);
+			expect(libraryReport.unused.map((item) => item.file)).toEqual(
+				report.unused.map((item) => item.file)
+			);
+		} finally {
+			await cleanup(dir);
+		}
+	});
+
 	test("unused MCP tool returns orphan files", async () => {
 		const serverSource = await Bun.file(
 			path.resolve(import.meta.dir, "../mcp-server.ts")
@@ -40,6 +125,12 @@ describe("unused command", () => {
 		);
 		expect(serverSource).toContain(
 			"excludedGeneratedFiles: report.excludedGeneratedFiles.map"
+		);
+		expect(serverSource).toContain(
+			"excludedEntrypointFileCount: report.excludedEntrypointFileCount"
+		);
+		expect(serverSource).toContain(
+			"excludedEntrypointFiles: report.excludedEntrypointFiles.map"
 		);
 	});
 

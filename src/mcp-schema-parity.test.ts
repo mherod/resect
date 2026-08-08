@@ -133,6 +133,7 @@ const EXPECTED: Record<string, string[]> = {
 		"ignore",
 		"entrypointGlobs", // #129
 	],
+	analyze: ["file", "project", "entrypointGlobs"],
 	naming: [
 		"directory",
 		"project",

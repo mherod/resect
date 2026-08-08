@@ -22,9 +22,12 @@ const ROUTE_SEGMENT_CONVENTION_STEMS = [
 ] as const;
 
 const APP_ROOT_CONVENTION_STEMS = [
+	"forbidden",
 	"global-error",
+	"global-not-found",
 	"manifest",
 	"robots",
+	"unauthorized",
 ] as const;
 
 describe("framework conventions", () => {

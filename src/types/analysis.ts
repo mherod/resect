@@ -13,6 +13,8 @@ export interface AnalysisResult {
 	}>;
 	unusedExports: UnusedExportInfo[];
 	noExternalUsage: boolean;
+	/** True when framework/configuration dispatch makes static imports incomplete. */
+	externalUsageAssumed: boolean;
 	/** Project files omitted from graph-backed verdicts because they could not be parsed. */
 	skippedFiles: string[];
 }

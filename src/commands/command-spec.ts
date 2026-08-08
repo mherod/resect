@@ -119,19 +119,22 @@ Options:
   -p, --project      Path to project directory or tsconfig.json
   --workspace        Scan across all workspace packages
   --only-related-to  Filter referencedBy results to a file, folder, or glob pattern
+  --entrypoint-globs Glob pattern(s) for externally dispatched entrypoints; repeatable
 
 Output includes:
   • All exports from the file
   • All imports used by the file
   • All files that reference this module
   • Barrel files that re-export this module
+  • Entrypoint classification that suppresses unsafe unused/delete advice
 
 Examples:
   ${CLI_NAME} analyze src/utils/helpers.ts
   ${CLI_NAME} analyze src/components/Button.tsx --verbose
+  ${CLI_NAME} analyze hooks/dispatch.ts --entrypoint-globs="hooks/**"
 `,
 		mcpDescription:
-			"Get the full dependency picture of ONE module before you edit, move, rename, or delete it. Reports the file's exports, its imports (with bindings and type-only flags), every file that references it (reverse dependencies — the blast radius of a change), barrel files that re-export it, imports that fail to resolve, and exports that no other file imports. Reach for this whenever you need to understand impact or wiring of a specific file; use `find` first if you only know the name. Pass a file, not a directory. Read-only.",
+			"Get the full dependency picture of ONE module before you edit, move, rename, or delete it. Reports the file's exports, its imports (with bindings and type-only flags), every file that references it (reverse dependencies — the blast radius of a change), barrel files that re-export it, imports that fail to resolve, and exports that no other file imports. Recognized App Router files and caller-supplied entrypoint globs are treated as externally consumed because static imports cannot observe framework dispatch. Reach for this whenever you need to understand impact or wiring of a specific file; use `find` first if you only know the name. Pass a file, not a directory. Read-only.",
 	},
 	{
 		name: "analyze-impact",
@@ -735,6 +738,8 @@ Options:
                         orphan/dead reporting (e.g. "hooks/**", "scripts/*.ts").
                         Repeat the flag for multiple patterns.
 
+Recognized Next.js App Router code entrypoints are excluded automatically.
+
 Examples:
   ${CLI_NAME} unused src
   ${CLI_NAME} unused . --json
@@ -744,7 +749,7 @@ Examples:
   ${CLI_NAME} unused src --entrypoint-globs="hooks/**" --entrypoint-globs="scripts/*.ts"
 `,
 		mcpDescription:
-			"Find exports that no OTHER file in the project imports, plus exported files with no external usage. A per-export hit is a DE-EXPORT signal, not automatically a DELETE signal: each entry carries `internalUsage`/`internalRefCount` telling you whether the symbol is still referenced WITHIN its own file. `internalUsage:false` (`internalRefCount:0`) means referenced nowhere — safe to delete; `internalUsage:true` means only the `export` keyword is redundant — deleting the symbol would break its own module, so just drop the `export`. `orphanFiles` lists files with exports but zero external importers, excluding package entrypoints. Aliased imports (`import { a as b }`) count as cross-file usage; whole-module imports (`import *`, `export *`, dynamic `import()`, `require()`) mark every export of that module as used. Usage is counted across ALL tsconfigs discovered in the project (the scanned set is returned as `scannedConfigs`/`scannedFileCount`), so an export consumed only by a sibling config (e.g. `scripts/` on `tsconfig.scripts.json`) is not falsely reported dead. The `ignore` glob suppresses files only as reported candidates — ignored files (e.g. tests) still count as usage sources, so a test-only export is not reported dead. Returns total export/file counts, `deadCount`, `internalOnlyCount`, `orphanFiles`, `scannedConfigs`, `scannedFileCount`, and the unused list. Read-only.",
+			"Find exports that no OTHER file in the project imports, plus exported files with no external usage. A per-export hit is a DE-EXPORT signal, not automatically a DELETE signal: each entry carries `internalUsage`/`internalRefCount` telling you whether the symbol is still referenced WITHIN its own file. `internalUsage:false` (`internalRefCount:0`) means referenced nowhere — safe to delete; `internalUsage:true` means only the `export` keyword is redundant — deleting the symbol would break its own module, so just drop the `export`. `orphanFiles` lists files with exports but zero external importers, excluding package entrypoints. Recognized App Router code entrypoints and caller-supplied entrypoint globs are omitted from unused/dead verdicts and reported in `excludedEntrypointFiles`, because static imports cannot observe framework dispatch. Aliased imports (`import { a as b }`) count as cross-file usage; whole-module imports (`import *`, `export *`, dynamic `import()`, `require()`) mark every export of that module as used. Usage is counted across ALL tsconfigs discovered in the project (the scanned set is returned as `scannedConfigs`/`scannedFileCount`), so an export consumed only by a sibling config (e.g. `scripts/` on `tsconfig.scripts.json`) is not falsely reported dead. The `ignore` glob suppresses files only as reported candidates — ignored files (e.g. tests) still count as usage sources, so a test-only export is not reported dead. Returns total export/file counts, `deadCount`, `internalOnlyCount`, `orphanFiles`, `excludedEntrypointFiles`, `scannedConfigs`, `scannedFileCount`, and the unused list. Read-only.",
 	},
 	{
 		name: "mock-cleanup",
