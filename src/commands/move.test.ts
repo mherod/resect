@@ -77,6 +77,46 @@ async function makeMoveCliProject(): Promise<{
 	return { consumerPath, sourcePath, targetPath, tsconfigPath };
 }
 
+async function makeCommonJsMoveProject(): Promise<{
+	consumerPath: string;
+	sourcePath: string;
+	targetPath: string;
+	tsconfigPath: string;
+}> {
+	const dir = await tempDir();
+	const srcDir = path.join(dir, "src");
+	await mkdir(srcDir, { recursive: true });
+	const tsconfigPath = path.join(dir, "tsconfig.json");
+	await writeFile(
+		tsconfigPath,
+		JSON.stringify({
+			compilerOptions: {
+				module: "CommonJS",
+				moduleResolution: "Node",
+				noEmit: true,
+				strict: true,
+				target: "ESNext",
+				types: [],
+			},
+			include: ["src/**/*.ts"],
+		})
+	);
+
+	const sourcePath = path.join(srcDir, "thing.ts");
+	const targetPath = path.join(srcDir, "nested", "thing.ts");
+	const consumerPath = path.join(srcDir, "consumer.ts");
+	await writeFile(
+		sourcePath,
+		"function Thing() { return 1; }\nexport = Thing;\n"
+	);
+	await writeFile(
+		consumerPath,
+		'import Thing = require("./thing");\nexport const value = Thing();\n'
+	);
+
+	return { consumerPath, sourcePath, targetPath, tsconfigPath };
+}
+
 /**
  * Fixture for issue #173: a project with a tsconfig `paths` alias, one importer
  * that reaches the moved file relatively and one that reaches it via the alias.
@@ -295,6 +335,26 @@ describe("moveModule", () => {
 });
 
 describe("move CLI verification", () => {
+	test("rewrites import-equals consumers of export-equals modules", async () => {
+		const { consumerPath, sourcePath, targetPath, tsconfigPath } =
+			await makeCommonJsMoveProject();
+
+		const result = await runCli([
+			"move",
+			sourcePath,
+			targetPath,
+			"--no-verify",
+			"-p",
+			tsconfigPath,
+		]);
+
+		expect(result.exitCode).toBe(0);
+		expect(await Bun.file(targetPath).text()).toContain("export = Thing;");
+		expect(await Bun.file(consumerPath).text()).toContain(
+			'import Thing = require("./nested/thing");'
+		);
+	});
+
 	test("dry-run edits reproduce the real move without writing", async () => {
 		const { consumerPath, sourcePath, targetPath, tsconfigPath } =
 			await makeMoveCliProject();

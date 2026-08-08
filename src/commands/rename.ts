@@ -431,12 +431,9 @@ function getRenamedSymbol(
 	}
 
 	if (location.type === "default") {
-		if (
-			ts.isExportAssignment(location.node) &&
-			!location.node.isExportEquals &&
-			ts.isIdentifier(location.node.expression)
-		) {
-			return checker.getSymbolAtLocation(location.node.expression) ?? null;
+		const nameNode = getNameNode(location.node);
+		if (nameNode) {
+			return checker.getSymbolAtLocation(nameNode) ?? null;
 		}
 		return null;
 	}
@@ -494,17 +491,17 @@ function findExport(
 			}
 		}
 
-		// export default Name
-		if (ts.isExportAssignment(node) && !node.isExportEquals) {
-			if (name === "default") {
+		// export default Name or export = Name
+		if (ts.isExportAssignment(node)) {
+			if (!node.isExportEquals && name === "default") {
 				const { line } = sourceFile.getLineAndCharacterOfPosition(
 					node.getStart(sourceFile)
 				);
 				result = { type: "default", node, line: line + 1 };
 				return;
 			}
-			// Match by the identifier in the expression (e.g., export default myFunc)
-			if (ts.isIdentifier(node.expression) && node.expression.text === name) {
+			// Match by the identifier in the expression.
+			if (getNameNode(node)?.text === name) {
 				const { line } = sourceFile.getLineAndCharacterOfPosition(
 					node.getStart(sourceFile)
 				);
@@ -657,19 +654,17 @@ export function renameInSourceFile(
 			}
 		}
 
-		// Rename identifier in export default <identifier>
-		if (
-			ts.isExportAssignment(node) &&
-			!node.isExportEquals &&
-			ts.isIdentifier(node.expression) &&
-			node.expression.text === oldName
-		) {
+		// Rename identifier in export default/export-equals assignments.
+		const exportAssignmentName = ts.isExportAssignment(node)
+			? getNameNode(node)
+			: null;
+		if (exportAssignmentName?.text === oldName) {
 			const { line } = sourceFile.getLineAndCharacterOfPosition(
 				node.getStart(sourceFile)
 			);
 			changes.push({
-				start: node.expression.getStart(sourceFile),
-				end: node.expression.getEnd(),
+				start: exportAssignmentName.getStart(sourceFile),
+				end: exportAssignmentName.getEnd(),
 				newText: newName,
 			});
 			updates.push({

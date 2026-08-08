@@ -15,6 +15,7 @@ import {
 	normalizePath,
 	resolveModuleSpecifier,
 } from "./resolver.ts";
+import { getDeclarationModuleSpecifier } from "./scanner.ts";
 import type { TextChange } from "./text-changes.ts";
 
 // Note: We use TextChange type from shared module but implement specialized
@@ -488,38 +489,17 @@ export function findSpecifierLocation(
 			return;
 		}
 
-		// Check import declarations
-		if (
-			ts.isImportDeclaration(node) &&
-			ts.isStringLiteral(node.moduleSpecifier) &&
-			node.moduleSpecifier.text === ref.specifier
-		) {
+		// Check import, import-equals, and export declarations.
+		const declarationSpecifier = getDeclarationModuleSpecifier(node);
+		if (declarationSpecifier?.text === ref.specifier) {
 			const { line } = sourceFile.getLineAndCharacterOfPosition(
 				node.getStart(sourceFile)
 			);
 			if (line + 1 === ref.line) {
 				// +1 to skip opening quote, -1 to skip closing quote
 				result = {
-					start: node.moduleSpecifier.getStart(sourceFile) + 1,
-					end: node.moduleSpecifier.getEnd() - 1,
-				};
-			}
-		}
-
-		// Check export declarations
-		if (
-			ts.isExportDeclaration(node) &&
-			node.moduleSpecifier &&
-			ts.isStringLiteral(node.moduleSpecifier) &&
-			node.moduleSpecifier.text === ref.specifier
-		) {
-			const { line } = sourceFile.getLineAndCharacterOfPosition(
-				node.getStart(sourceFile)
-			);
-			if (line + 1 === ref.line) {
-				result = {
-					start: node.moduleSpecifier.getStart(sourceFile) + 1,
-					end: node.moduleSpecifier.getEnd() - 1,
+					start: declarationSpecifier.getStart(sourceFile) + 1,
+					end: declarationSpecifier.getEnd() - 1,
 				};
 			}
 		}

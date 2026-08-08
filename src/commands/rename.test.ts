@@ -47,6 +47,40 @@ async function makeRenameCliProject(): Promise<{
 	return { apiPath, consumerPath, tsconfigPath };
 }
 
+async function makeCommonJsRenameProject(): Promise<{
+	apiPath: string;
+	consumerPath: string;
+	tsconfigPath: string;
+}> {
+	const dir = await makeTempDir("rename-commonjs");
+	tempDirs.push(dir);
+	const srcDir = path.join(dir, "src");
+	await mkdir(srcDir, { recursive: true });
+	const tsconfigPath = path.join(dir, "tsconfig.json");
+	await writeFile(
+		tsconfigPath,
+		JSON.stringify({
+			compilerOptions: {
+				module: "CommonJS",
+				moduleResolution: "Node",
+				noEmit: true,
+				strict: true,
+				target: "ESNext",
+				types: [],
+			},
+			include: ["src/**/*.ts"],
+		})
+	);
+	const apiPath = path.join(srcDir, "api.ts");
+	const consumerPath = path.join(srcDir, "consumer.ts");
+	await writeFile(apiPath, "function Thing() { return 1; }\nexport = Thing;\n");
+	await writeFile(
+		consumerPath,
+		'import Thing = require("./api");\nexport const value = Thing();\n'
+	);
+	return { apiPath, consumerPath, tsconfigPath };
+}
+
 function buildProgram(source: string): {
 	program: ts.Program;
 	sourceFile: ts.SourceFile;
@@ -212,6 +246,29 @@ describe("renameInSourceFile — shadowing", () => {
 });
 
 describe("rename CLI verification", () => {
+	test("renames the identifier behind an export-equals assignment", async () => {
+		const { apiPath, consumerPath, tsconfigPath } =
+			await makeCommonJsRenameProject();
+
+		const result = await runCli([
+			"rename",
+			apiPath,
+			"Thing",
+			"RenamedThing",
+			"--no-verify",
+			"-p",
+			tsconfigPath,
+		]);
+
+		expect(result.exitCode).toBe(0);
+		expect(await Bun.file(apiPath).text()).toBe(
+			"function RenamedThing() { return 1; }\nexport = RenamedThing;\n"
+		);
+		expect(await Bun.file(consumerPath).text()).toContain(
+			'import Thing = require("./api");'
+		);
+	});
+
 	test("dry-run edits reproduce the real rename without writing", async () => {
 		const { apiPath, tsconfigPath } = await makeRenameCliProject();
 		const before = await Bun.file(apiPath).text();

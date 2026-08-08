@@ -33,6 +33,36 @@ function warnIfUnresolvable(result: ResolveResult): void {
 }
 
 /**
+ * Return the string-literal module specifier owned by a declaration.
+ * Internal import aliases (`import x = Namespace.x`) deliberately have none.
+ */
+export function getDeclarationModuleSpecifier(
+	node: ts.Node
+): ts.StringLiteral | null {
+	if (
+		ts.isImportDeclaration(node) &&
+		ts.isStringLiteral(node.moduleSpecifier)
+	) {
+		return node.moduleSpecifier;
+	}
+	if (
+		ts.isExportDeclaration(node) &&
+		node.moduleSpecifier &&
+		ts.isStringLiteral(node.moduleSpecifier)
+	) {
+		return node.moduleSpecifier;
+	}
+	if (
+		ts.isImportEqualsDeclaration(node) &&
+		ts.isExternalModuleReference(node.moduleReference) &&
+		ts.isStringLiteral(node.moduleReference.expression)
+	) {
+		return node.moduleReference.expression;
+	}
+	return null;
+}
+
+/**
  * Scan a source file for all module references (imports and exports)
  */
 export function scanModuleReferences(
@@ -70,20 +100,7 @@ export function scanUnresolvableImports(
 	const diagnostics: UnresolvableDiagnostic[] = [];
 
 	function visit(node: ts.Node) {
-		let specifierNode: ts.StringLiteral | undefined;
-
-		if (
-			ts.isImportDeclaration(node) &&
-			ts.isStringLiteral(node.moduleSpecifier)
-		) {
-			specifierNode = node.moduleSpecifier;
-		} else if (
-			ts.isExportDeclaration(node) &&
-			node.moduleSpecifier &&
-			ts.isStringLiteral(node.moduleSpecifier)
-		) {
-			specifierNode = node.moduleSpecifier;
-		}
+		const specifierNode = getDeclarationModuleSpecifier(node);
 
 		if (specifierNode) {
 			const resolved = resolveModuleSpecifier(
@@ -128,8 +145,9 @@ export interface ExternalImport {
  * `"resolved"`. Cross-package dependency sync (move into another package) needs
  * to know the moved file's external imports, so this is a dedicated collector.
  *
- * Covers static `import … from "pkg"` and `export … from "pkg"`. Results are
- * deduplicated by package name (the first occurrence's specifier + line is kept).
+ * Covers static `import … from "pkg"`, `import x = require("pkg")`, and
+ * `export … from "pkg"`. Results are deduplicated by package name (the first
+ * occurrence's specifier + line is kept).
  */
 export function scanExternalImports(
 	sourceFile: ts.SourceFile,
@@ -138,19 +156,7 @@ export function scanExternalImports(
 	const byPackage = new Map<string, ExternalImport>();
 
 	function visit(node: ts.Node) {
-		let specifierNode: ts.StringLiteral | undefined;
-		if (
-			ts.isImportDeclaration(node) &&
-			ts.isStringLiteral(node.moduleSpecifier)
-		) {
-			specifierNode = node.moduleSpecifier;
-		} else if (
-			ts.isExportDeclaration(node) &&
-			node.moduleSpecifier &&
-			ts.isStringLiteral(node.moduleSpecifier)
-		) {
-			specifierNode = node.moduleSpecifier;
-		}
+		const specifierNode = getDeclarationModuleSpecifier(node);
 
 		if (specifierNode) {
 			const resolved = resolveModuleSpecifier(
@@ -191,6 +197,11 @@ function extractReference(
 	// import ... from '...'
 	if (ts.isImportDeclaration(node)) {
 		return extractImportDeclaration(node, sourceFile, project);
+	}
+
+	// import x = require('...')
+	if (ts.isImportEqualsDeclaration(node)) {
+		return extractImportEqualsDeclaration(node, sourceFile, project);
 	}
 
 	// export ... from '...'
@@ -621,6 +632,35 @@ function extractImportDeclaration(
 	);
 }
 
+function extractImportEqualsDeclaration(
+	node: ts.ImportEqualsDeclaration,
+	sourceFile: ts.SourceFile,
+	project: ProjectConfig
+): ModuleReference | null {
+	const specifierNode = getDeclarationModuleSpecifier(node);
+	if (!specifierNode) {
+		return null;
+	}
+
+	const base = resolveDeclarationRef(
+		specifierNode.text,
+		node,
+		sourceFile,
+		project
+	);
+	if (!base) {
+		return null;
+	}
+
+	return buildModuleReference(
+		sourceFile,
+		base,
+		"import-namespace",
+		[{ name: node.name.text, isType: node.isTypeOnly }],
+		node.isTypeOnly
+	);
+}
+
 function extractExportDeclaration(
 	node: ts.ExportDeclaration,
 	sourceFile: ts.SourceFile,
@@ -814,8 +854,8 @@ export function scanExports(sourceFile: ts.SourceFile): ExportInfo[] {
 			});
 		}
 
-		// export default ...
-		if (ts.isExportAssignment(node) && !node.isExportEquals) {
+		// export default ... or export = ...
+		if (ts.isExportAssignment(node)) {
 			const { line } = sourceFile.getLineAndCharacterOfPosition(
 				node.getStart(sourceFile)
 			);
@@ -980,12 +1020,8 @@ export function getNameNode(node: ts.Node): ts.Identifier | null {
 	if (ts.isEnumDeclaration(node)) {
 		return node.name;
 	}
-	// Handle export default <identifier> (ExportAssignment)
-	if (
-		ts.isExportAssignment(node) &&
-		!node.isExportEquals &&
-		ts.isIdentifier(node.expression)
-	) {
+	// Handle export default/export-equals <identifier> (ExportAssignment)
+	if (ts.isExportAssignment(node) && ts.isIdentifier(node.expression)) {
 		return node.expression;
 	}
 	return null;

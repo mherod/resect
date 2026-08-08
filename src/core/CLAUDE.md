@@ -67,6 +67,7 @@ Solution configs have `references`, no `include`, and no `files`. `files: []` is
 | default import | `import` |
 | named import | `import-named` |
 | namespace import | `import-namespace` |
+| `import x = require('./x')` | `import-namespace` |
 | `export * from './x'` | `export-all` |
 | `export * as x from './x'` | `export-all-as` |
 | `export { x } from './x'` | `export-from` |
@@ -85,7 +86,8 @@ Non-string specifiers, `import.meta.url`, and `export namespace` are out of scop
 | exported `FunctionDeclaration` or `ClassDeclaration` | named or `default` |
 | exported `TypeAliasDeclaration` or `InterfaceDeclaration` | `isType:true` |
 | exported `EnumDeclaration` | `isType:false` |
-| `ExportAssignment` | `default` |
+| `export default x` assignment | `default` |
+| `export = x` assignment | `default` |
 | local `export { x, y }` | named local exports |
 
 `scanBarrelExports()` maps `export *` to `all`, `export * as x` to `all-as`, and `export { x } from` to one `named` entry per binding.
@@ -94,7 +96,7 @@ Non-string specifiers, `import.meta.url`, and `export namespace` are out of scop
 
 - `node.name` for `FunctionDeclaration`, `ClassDeclaration`, `TypeAliasDeclaration`, `InterfaceDeclaration`, and `EnumDeclaration`;
 - the first declaration identifier for `VariableStatement`/`VariableDeclaration`;
-- `node.expression` for `ExportAssignment`;
+- `node.expression` for identifier `ExportAssignment` expressions, including `export default` and `export =`;
 - `null` for `MethodDeclaration`, `ConstructorDeclaration`, accessors, and namespaces, which command code handles.
 
 DON'T add a scanner reference type without updating `buildImportedBindingsMap()` in `src/commands/unused.ts`.

@@ -20,7 +20,10 @@ import {
 	createGitFilesRollbackStrategy,
 	createRollbackCheckpoint,
 } from "../core/rollback.ts";
-import { scanModuleReferences } from "../core/scanner.ts";
+import {
+	getDeclarationModuleSpecifier,
+	scanModuleReferences,
+} from "../core/scanner.ts";
 import {
 	createSourceFileFromText,
 	withSourceFile,
@@ -919,6 +922,17 @@ function collectRawModuleReferences(
 				bindings.length > 0 ? bindings : undefined,
 				isTypeOnly
 			);
+		} else if (ts.isImportEqualsDeclaration(node)) {
+			const specifier = getDeclarationModuleSpecifier(node);
+			if (specifier) {
+				addReference(
+					node,
+					specifier.text,
+					"import-namespace",
+					[{ name: node.name.text, isType: node.isTypeOnly }],
+					node.isTypeOnly
+				);
+			}
 		} else if (
 			ts.isExportDeclaration(node) &&
 			node.moduleSpecifier &&

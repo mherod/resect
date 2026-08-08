@@ -197,6 +197,24 @@ describe("applyChangesWithVerification", () => {
 });
 
 describe("renameImportSpecifiers", () => {
+	test("rewrites import-equals module specifiers", async () => {
+		const { srcDir } = await writeAliasProject({
+			"src/utils/foo.ts": "const foo = 1;\nexport = foo;\n",
+			"src/consumer.ts": 'import foo = require("@utils/Foo");\n',
+		});
+
+		await aliasCommand({
+			target: srcDir,
+			renameSpecifiers: ["@utils/Foo=@utils/foo"],
+			force: true,
+			verify: false,
+		});
+
+		expect(await Bun.file(path.join(srcDir, "consumer.ts")).text()).toContain(
+			'import foo = require("@utils/foo");'
+		);
+	});
+
 	test("rewrites exact specifiers across aliased, type-only, and namespace imports", async () => {
 		const { srcDir } = await writeAliasProject({
 			"src/utils/foo.ts": [

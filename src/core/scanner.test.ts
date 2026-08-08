@@ -120,6 +120,26 @@ describe("scanModuleReferences", () => {
 		expect(mockRef?.factoryEntries).toBeUndefined();
 		expect(mockRef?.mockFactorySkip?.reason).toBe("unsupported-factory");
 	});
+
+	test("scans external import-equals declarations as namespace imports", () => {
+		const sourceFile = ts.createSourceFile(
+			"test.ts",
+			[
+				'import Thing = require("./thing");',
+				"import Alias = Namespace.Thing;",
+			].join("\n"),
+			ts.ScriptTarget.Latest
+		);
+
+		expect(scanModuleReferences(sourceFile, project)).toEqual([
+			expect.objectContaining({
+				bindings: [{ isType: false, name: "Thing" }],
+				isTypeOnly: false,
+				specifier: "./thing",
+				type: "import-namespace",
+			}),
+		]);
+	});
 });
 
 describe("scanExports", () => {
@@ -134,6 +154,21 @@ describe("scanExports", () => {
 			"bar",
 			"ns",
 		]);
+	});
+
+	test("recognizes export-equals assignments", () => {
+		const sourceFile = ts.createSourceFile(
+			"commonjs.ts",
+			"const Thing = {};\nexport = Thing;",
+			ts.ScriptTarget.Latest
+		);
+
+		expect(scanExports(sourceFile)).toContainEqual({
+			isType: false,
+			line: 2,
+			name: "default",
+			type: "default",
+		});
 	});
 });
 
