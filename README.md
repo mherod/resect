@@ -621,7 +621,7 @@ Each mutating tool:
 - Defaults to `dryRun: true`; pass `dryRun: false` to apply.
 - `move`, `rename`, `alias`, and `tidy` return exact `edits` (`file`, `start`, `end`, `oldText`, `newText`) alongside their command-specific metadata.
 - `move`, `rename`, `alias`, and `tidy` accept `journal: true`; `undo` accepts the returned entry ID and defaults to a non-mutating preview.
-- When `dryRun: false` and `verify: true` (the default), runs `tsc --noEmit` before AND after and returns the diagnostic delta as `typecheck: { errorsBefore, errorsAfter, newErrors, fixedCount }` — the caller sees exactly which type errors the refactor introduced or fixed.
+- When `dryRun: false` and `verify: true` (the default), runs `tsc --noEmit` before AND after and returns the diagnostic delta as `typecheck: { success, errorsBefore, errorsAfter, newErrors, fixedErrors, verificationIncomplete }` — the caller sees exactly which type errors the refactor introduced or fixed and whether both checks completed.
 - Refuses to mutate a dirty worktree unless `force: true` (returned as a structured error, never as a process exit).
 
 `extract-common` defaults to `dryRun: true` like the other mutating tools and returns the extraction plan (canonical copy, removed duplicates, modified files, and the typecheck delta when applied). It skips any group whose consolidation would create a circular import.
