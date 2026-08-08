@@ -33,6 +33,15 @@ export const VUE_EXTENSION = /\.vue$/;
 export const TS_JS_VUE_EXTENSIONS = /\.(ts|tsx|js|jsx|mts|cts|mjs|cjs|vue)$/;
 
 /**
+ * Stylesheet extensions that bundlers consume directly (#188). These are real
+ * assets rather than TypeScript modules: an existing one is not an unresolvable
+ * import, but it must never become a dependency-graph node either. CSS Modules
+ * need no separate pattern — `styles.module.css` ends in `.css`.
+ */
+export const STYLESHEET_EXTENSIONS =
+	/\.(css|scss|sass|less|styl|pcss|postcss)$/;
+
+/**
  * TypeScript declaration file extensions, matched as a single unit so
  * `error.d.ts` strips to `error`, not `error.d` (#160). Must be tried before
  * `TS_JS_VUE_EXTENSIONS`, which only matches the trailing `.ts`/`.mts`/`.cts`.

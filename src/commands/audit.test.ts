@@ -479,3 +479,51 @@ describe("audit command coverage", () => {
 		await cleanup(dir);
 	});
 });
+
+// ─── Stylesheet asset diagnostics (#188) ───────────────────────────────────
+
+describe("audit command stylesheet diagnostics", () => {
+	async function runAudit(directory: string): Promise<string> {
+		const proc = Bun.spawn([...CLI, "audit", directory, "--json"], {
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		const [stdout, stderr] = await Promise.all([
+			new Response(proc.stdout).text(),
+			new Response(proc.stderr).text(),
+		]);
+		await proc.exited;
+		return stdout + stderr;
+	}
+
+	test("existing stylesheets are silent while a missing one still warns", async () => {
+		const dir = await makeFixture("audit-stylesheet-assets", {
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: { strict: true, jsx: "preserve" },
+				include: ["app/**/*.tsx"],
+			}),
+			"app/globals.css": "body { color: red; }",
+			"app/styles.module.css": ".title { font-weight: 700; }",
+			"app/layout.tsx":
+				'import "./globals.css";\n' +
+				'import styles from "./styles.module.css";\n' +
+				'import "./missing.css";\n' +
+				'import "bootstrap/dist/css/bootstrap.css";\n' +
+				"export const layout = styles;\n",
+		});
+		try {
+			const output = await runAudit(dir);
+
+			expect(output).not.toContain('Cannot resolve "./globals.css"');
+			expect(output).not.toContain('Cannot resolve "./styles.module.css"');
+			// A bare package stylesheet is external, not missing.
+			expect(output).not.toContain(
+				'Cannot resolve "bootstrap/dist/css/bootstrap.css"'
+			);
+			// A genuinely missing stylesheet is still reported.
+			expect(output).toContain('Cannot resolve "./missing.css"');
+		} finally {
+			await cleanup(dir);
+		}
+	});
+});

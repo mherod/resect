@@ -4,6 +4,7 @@ import type { PreferStrategy } from "../commands/option-domains.ts";
 import type { ProjectConfig } from "../types.ts";
 import {
 	removeExtension,
+	STYLESHEET_EXTENSIONS,
 	TS_JS_VUE_EXTENSIONS,
 	VUE_EXTENSION,
 } from "./constants.ts";
@@ -12,7 +13,64 @@ import type { WorkspaceInfo, WorkspacePackage } from "./workspace.ts";
 export type ResolveResult =
 	| { kind: "resolved"; path: string }
 	| { kind: "external"; specifier: string }
+	/**
+	 * An existing non-TypeScript asset the bundler owns, such as a stylesheet
+	 * imported by a framework entrypoint (#188). Distinct from `resolved` so the
+	 * file never becomes a TypeScript dependency-graph node, and distinct from
+	 * `unresolvable` so it emits no diagnostic.
+	 */
+	| { kind: "asset"; path: string; specifier: string }
 	| { kind: "unresolvable"; specifier: string; diagnostic: string };
+
+/**
+ * Resolve a bare, alias-style specifier to an existing file via the project's
+ * `paths` mapping. Shared by the `.vue` and stylesheet fallbacks, which both
+ * need alias expansion that `ts.resolveModuleName` does not perform for
+ * non-TypeScript extensions.
+ */
+function resolveExistingFileByAlias(
+	specifier: string,
+	project: ProjectConfig
+): string | null {
+	const baseUrl = project.compilerOptions.baseUrl ?? project.rootDir;
+	for (const [alias, paths] of project.pathAliases) {
+		const isWildcard = alias.endsWith("/*");
+		const prefix = isWildcard ? alias.slice(0, -1) : alias;
+		if (!specifier.startsWith(prefix)) {
+			continue;
+		}
+		const remainder = isWildcard ? specifier.slice(prefix.length) : "";
+		for (const pathPattern of paths) {
+			const resolvedPattern = pathPattern.endsWith("/*")
+				? pathPattern.slice(0, -1)
+				: pathPattern;
+			const absolutePath = path.resolve(baseUrl, resolvedPattern + remainder);
+			if (ts.sys.fileExists(absolutePath)) {
+				return absolutePath;
+			}
+		}
+	}
+	return null;
+}
+
+/**
+ * Locate an existing file for a specifier TypeScript module resolution cannot
+ * handle, covering both relative/absolute paths and alias expansion.
+ */
+function findExistingNonModuleFile(
+	specifier: string,
+	fromFile: string,
+	project: ProjectConfig
+): string | null {
+	if (isRelativeImport(specifier) || path.isAbsolute(specifier)) {
+		const absolutePath = path.resolve(path.dirname(fromFile), specifier);
+		return ts.sys.fileExists(absolutePath) ? absolutePath : null;
+	}
+	if (isBareImport(specifier)) {
+		return resolveExistingFileByAlias(specifier, project);
+	}
+	return null;
+}
 
 /**
  * Resolve a module specifier to a structured result distinguishing
@@ -39,34 +97,9 @@ export function resolveModuleSpecifier(
 
 	// .vue specifiers are not resolved by ts.resolveModuleName — handle directly
 	if (VUE_EXTENSION.test(specifier)) {
-		const fromDir = path.dirname(fromFile);
-		if (specifier.startsWith("./") || specifier.startsWith("../")) {
-			const absolutePath = path.resolve(fromDir, specifier);
-			if (ts.sys.fileExists(absolutePath)) {
-				return { kind: "resolved", path: absolutePath };
-			}
-		} else if (!(specifier.startsWith(".") || path.isAbsolute(specifier))) {
-			// Alias-style .vue import: expand via pathAliases
-			const baseUrl = project.compilerOptions.baseUrl ?? project.rootDir;
-			for (const [alias, paths] of project.pathAliases) {
-				const isWildcard = alias.endsWith("/*");
-				const prefix = isWildcard ? alias.slice(0, -1) : alias;
-				if (specifier.startsWith(prefix)) {
-					const remainder = isWildcard ? specifier.slice(prefix.length) : "";
-					for (const pathPattern of paths) {
-						const resolvedPattern = pathPattern.endsWith("/*")
-							? pathPattern.slice(0, -1)
-							: pathPattern;
-						const absolutePath = path.resolve(
-							baseUrl,
-							resolvedPattern + remainder
-						);
-						if (ts.sys.fileExists(absolutePath)) {
-							return { kind: "resolved", path: absolutePath };
-						}
-					}
-				}
-			}
+		const vuePath = findExistingNonModuleFile(specifier, fromFile, project);
+		if (vuePath) {
+			return { kind: "resolved", path: vuePath };
 		}
 		return {
 			kind: "unresolvable",
@@ -75,8 +108,18 @@ export function resolveModuleSpecifier(
 		};
 	}
 
+	// Stylesheets are bundler-owned assets, not TypeScript modules (#188). An
+	// existing one resolves to `asset` so no diagnostic fires and no graph node
+	// is created; a missing relative one still falls through to `unresolvable`.
+	if (STYLESHEET_EXTENSIONS.test(specifier)) {
+		const assetPath = findExistingNonModuleFile(specifier, fromFile, project);
+		if (assetPath) {
+			return { kind: "asset", path: assetPath, specifier };
+		}
+	}
+
 	// Bare specifiers without ./ or ../ are external packages
-	if (!(specifier.startsWith(".") || path.isAbsolute(specifier))) {
+	if (isBareImport(specifier)) {
 		return { kind: "external", specifier };
 	}
 

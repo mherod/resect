@@ -343,3 +343,47 @@ describe("findAllReferences", () => {
 		}
 	});
 });
+
+// ─── Stylesheet asset imports (#188) ───────────────────────────────────────
+
+describe("stylesheet imports", () => {
+	async function makeStylesheetFixture(): Promise<string> {
+		const dir = await mkdtemp(path.join(tmpdir(), "resect-graph-stylesheet-"));
+		await mkdir(path.join(dir, "app"), { recursive: true });
+		await writeFile(
+			path.join(dir, "tsconfig.json"),
+			JSON.stringify({
+				compilerOptions: { strict: true, jsx: "preserve" },
+				include: ["app/**/*.tsx"],
+			})
+		);
+		await writeFile(path.join(dir, "app/globals.css"), "body { color: red; }");
+		await writeFile(
+			path.join(dir, "app/styles.module.css"),
+			".title { font-weight: 700; }"
+		);
+		await writeFile(
+			path.join(dir, "app/layout.tsx"),
+			'import "./globals.css";\n' +
+				'import styles from "./styles.module.css";\n' +
+				"export const layout = styles;\n"
+		);
+		return dir;
+	}
+
+	test("existing stylesheets never become dependency-graph nodes", async () => {
+		const dir = await makeStylesheetFixture();
+		try {
+			const graph = await buildDependencyGraph(
+				loadProject(path.join(dir, "tsconfig.json"), dir)
+			);
+
+			const nodes = [...graph.imports.keys(), ...graph.importedBy.keys()];
+			expect(nodes.some((file) => file.endsWith(".css"))).toBe(false);
+			// The importing module itself is still tracked.
+			expect(nodes.some((file) => file.endsWith("layout.tsx"))).toBe(true);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+});

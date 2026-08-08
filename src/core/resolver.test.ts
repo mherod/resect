@@ -1,5 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import path from "node:path";
 import type ts from "typescript";
+import { cleanup, makeFixture } from "../commands/__test-helpers.ts";
 import type { ProjectConfig } from "../types.ts";
 import {
 	calculateNewSpecifier,
@@ -13,6 +15,8 @@ import {
 	isRelativeImport,
 	matchPathAlias,
 	normalizePath,
+	type ResolveResult,
+	resolveModuleSpecifier,
 } from "./resolver.ts";
 import type { WorkspaceInfo, WorkspacePackage } from "./workspace.ts";
 
@@ -880,5 +884,91 @@ describe("calculateNewSpecifier specifier style (#173)", () => {
 
 		// "@/lib/i18n/locale" is shorter than "../../../../lib/i18n/locale"
 		expect(result).toBe("@/lib/i18n/locale");
+	});
+});
+
+// ─── Stylesheet asset resolution (#188) ────────────────────────────────────
+
+describe("resolveModuleSpecifier — stylesheet assets", () => {
+	let dir: string;
+
+	beforeAll(async () => {
+		dir = await makeFixture("resolver-stylesheet-assets", {
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: {
+					strict: true,
+					baseUrl: ".",
+					paths: { "@/*": ["./*"] },
+				},
+				include: ["app/**/*.tsx"],
+			}),
+			"app/globals.css": "body { color: red; }",
+			"app/styles.module.css": ".title { font-weight: 700; }",
+			"app/theme.scss": "$brand: red;",
+			"app/layout.tsx": 'import "./globals.css";\n',
+		});
+	});
+
+	afterAll(async () => {
+		await cleanup(dir);
+	});
+
+	function resolveFrom(specifier: string): ResolveResult {
+		return resolveModuleSpecifier(
+			specifier,
+			path.join(dir, "app/layout.tsx"),
+			makeProject(dir, { "@/*": ["./*"] })
+		);
+	}
+
+	test("an existing relative stylesheet resolves as an asset, not unresolvable", () => {
+		const result = resolveFrom("./globals.css");
+
+		expect(result.kind).toBe("asset");
+		expect(result).toMatchObject({
+			kind: "asset",
+			path: path.join(dir, "app/globals.css"),
+			specifier: "./globals.css",
+		});
+	});
+
+	test("an existing CSS Module resolves as an asset rather than a graph node", () => {
+		const result = resolveFrom("./styles.module.css");
+
+		expect(result.kind).toBe("asset");
+		// `resolved` is what creates a TypeScript dependency-graph node, so the
+		// asset kind is exactly what keeps CSS Modules out of the graph.
+		expect(result.kind).not.toBe("resolved");
+	});
+
+	test("non-CSS stylesheet dialects are covered", () => {
+		expect(resolveFrom("./theme.scss").kind).toBe("asset");
+	});
+
+	test("an alias-style stylesheet import resolves as an asset", () => {
+		const result = resolveFrom("@/app/globals.css");
+
+		expect(result).toMatchObject({
+			kind: "asset",
+			path: path.join(dir, "app/globals.css"),
+		});
+	});
+
+	test("a missing relative stylesheet is still reported as unresolvable", () => {
+		const result = resolveFrom("./missing.css");
+
+		expect(result.kind).toBe("unresolvable");
+		expect(result).toMatchObject({
+			diagnostic: expect.stringContaining('Cannot resolve "./missing.css"'),
+		});
+	});
+
+	test("a bare package stylesheet stays external rather than missing", () => {
+		const result = resolveFrom("bootstrap/dist/css/bootstrap.css");
+
+		expect(result).toEqual({
+			kind: "external",
+			specifier: "bootstrap/dist/css/bootstrap.css",
+		});
 	});
 });
