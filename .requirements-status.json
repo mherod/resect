@@ -3,8 +3,8 @@
   "projectId": "mherod/resect",
   "requirementsFile": "REQUIREMENTS.md",
   "requirementsSha256": "4749e2d78169354594d7ff6d4086f6b80737319a24f95fd2877d566688b5c2c4",
-  "sourceCommit": "c8818b789d57833411fbc8087dbb873923277a69",
-  "generatedAt": "2026-08-08T06:41:48Z",
+  "sourceCommit": "bd18769007ded996f0f188c4d248cd1cf21a2d7c",
+  "generatedAt": "2026-08-08T06:55:10Z",
   "validator": {
     "name": "generate-requirements",
     "version": "2.0.0",
@@ -18,8 +18,8 @@
       "validatorVersion": "2.0.0",
       "command": "bun scripts/validate-bdd.js /Users/matthew.herod/Development/resect/REQUIREMENTS.md --status-log /Users/matthew.herod/Development/resect/.requirements-status.json",
       "requirementsSha256": "4749e2d78169354594d7ff6d4086f6b80737319a24f95fd2877d566688b5c2c4",
-      "sourceCommit": "c8818b789d57833411fbc8087dbb873923277a69",
-      "generatedAt": "2026-08-08T06:41:48Z",
+      "sourceCommit": "bd18769007ded996f0f188c4d248cd1cf21a2d7c",
+      "generatedAt": "2026-08-08T06:55:10Z",
       "counts": {
         "checked": 46,
         "errors": 0,
@@ -36,8 +36,8 @@
       "validatorVersion": "2.0.0",
       "command": "generate-requirements 2.0 manual review of REQUIREMENTS.md",
       "requirementsSha256": "4749e2d78169354594d7ff6d4086f6b80737319a24f95fd2877d566688b5c2c4",
-      "sourceCommit": "c8818b789d57833411fbc8087dbb873923277a69",
-      "generatedAt": "2026-08-08T06:41:48Z",
+      "sourceCommit": "bd18769007ded996f0f188c4d248cd1cf21a2d7c",
+      "generatedAt": "2026-08-08T06:55:10Z",
       "counts": {
         "checked": 46,
         "errors": 0,
@@ -57,8 +57,8 @@
       "validatorVersion": "1.3.14+generate-requirements-2.0.0",
       "command": "bun test src/cli-stream-errors.test.ts src/cli.test.ts --timeout=20000 --parallel=4 && bun test --timeout=20000 --parallel=4 && pnpm run check && pnpm run lint && pnpm run typecheck && pnpm run build:lib && pnpm run verify:size",
       "requirementsSha256": "4749e2d78169354594d7ff6d4086f6b80737319a24f95fd2877d566688b5c2c4",
-      "sourceCommit": "c8818b789d57833411fbc8087dbb873923277a69",
-      "generatedAt": "2026-08-08T06:41:48Z",
+      "sourceCommit": "bd18769007ded996f0f188c4d248cd1cf21a2d7c",
+      "generatedAt": "2026-08-08T06:55:10Z",
       "counts": {
         "checked": 46,
         "errors": 0,
@@ -67,7 +67,7 @@
       "notes": [
         "The CLI stream focus passed 13 tests with 0 failures and 32 assertions across 2 files, including human-readable and JSON closed-pipe subprocesses plus unexpected stdout and stderr failures.",
         "The complete Bun suite passed 954 tests with 0 failures across 72 files using the hook-required four-way parallelism.",
-        "Biome checks, ESLint, TypeScript, the library build, the compiled binary hook build, the strict 0.95 similarity scan, the supported global install, and the configured tarball-size preflight passed at source commit c8818b7.",
+        "Biome checks, ESLint, TypeScript, the library build, the compiled binary hook build, the strict 0.95 similarity scan, the supported global install, and the configured tarball-size preflight passed; PR #201 CI run 31244753218 also passed Test & Lint, the complete suite, and the package-size guard before landing as squash commit bd18769.",
         "MOVE-001 through MOVE-003 map to src/commands/move.test.ts and src/commands/move.ts at source commit 52106e7.",
         "TIDY-001, TIDY-002, and ROLL-001 map to src/commands/tidy.test.ts, src/core/rollback.test.ts, src/commands/tidy.ts, and src/core/rollback.ts at source commit 52106e7.",
         "CFG-001 through CFG-006 map to src/core/project-config.test.ts, src/commands/config-defaults.test.ts, src/commands/discover.test.ts, and their corresponding implementation files at source commit 52106e7.",
@@ -82,7 +82,7 @@
         "ANLY-001 and ANLY-002 map to src/core/generated-artifacts.ts, src/core/generated-artifacts.test.ts, src/commands/audit.test.ts, src/commands/naming.test.ts, src/commands/unused.test.ts, src/mcp-server.ts, and src/types/naming.ts at source commit dc4c1d4.",
         "ANLY-003 and ANLY-004 map to src/core/framework-conventions.ts, src/core/framework-conventions.test.ts, src/commands/analyze.test.ts, src/commands/unused.test.ts, src/mcp-entrypoints.test.ts, src/mcp-schema-parity.test.ts, src/mcp-server.ts, and src/index.ts at source commit 5cefe8c.",
         "BARL-001 and BARL-002 map to src/core/framework-conventions.ts, src/commands/barrel.ts, src/commands/barrel.test.ts, src/mcp-server.ts, and src/index.test.ts at source commit dc4c1d4.",
-        "CLI-001 and CLI-002 map to src/cli-stream-errors.ts, src/cli-stream-errors.test.ts, src/cli.ts, and src/cli.test.ts at source commit c8818b7."
+        "CLI-001 and CLI-002 map to src/cli-stream-errors.ts, src/cli-stream-errors.test.ts, src/cli.ts, and src/cli.test.ts at source commit bd18769."
       ]
     }
   },
