@@ -3,8 +3,8 @@
   "projectId": "mherod/resect",
   "requirementsFile": "REQUIREMENTS.md",
   "requirementsSha256": "3a9a164c6f508c5544b9851d2a317c13cc742380f2b0c9ee45a3d8255b9ad8fc",
-  "sourceCommit": "045be4d077669d24f9fe52e6dd1b22ceb3e7ac7f",
-  "generatedAt": "2026-08-08T06:05:08Z",
+  "sourceCommit": "5cefe8c6a1c65f4fa42e56ea11404d38a338d7e8",
+  "generatedAt": "2026-08-08T06:17:46Z",
   "validator": {
     "name": "generate-requirements",
     "version": "2.0.0",
@@ -18,8 +18,8 @@
       "validatorVersion": "2.0.0",
       "command": "bun scripts/validate-bdd.js /Users/matthew.herod/Development/resect/REQUIREMENTS.md --status-log /Users/matthew.herod/Development/resect/.requirements-status.json",
       "requirementsSha256": "3a9a164c6f508c5544b9851d2a317c13cc742380f2b0c9ee45a3d8255b9ad8fc",
-      "sourceCommit": "045be4d077669d24f9fe52e6dd1b22ceb3e7ac7f",
-      "generatedAt": "2026-08-08T06:05:08Z",
+      "sourceCommit": "5cefe8c6a1c65f4fa42e56ea11404d38a338d7e8",
+      "generatedAt": "2026-08-08T06:17:46Z",
       "counts": {
         "checked": 44,
         "errors": 0,
@@ -36,8 +36,8 @@
       "validatorVersion": "2.0.0",
       "command": "generate-requirements 2.0 manual review of REQUIREMENTS.md",
       "requirementsSha256": "3a9a164c6f508c5544b9851d2a317c13cc742380f2b0c9ee45a3d8255b9ad8fc",
-      "sourceCommit": "045be4d077669d24f9fe52e6dd1b22ceb3e7ac7f",
-      "generatedAt": "2026-08-08T06:05:08Z",
+      "sourceCommit": "5cefe8c6a1c65f4fa42e56ea11404d38a338d7e8",
+      "generatedAt": "2026-08-08T06:17:46Z",
       "counts": {
         "checked": 44,
         "errors": 0,
@@ -56,8 +56,8 @@
       "validatorVersion": "1.3.14+generate-requirements-2.0.0",
       "command": "bun test --timeout=20000 src/core/framework-conventions.test.ts src/commands/analyze.test.ts src/commands/unused.test.ts src/mcp-entrypoints.test.ts src/mcp-schema-parity.test.ts --parallel=4 && bun test --timeout=20000 --parallel=4 && pnpm run check && pnpm run lint && pnpm run typecheck && pnpm run build:lib && pnpm run verify:size",
       "requirementsSha256": "3a9a164c6f508c5544b9851d2a317c13cc742380f2b0c9ee45a3d8255b9ad8fc",
-      "sourceCommit": "045be4d077669d24f9fe52e6dd1b22ceb3e7ac7f",
-      "generatedAt": "2026-08-08T06:05:08Z",
+      "sourceCommit": "5cefe8c6a1c65f4fa42e56ea11404d38a338d7e8",
+      "generatedAt": "2026-08-08T06:17:46Z",
       "counts": {
         "checked": 44,
         "errors": 0,
@@ -66,7 +66,7 @@
       "notes": [
         "The framework convention, analyze, unused, and MCP focus passed 73 tests with 0 failures and 344 assertions across 5 files.",
         "The complete Bun suite passed 947 tests with 0 failures across 71 files using the hook-required four-way parallelism; the guarded implementation commit additionally passed 716 affected tests with 0 failures and 2347 assertions across 57 files.",
-        "Biome checks, ESLint, TypeScript, the library build, the compiled binary hook build, the strict 0.95 similarity scan, the supported global install, and the configured tarball-size preflight passed at source commit 045be4d.",
+        "Biome checks, ESLint, TypeScript, the library build, the compiled binary hook build, the strict 0.95 similarity scan, the supported global install, and the configured tarball-size preflight passed; PR #200 CI run 31243361689 revalidated typecheck, lint, the full suite, and package size at source commit 5cefe8c.",
         "MOVE-001 through MOVE-003 map to src/commands/move.test.ts and src/commands/move.ts at source commit 52106e7.",
         "TIDY-001, TIDY-002, and ROLL-001 map to src/commands/tidy.test.ts, src/core/rollback.test.ts, src/commands/tidy.ts, and src/core/rollback.ts at source commit 52106e7.",
         "CFG-001 through CFG-006 map to src/core/project-config.test.ts, src/commands/config-defaults.test.ts, src/commands/discover.test.ts, and their corresponding implementation files at source commit 52106e7.",
@@ -79,7 +79,7 @@
         "JOUR-001 and JOUR-002 map to src/core/journal.ts, src/core/journal.test.ts, src/commands/journal-integration.test.ts, the move, rename, alias, tidy, MCP, registry, and library surfaces.",
         "UNDO-001 through UNDO-005 map to src/core/journal.ts, src/core/journal.test.ts, src/commands/undo.ts, src/commands/undo.test.ts, src/commands/journal-integration.test.ts, src/commands/registry.ts, src/mcp-server.ts, and src/index.ts.",
         "ANLY-001 and ANLY-002 map to src/core/generated-artifacts.ts, src/core/generated-artifacts.test.ts, src/commands/audit.test.ts, src/commands/naming.test.ts, src/commands/unused.test.ts, src/mcp-server.ts, and src/types/naming.ts at source commit dc4c1d4.",
-        "ANLY-003 and ANLY-004 map to src/core/framework-conventions.ts, src/core/framework-conventions.test.ts, src/commands/analyze.test.ts, src/commands/unused.test.ts, src/mcp-entrypoints.test.ts, src/mcp-schema-parity.test.ts, src/mcp-server.ts, and src/index.ts at source commit 045be4d.",
+        "ANLY-003 and ANLY-004 map to src/core/framework-conventions.ts, src/core/framework-conventions.test.ts, src/commands/analyze.test.ts, src/commands/unused.test.ts, src/mcp-entrypoints.test.ts, src/mcp-schema-parity.test.ts, src/mcp-server.ts, and src/index.ts at source commit 5cefe8c.",
         "BARL-001 and BARL-002 map to src/core/framework-conventions.ts, src/commands/barrel.ts, src/commands/barrel.test.ts, src/mcp-server.ts, and src/index.test.ts at source commit dc4c1d4."
       ]
     }
