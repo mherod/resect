@@ -28,8 +28,9 @@ describe("command roster parity", () => {
 	});
 
 	test("MCP tools and roster declare the same command set", async () => {
-		// mcp-server.ts boots a stdio server on import (calls main()), so read it
-		// as text and extract the registerTool names instead of importing it.
+		// Read mcp-server.ts as text and extract the registerTool names rather
+		// than importing it, so this assertion stays independent of the module's
+		// tool-registration side effects.
 		const source = await Bun.file(`${import.meta.dir}/../mcp-server.ts`).text();
 		const mcpNames = new Set(
 			[...source.matchAll(/registerTool\(\s*"([^"]+)"/g)].map(
@@ -100,7 +101,7 @@ describe("command prose derivation", () => {
 	});
 
 	test("every MCP tool derives its description from the spec", async () => {
-		// mcp-server.ts boots a stdio server on import, so read it as text.
+		// Assert against mcp-server.ts source text, not the imported module.
 		const source = await Bun.file(`${import.meta.dir}/../mcp-server.ts`).text();
 		// No inline description string literals survive the consolidation.
 		expect(source).not.toMatch(/description:\s*\n\s*["'`]/);

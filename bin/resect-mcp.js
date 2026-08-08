@@ -1,2 +1,4 @@
 #!/usr/bin/env bun
-import "../src/mcp-server.ts";
+import { runMain } from "../src/mcp-server.ts";
+
+runMain();

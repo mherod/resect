@@ -2782,11 +2782,23 @@ async function main(): Promise<void> {
 	process.stderr.write(`resect MCP server v${version} running on stdio\n`);
 }
 
-if (import.meta.main) {
+/**
+ * Boot the stdio server and report fatal startup errors.
+ *
+ * `bin/resect-mcp.js` imports this module rather than executing it, so
+ * `import.meta.main` is false there and the guard below never fires. The bin
+ * shim calls this directly; the guard keeps `bun src/mcp-server.ts` and the
+ * compiled `bin/resect-mcp-bin` working while leaving test imports inert.
+ */
+export function runMain(): void {
 	main().catch((error) => {
 		process.stderr.write(
 			`Fatal error: ${error instanceof Error ? error.stack : String(error)}\n`
 		);
 		process.exit(1);
 	});
+}
+
+if (import.meta.main) {
+	runMain();
 }
