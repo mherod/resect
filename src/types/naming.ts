@@ -54,11 +54,13 @@ export interface NamingReport {
 	directory: string;
 	generatedAt: string;
 	warnings: string[];
+	excludedGeneratedFiles: string[];
 	findings: NamingViolation[];
 	summary: {
 		totalFindings: number;
 		filesTouched: number;
 		totalFiles: number;
+		excludedGeneratedFileCount: number;
 		totalDirectories: number;
 		minSiblings: number;
 		majorityThreshold: number;

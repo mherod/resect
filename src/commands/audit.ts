@@ -2,6 +2,13 @@ import path from "node:path";
 import { logger } from "../cli-logger.ts";
 import { removeExtension } from "../core/constants.ts";
 import {
+	createFrameworkGeneratedArtifactClassifier,
+	excludeFrameworkGeneratedArtifacts,
+	type FrameworkGeneratedArtifact,
+	type FrameworkGeneratedArtifactClassifier,
+	generatedArtifactWarning,
+} from "../core/generated-artifacts.ts";
+import {
 	type DependencyGraph,
 	mergeDependencyGraphs,
 	withGraphSourceFile,
@@ -40,6 +47,7 @@ export interface AuditReport {
 	totalFiles: number;
 	skippedFiles: string[];
 	excludedGeneratedFiles: ExcludedGeneratedFile[];
+	excludedFrameworkGeneratedFiles: FrameworkGeneratedArtifact[];
 	metrics: FileMetrics[];
 	cycles: Cycle[];
 	highFanOut: FileMetrics[];
@@ -74,6 +82,7 @@ export interface AuditJsonReport {
 	skippedFileCount: number;
 	skippedFiles: string[];
 	totalFiles: number;
+	warnings: string[];
 }
 
 interface AuditProjectBoundary {
@@ -248,14 +257,13 @@ const projectAuditGraph = (
 
 const prepareAuditGraph = (
 	graph: DependencyGraph,
-	projectGraphs: AuditProjectGraph[]
+	projectGraphs: AuditProjectGraph[],
+	frameworkClassifier?: FrameworkGeneratedArtifactClassifier
 ): {
 	excludedGeneratedFiles: ExcludedGeneratedFile[];
+	excludedFrameworkGeneratedFiles: FrameworkGeneratedArtifact[];
 	graph: DependencyGraph;
 } => {
-	if (projectGraphs.length === 0) {
-		return { excludedGeneratedFiles: [], graph };
-	}
 	const boundaries = projectGraphs.map(({ project }) =>
 		projectBoundary(project)
 	);
@@ -268,11 +276,31 @@ const prepareAuditGraph = (
 			excludedByFile.set(excluded.file, excluded);
 		}
 	}
+	const compilerFilteredGraph =
+		projected.length > 0
+			? mergeDependencyGraphs(projected.map((item) => item.graph))
+			: graph;
+	const frameworkFiltered = frameworkClassifier
+		? excludeFrameworkGeneratedArtifacts(
+				compilerFilteredGraph,
+				frameworkClassifier
+			)
+		: { graph: compilerFilteredGraph, excludedGeneratedFiles: [] };
+	for (const artifact of frameworkFiltered.excludedGeneratedFiles) {
+		if (!excludedByFile.has(artifact.file)) {
+			excludedByFile.set(artifact.file, {
+				file: artifact.file,
+				outDir: artifact.generatedDirectory,
+				tsconfigPath: artifact.tsconfigPath,
+			});
+		}
+	}
 	return {
 		excludedGeneratedFiles: [...excludedByFile.values()].sort((a, b) =>
 			a.file.localeCompare(b.file)
 		),
-		graph: mergeDependencyGraphs(projected.map((item) => item.graph)),
+		excludedFrameworkGeneratedFiles: frameworkFiltered.excludedGeneratedFiles,
+		graph: frameworkFiltered.graph,
 	};
 };
 
@@ -424,9 +452,10 @@ export function buildAuditReport(
 		fanInThreshold: number;
 		exportThreshold: number;
 	},
-	projectGraphs: AuditProjectGraph[] = []
+	projectGraphs: AuditProjectGraph[] = [],
+	frameworkClassifier?: FrameworkGeneratedArtifactClassifier
 ): AuditReport {
-	const prepared = prepareAuditGraph(graph, projectGraphs);
+	const prepared = prepareAuditGraph(graph, projectGraphs, frameworkClassifier);
 	const metrics = computeMetrics(prepared.graph);
 	const cycles = detectCycles(prepared.graph);
 
@@ -440,6 +469,7 @@ export function buildAuditReport(
 		totalFiles: metrics.length,
 		skippedFiles: prepared.graph.skippedFiles,
 		excludedGeneratedFiles: prepared.excludedGeneratedFiles,
+		excludedFrameworkGeneratedFiles: prepared.excludedFrameworkGeneratedFiles,
 		metrics,
 		cycles,
 		highFanOut,
@@ -456,6 +486,14 @@ export function auditReportToJson(
 		...metric,
 		file: path.relative(baseDir, metric.file),
 	});
+	const warnings =
+		report.excludedFrameworkGeneratedFiles.length > 0
+			? [
+					generatedArtifactWarning(
+						report.excludedFrameworkGeneratedFiles.length
+					),
+				]
+			: [];
 	return {
 		totalFiles: report.totalFiles,
 		skippedFileCount: report.skippedFiles.length,
@@ -477,6 +515,7 @@ export function auditReportToJson(
 		highFanOut: report.highFanOut.map(relativeMetric),
 		highFanIn: report.highFanIn.map(relativeMetric),
 		largeExportSurface: report.largeExportSurface.map(relativeMetric),
+		warnings,
 	};
 }
 
@@ -520,6 +559,9 @@ export async function auditCommand(options: AuditOptions): Promise<void> {
 		const project = projectsByConfig.get(normalizePath(item.tsconfigPath));
 		return project ? [{ graph: item.graph, project }] : [];
 	});
+	const frameworkClassifier = await createFrameworkGeneratedArtifactClassifier(
+		context.graphs.map(({ tsconfigPath }) => tsconfigPath)
+	);
 	const report = buildAuditReport(
 		graph,
 		{
@@ -527,7 +569,8 @@ export async function auditCommand(options: AuditOptions): Promise<void> {
 			fanInThreshold,
 			exportThreshold,
 		},
-		projectGraphs
+		projectGraphs,
+		frameworkClassifier
 	);
 
 	if (json) {
@@ -553,6 +596,13 @@ function printReport(
 	}
 ): void {
 	logger.info(`\n📊 Module Health Report (${report.totalFiles} files)\n`);
+
+	if (report.excludedFrameworkGeneratedFiles.length > 0) {
+		logger.warn(
+			`⚠️  ${generatedArtifactWarning(report.excludedFrameworkGeneratedFiles.length)}`
+		);
+		logger.empty();
+	}
 
 	if (report.skippedFiles.length > 0) {
 		logger.warn(

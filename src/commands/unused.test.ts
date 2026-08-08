@@ -35,6 +35,75 @@ describe("unused command", () => {
 		expect(serverSource).toContain(
 			"coverageIncomplete: report.skippedFiles.length > 0"
 		);
+		expect(serverSource).toContain(
+			"excludedGeneratedFileCount: report.excludedGeneratedFileCount"
+		);
+		expect(serverSource).toContain(
+			"excludedGeneratedFiles: report.excludedGeneratedFiles.map"
+		);
+	});
+
+	// @BDD: ANLY-001-Verified
+	// @BDD: ANLY-002-Verified
+	test("excludes default Next type artifacts while retaining authored declarations", async () => {
+		const dir = await makeFixtureBase(
+			"unused-next-generated",
+			{
+				"tsconfig.json": JSON.stringify({
+					compilerOptions: { strict: true },
+					include: [
+						"types/**/*.d.ts",
+						".next/types/**/*.ts",
+						".next/dev/types/**/*.ts",
+					],
+				}),
+				"types/authored.d.ts":
+					"export interface AuthoredValue { id: string }\n",
+				".next/types/cache-life.d.ts":
+					"export declare const generatedCache: string;\n",
+				".next/dev/types/route-metadata.d.ts":
+					"export declare const generatedRoute: string;\n",
+			},
+			{ outsideRepo: true }
+		);
+
+		const jsonProc = Bun.spawn([...CLI, "unused", dir, "--json"], {
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		const [stdout, stderr] = await Promise.all([
+			new Response(jsonProc.stdout).text(),
+			new Response(jsonProc.stderr).text(),
+		]);
+		await jsonProc.exited;
+		expect(jsonProc.exitCode, stderr).toBe(0);
+		const report = JSON.parse(stdout);
+		expect(report.totalFiles).toBe(1);
+		expect(report.excludedGeneratedFileCount).toBe(2);
+		expect(report.excludedGeneratedFiles).toEqual([
+			path.join(dir, ".next/dev/types/route-metadata.d.ts"),
+			path.join(dir, ".next/types/cache-life.d.ts"),
+		]);
+		expect(report.warnings).toContain(
+			"Excluded 2 framework-generated TypeScript file(s) from analysis."
+		);
+		expect(report.orphanFiles).toEqual([
+			expect.objectContaining({ file: path.join(dir, "types/authored.d.ts") }),
+		]);
+
+		const humanProc = Bun.spawn([...CLI, "unused", dir], {
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		await new Response(humanProc.stdout).text();
+		const humanStderr = await new Response(humanProc.stderr).text();
+		await humanProc.exited;
+		expect(humanProc.exitCode).toBe(0);
+		expect(humanStderr).toContain(
+			"Excluded 2 framework-generated TypeScript file(s) from analysis."
+		);
+
+		await cleanup(dir);
 	});
 
 	test("reports incomplete coverage in JSON and human output", async () => {

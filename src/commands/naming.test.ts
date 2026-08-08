@@ -269,6 +269,54 @@ describe("naming command", () => {
 		await cleanup(dir);
 	});
 
+	// @BDD: ANLY-001-Verified
+	// @BDD: ANLY-002-Verified
+	test("excludes a custom Next distDir while retaining authored declarations", async () => {
+		const dir = await makeFixture("next-generated", {
+			"next.config.mjs": "export default { distDir: 'next-build' };\n",
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: { strict: true },
+				include: [
+					"types/**/*.d.ts",
+					"next-build/types/**/*.ts",
+					"next-build/dev/types/**/*.ts",
+				],
+			}),
+			"types/Authored_Name.d.ts":
+				"export interface AuthoredName { id: string }\n",
+			"next-build/types/cache-life.d.ts":
+				"export declare const cacheLife: string;\n",
+			"next-build/dev/types/route-metadata.d.ts":
+				"export declare const routeMetadata: string;\n",
+		});
+
+		const jsonResult = await captureOutput(async () => {
+			await namingCommand({ directory: dir, case: "camelCase", json: true });
+		});
+		const report = JSON.parse(jsonResult.stdout);
+		expect(report.summary.totalFiles).toBe(1);
+		expect(report.summary.excludedGeneratedFileCount).toBe(2);
+		expect(report.excludedGeneratedFiles).toEqual([
+			"next-build/dev/types/route-metadata.d.ts",
+			"next-build/types/cache-life.d.ts",
+		]);
+		expect(report.findings).toEqual([
+			expect.objectContaining({ file: "types/Authored_Name.d.ts" }),
+		]);
+		expect(report.warnings).toContain(
+			"Excluded 2 framework-generated TypeScript file(s) from analysis."
+		);
+
+		const humanResult = await captureOutput(async () => {
+			await namingCommand({ directory: dir, case: "camelCase" });
+		});
+		expect(humanResult.stdout).toContain(
+			"Excluded 2 framework-generated TypeScript file(s) from analysis."
+		);
+
+		await cleanup(dir);
+	});
+
 	test("NAM-003: --case warns that --majority-threshold is ignored", async () => {
 		const dir = await makeFixture("target-warning", {
 			"src/group/BuildReport.ts": functionFile("BuildReport"),

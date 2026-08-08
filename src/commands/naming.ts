@@ -4,6 +4,11 @@ import { logger } from "../cli-logger.ts";
 import { hasDefaultModifier, hasExportModifier } from "../core/ast-utils.ts";
 import { TS_JS_VUE_EXTENSIONS } from "../core/constants.ts";
 import { isFrameworkConventionFile } from "../core/framework-conventions.ts";
+import {
+	createFrameworkGeneratedArtifactClassifier,
+	excludeFrameworkGeneratedArtifacts,
+	generatedArtifactWarning,
+} from "../core/generated-artifacts.ts";
 import { ensureCleanWorktree, rollbackMoves } from "../core/git.ts";
 import {
 	type DependencyGraph,
@@ -629,7 +634,14 @@ export async function buildNamingReport(
 		project: options.project,
 		workspace: options.workspace,
 	});
-	const graph = mergeDependencyGraphs(graphs.map(({ graph: g }) => g));
+	const frameworkClassifier = await createFrameworkGeneratedArtifactClassifier(
+		graphs.map(({ tsconfigPath: configPath }) => configPath)
+	);
+	const preparedGraph = excludeFrameworkGeneratedArtifacts(
+		mergeDependencyGraphs(graphs.map(({ graph: itemGraph }) => itemGraph)),
+		frameworkClassifier
+	);
+	const graph = preparedGraph.graph;
 	const minSiblings = options.minSiblings ?? DEFAULT_MIN_SIBLINGS;
 	const majorityThreshold =
 		options.majorityThreshold ?? DEFAULT_MAJORITY_THRESHOLD;
@@ -640,16 +652,24 @@ export async function buildNamingReport(
 		case: options.case,
 		includeTests: options.includeTests,
 	});
-	const warnings =
+	const warnings: string[] =
 		options.case && options.majorityThreshold !== undefined
 			? [TARGET_CASE_THRESHOLD_WARNING]
 			: [];
+	if (preparedGraph.excludedGeneratedFiles.length > 0) {
+		warnings.push(
+			generatedArtifactWarning(preparedGraph.excludedGeneratedFiles.length)
+		);
+	}
 
 	return {
 		schemaVersion: NAMING_SCHEMA_VERSION,
 		directory: toRelativePath(process.cwd(), reportDirectory),
 		generatedAt: new Date().toISOString(),
 		warnings,
+		excludedGeneratedFiles: preparedGraph.excludedGeneratedFiles.map(
+			({ file }) => toRelativePath(reportDirectory, file)
+		),
 		findings: analysis.violations.map((violation) =>
 			relativizeViolation(violation, reportDirectory)
 		),
@@ -657,6 +677,7 @@ export async function buildNamingReport(
 			totalFindings: analysis.violations.length,
 			filesTouched: 0,
 			totalFiles: analysis.totalFiles,
+			excludedGeneratedFileCount: preparedGraph.excludedGeneratedFiles.length,
 			totalDirectories: analysis.totalDirectories,
 			minSiblings,
 			majorityThreshold,
@@ -676,6 +697,13 @@ export function formatNamingReport(report: NamingReport): string {
 		`Rules: ${rule}`,
 		"",
 	];
+	if (report.warnings.length > 0) {
+		lines.push("Warnings:");
+		for (const warning of report.warnings) {
+			lines.push(`  - ${warning}`);
+		}
+		lines.push("");
+	}
 	const groups = groupByFileDirectory(report.findings);
 	if (report.findings.length === 0) {
 		lines.push("No naming convention outliers found.");
