@@ -12,6 +12,7 @@ import path from "node:path";
 import type { ModuleReference } from "../types/graph";
 import {
 	buildDependencyGraph,
+	buildProjectGraphs,
 	type DependencyGraph,
 	findAllReferences,
 	mergeDependencyGraphs,
@@ -178,6 +179,41 @@ describe("findAllReferences", () => {
 			expect(graph.imports.has(normalizePath(liveFile))).toBe(true);
 			expect(graph.imports.has(normalizePath(missingFile))).toBe(false);
 			expect(graph.skippedFiles).toEqual([normalizePath(missingFile)]);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("reports project file progress and completes cached scans", async () => {
+		const dir = await mkdtemp(path.join(tmpdir(), "resect-graph-progress-"));
+		try {
+			const srcDir = path.join(dir, "src");
+			await mkdir(srcDir, { recursive: true });
+			const tsconfigPath = path.join(dir, "tsconfig.json");
+			await writeFile(
+				tsconfigPath,
+				JSON.stringify({
+					compilerOptions: { strict: true },
+					include: ["src/**/*.ts"],
+				})
+			);
+			await writeFile(path.join(srcDir, "one.ts"), "export const one = 1;\n");
+			await writeFile(path.join(srcDir, "two.ts"), "export const two = 2;\n");
+
+			const firstProgress: [done: number, total: number][] = [];
+			await buildProjectGraphs(tsconfigPath, {
+				onProgress: (done, total) => firstProgress.push([done, total]),
+			});
+			expect(firstProgress).toEqual([
+				[1, 2],
+				[2, 2],
+			]);
+
+			const cachedProgress: [done: number, total: number][] = [];
+			await buildProjectGraphs(tsconfigPath, {
+				onProgress: (done, total) => cachedProgress.push([done, total]),
+			});
+			expect(cachedProgress).toEqual([[2, 2]]);
 		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}

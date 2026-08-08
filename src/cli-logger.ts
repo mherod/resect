@@ -1,5 +1,8 @@
 import path from "node:path";
 import { formatUnifiedDiff, type StructuredEdit } from "./core/text-changes.ts";
+import type { ProgressCallback } from "./types/progress.ts";
+
+const PROGRESS_UPDATE_INTERVAL_MS = 100;
 
 /**
  * CLI Logger - Structured logging for user interface output
@@ -7,6 +10,20 @@ import { formatUnifiedDiff, type StructuredEdit } from "./core/text-changes.ts";
  */
 
 export class CLILogger {
+	private readonly now: () => number;
+	private readonly stderrIsTTY: () => boolean;
+
+	constructor(
+		options: {
+			now?: () => number;
+			stderrIsTTY?: () => boolean;
+		} = {}
+	) {
+		this.now = options.now ?? Date.now;
+		this.stderrIsTTY =
+			options.stderrIsTTY ?? (() => Boolean(process.stderr.isTTY));
+	}
+
 	/**
 	 * Log informational messages to the user
 	 */
@@ -33,6 +50,31 @@ export class CLILogger {
 	 */
 	error(message: string): void {
 		process.stderr.write(`${message}\n`);
+	}
+
+	/**
+	 * Create a terminal-only file counter. Intermediate writes replace one line
+	 * and are throttled; completion always emits the final counter and newline.
+	 */
+	createFileScanProgress(options: {
+		enabled: boolean;
+	}): ProgressCallback | undefined {
+		if (!(options.enabled && this.stderrIsTTY())) {
+			return undefined;
+		}
+
+		let lastUpdateAt = Number.NEGATIVE_INFINITY;
+		return (done, total) => {
+			const now = this.now();
+			const isComplete = done >= total;
+			if (!isComplete && now - lastUpdateAt < PROGRESS_UPDATE_INTERVAL_MS) {
+				return;
+			}
+			lastUpdateAt = now;
+			process.stderr.write(
+				`\r${done}/${total} files…${isComplete ? "\n" : ""}`
+			);
+		};
 	}
 
 	/**

@@ -1,6 +1,7 @@
 import path from "node:path";
 import type ts from "typescript";
 import type { BarrelExport, ModuleReference } from "../types/graph.ts";
+import type { ProgressCallback } from "../types/progress.ts";
 import type { ProjectConfig } from "../types.ts";
 import {
 	enforceCacheLimit,
@@ -64,6 +65,10 @@ export interface DependencyGraph {
 	programs?: ts.Program[];
 }
 
+export interface GraphBuildOptions {
+	onProgress?: ProgressCallback;
+}
+
 interface SuccessfulFileScan {
 	skipped: false;
 	normalizedFile: string;
@@ -118,12 +123,14 @@ function isCacheValid(
  * Results are cached per tsconfig path for the lifetime of the process.
  */
 export async function buildDependencyGraph(
-	project: ProjectConfig
+	project: ProjectConfig,
+	options: GraphBuildOptions = {}
 ): Promise<DependencyGraph> {
 	const files = getProjectFiles(project).map(normalizePath);
 	const cached = touchCacheEntry(graphCache, project.tsconfigPath);
 	const cachedMtimes = graphCacheMtimes.get(project.tsconfigPath);
 	if (cached && cachedMtimes && isCacheValid(cached, cachedMtimes, files)) {
+		options.onProgress?.(files.length, files.length);
 		return cached;
 	}
 	// Snapshot mtimes before parsing so an edit made mid-build invalidates the
@@ -151,6 +158,7 @@ export async function buildDependencyGraph(
 				skipped: true,
 				normalizedFile: normalizePath(file),
 			}),
+			onProgress: options.onProgress,
 		}
 	);
 
@@ -319,7 +327,8 @@ export function findBarrelReExports(
  * owned by other configs in the same project (#59 / #66).
  */
 export async function buildProjectGraphs(
-	tsconfigPath: string
+	tsconfigPath: string,
+	options: GraphBuildOptions = {}
 ): Promise<{ tsconfigPath: string; graph: DependencyGraph }[]> {
 	const discovery = discoverProject(path.dirname(tsconfigPath));
 	const configs = discovery.configs.filter((c) => !c.isSolution);
@@ -331,7 +340,7 @@ export async function buildProjectGraphs(
 
 	const results: { tsconfigPath: string; graph: DependencyGraph }[] = [];
 	for (const project of projects) {
-		const graph = await buildDependencyGraph(project);
+		const graph = await buildDependencyGraph(project, options);
 		results.push({ tsconfigPath: project.tsconfigPath, graph });
 	}
 	return results;

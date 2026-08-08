@@ -68,6 +68,45 @@ describe("CLILogger", () => {
 		});
 	});
 
+	describe("file scan progress", () => {
+		test("updates stderr in place on a TTY and throttles intermediate writes", () => {
+			let now = 0;
+			logger = new CLILogger({
+				now: () => now,
+				stderrIsTTY: () => true,
+			});
+			const onProgress = logger.createFileScanProgress({ enabled: true });
+
+			expect(onProgress).toBeDefined();
+			onProgress?.(1, 500);
+			now = 50;
+			onProgress?.(2, 500);
+			now = 100;
+			onProgress?.(3, 500);
+			now = 101;
+			onProgress?.(500, 500);
+
+			expect(stderrCalls).toEqual([
+				"\r1/500 files…",
+				"\r3/500 files…",
+				"\r500/500 files…\n",
+			]);
+			expect(stdoutCalls).toEqual([]);
+		});
+
+		test("is disabled for JSON output even on a TTY", () => {
+			logger = new CLILogger({ stderrIsTTY: () => true });
+
+			expect(logger.createFileScanProgress({ enabled: false })).toBeUndefined();
+		});
+
+		test("is disabled when stderr is not a TTY", () => {
+			logger = new CLILogger({ stderrIsTTY: () => false });
+
+			expect(logger.createFileScanProgress({ enabled: true })).toBeUndefined();
+		});
+	});
+
 	describe("empty", () => {
 		test("writes a bare newline to stdout", () => {
 			logger.empty();

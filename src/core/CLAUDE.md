@@ -178,3 +178,5 @@ DON'T use async `Bun.file().lastModified` or content hashing in validity checks;
 ### Concurrent writes
 
 Use `mapConcurrent(updates, writer, { concurrency: 4 })` from `src/core/concurrency.ts` for independent move/rename/alias writes. DON'T use sequential `await` loops or unbounded `Promise.all`, which can exhaust file descriptors.
+
+`onProgress(done, total)` fires once after each successful or handled item. Keep that core callback output-free; TTY detection, throttling, and carriage-return rendering belong to `CLILogger.createFileScanProgress()`, and JSON or non-TTY callers must omit the reporter.

@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import type { DependencyGraph } from "../core/graph.ts";
 import type { ModuleReference } from "../types/graph.ts";
 import type { ProjectConfig } from "../types.ts";
-import { CLI, cleanup, makeFixture } from "./__test-helpers.ts";
-import { buildAuditReport, detectCycles } from "./audit.ts";
+import { CLI, captureOutput, cleanup, makeFixture } from "./__test-helpers.ts";
+import { auditCommand, buildAuditReport, detectCycles } from "./audit.ts";
 
 function makeRef(sourceFile: string, resolvedPath: string): ModuleReference {
 	return {
@@ -269,6 +269,30 @@ describe("buildAuditReport", () => {
 });
 
 describe("audit command coverage", () => {
+	test("forwards programmatic file progress through command context", async () => {
+		const dir = await makeFixture("audit-progress", {
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: { strict: true },
+				include: ["src/**/*.ts"],
+			}),
+			"src/value.ts": "export const value = 1;\n",
+		});
+		const progress: [done: number, total: number][] = [];
+
+		try {
+			await captureOutput(async () => {
+				await auditCommand({
+					directory: dir,
+					json: true,
+					onProgress: (done, total) => progress.push([done, total]),
+				});
+			});
+			expect(progress.at(-1)).toEqual([1, 1]);
+		} finally {
+			await cleanup(dir);
+		}
+	});
+
 	// @BDD: ANLY-001-Verified
 	// @BDD: ANLY-002-Verified
 	test("excludes Next-generated declarations and reports the shared warning", async () => {
@@ -301,6 +325,7 @@ describe("audit command coverage", () => {
 			]);
 			await jsonProc.exited;
 			expect(jsonProc.exitCode, stderr).toBe(0);
+			expect(stderr).toBe("");
 			const report = JSON.parse(stdout);
 			expect(report.excludedGeneratedFileCount).toBe(2);
 			expect(
@@ -327,6 +352,7 @@ describe("audit command coverage", () => {
 			expect(humanStderr).toContain(
 				"Excluded 2 framework-generated TypeScript file(s) from analysis."
 			);
+			expect(humanStderr).not.toContain("files…");
 		} finally {
 			await cleanup(dir);
 		}

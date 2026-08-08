@@ -38,6 +38,22 @@ async function runUnusedJson(directory: string): Promise<UnusedJsonReport> {
 }
 
 describe("unused command", () => {
+	test("forwards programmatic file progress through workspace graphs", async () => {
+		const dir = await makeFixture("progress", {
+			"value.ts": "export const value = 1;\n",
+		});
+		const progress: [done: number, total: number][] = [];
+
+		try {
+			await findUnusedExports(dir, {
+				onProgress: (done, total) => progress.push([done, total]),
+			});
+			expect(progress.at(-1)).toEqual([1, 1]);
+		} finally {
+			await cleanup(dir);
+		}
+	});
+
 	// @BDD: ANLY-003-Verified
 	test("excludes App Router entrypoints while retaining ordinary same-stem modules", async () => {
 		const dir = await makeFixtureBase("unused-framework-entrypoints", {
@@ -169,6 +185,7 @@ describe("unused command", () => {
 		]);
 		await jsonProc.exited;
 		expect(jsonProc.exitCode, stderr).toBe(0);
+		expect(stderr).toBe("");
 		const report = JSON.parse(stdout);
 		expect(report.totalFiles).toBe(1);
 		expect(report.excludedGeneratedFileCount).toBe(2);
@@ -194,6 +211,7 @@ describe("unused command", () => {
 		expect(humanStderr).toContain(
 			"Excluded 2 framework-generated TypeScript file(s) from analysis."
 		);
+		expect(humanStderr).not.toContain("files…");
 
 		await cleanup(dir);
 	});

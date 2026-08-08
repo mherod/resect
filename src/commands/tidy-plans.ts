@@ -376,9 +376,10 @@ async function planCaseRenameChanges(
  */
 async function planFileMoveChanges(
 	scanDir: string,
-	project: ProjectConfig
+	project: ProjectConfig,
+	onProgress?: TidyOptions["onProgress"]
 ): Promise<PlannedTidyChange[]> {
-	const graphs = await buildProjectGraphs(project.tsconfigPath);
+	const graphs = await buildProjectGraphs(project.tsconfigPath, { onProgress });
 	const graph = mergeDependencyGraphs(graphs.map(({ graph: g }) => g));
 
 	const barrelReExported = new Set<string>();
@@ -473,7 +474,9 @@ async function planLayoutRelocationChanges(
 	}
 
 	// Source 2: test-relocation stranded tests (not colocated with their subject).
-	const graphs = await buildProjectGraphs(project.tsconfigPath);
+	const graphs = await buildProjectGraphs(project.tsconfigPath, {
+		onProgress: options.onProgress,
+	});
 	const graph = mergeDependencyGraphs(graphs.map(({ graph: g }) => g));
 	const relocations = findTestRelocations(graph, { directory: scopeDir });
 	for (const relocation of relocations) {
@@ -549,7 +552,9 @@ export async function planTidyFixes(
 		const target = options.scope
 			? path.resolve(options.scope)
 			: reportDirectory;
-		planned.push(...(await planFileMoveChanges(target, project)));
+		planned.push(
+			...(await planFileMoveChanges(target, project, options.onProgress))
+		);
 	}
 
 	// layout-relocations is an aggressive move-variant category: not in

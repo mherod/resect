@@ -24,12 +24,16 @@ function assertExperimental(enabled: boolean | undefined): void {
 
 export async function tidyCommand(options: TidyOptions): Promise<void> {
 	assertExperimental(options.experimental);
-	const report = await buildTidyReport(options);
+	const onProgress =
+		options.onProgress ??
+		logger.createFileScanProgress({ enabled: !options.json });
+	const executionOptions = { ...options, onProgress };
+	const report = await buildTidyReport(executionOptions);
 	let result: TidyApplyResult;
 	if (options.fix) {
 		result = options.dryRun
-			? await previewTidyFixes(report, options)
-			: await applyTidyFixes(report, options);
+			? await previewTidyFixes(report, executionOptions)
+			: await applyTidyFixes(report, executionOptions);
 	} else {
 		result = {
 			report,

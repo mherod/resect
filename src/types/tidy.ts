@@ -1,4 +1,5 @@
 import type { StructuredEdit } from "../core/text-changes.ts";
+import type { ProgressCallback } from "./progress.ts";
 import type { DeclarationKind, SimilarityBucket } from "./similar.ts";
 
 type TidySchemaVersion = "1-experimental";
@@ -22,6 +23,7 @@ export interface TidyOptions {
 	fanOutThreshold?: number;
 	fanInThreshold?: number;
 	exportThreshold?: number;
+	onProgress?: ProgressCallback;
 }
 
 export type TidyFixCategory =

@@ -59,6 +59,23 @@ const EXPORT_SURFACE = Array.from(
 ).join("\n");
 
 describe("tidy command", () => {
+	test("forwards programmatic file progress through report graphs", async () => {
+		const dir = await makeFixture("progress", {
+			"src/value.ts": "export const value = 1;\n",
+		});
+		const progress: [done: number, total: number][] = [];
+
+		try {
+			await buildTidyReport({
+				directory: path.join(dir, "src"),
+				onProgress: (done, total) => progress.push([done, total]),
+			});
+			expect(progress.at(-1)).toEqual([1, 1]);
+		} finally {
+			await cleanup(dir);
+		}
+	});
+
 	test("requires the experimental flag", async () => {
 		const dir = await makeFixture("gate", {
 			"src/orphan.ts": "export function orphan() { return 1; }",
@@ -88,9 +105,13 @@ describe("tidy command", () => {
 			[...CLI, "tidy", path.join(dir, "src"), "--experimental"],
 			{ stdout: "pipe", stderr: "pipe" }
 		);
-		const stdout = await new Response(proc.stdout).text();
+		const [stdout, stderr] = await Promise.all([
+			new Response(proc.stdout).text(),
+			new Response(proc.stderr).text(),
+		]);
 		await proc.exited;
 		expect(proc.exitCode).toBe(0);
+		expect(stderr).toBe("");
 		expect(stdout).toContain("Unused exports");
 		expect(stdout).toContain("Similar declarations");
 		expect(stdout).toContain("Module health");
@@ -110,9 +131,13 @@ describe("tidy command", () => {
 			[...CLI, "tidy", path.join(dir, "src"), "--experimental", "--json"],
 			{ stdout: "pipe", stderr: "pipe" }
 		);
-		const stdout = await new Response(proc.stdout).text();
+		const [stdout, stderr] = await Promise.all([
+			new Response(proc.stdout).text(),
+			new Response(proc.stderr).text(),
+		]);
 		await proc.exited;
 		expect(proc.exitCode).toBe(0);
+		expect(stderr).toBe("");
 		const report = JSON.parse(stdout);
 		expect(report.schemaVersion).toBe("1-experimental");
 		expect(report.findings.unused.length).toBeGreaterThan(0);

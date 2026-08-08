@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { ProgressCallback } from "../types/progress.ts";
 import { mapConcurrent } from "./concurrency.ts";
 import { buildProjectGraphs } from "./graph.ts";
 import { dedupeTsconfigResults } from "./path-utils.ts";
@@ -22,6 +23,8 @@ export interface WorkspaceGraphOptions {
 	project?: string;
 	/** When false or omitted, only the requested project's graphs are built. */
 	workspace?: boolean;
+	/** Optional file-level progress observer for every graph build. */
+	onProgress?: ProgressCallback;
 }
 
 export interface WorkspaceGraphSet {
@@ -69,7 +72,9 @@ function workspaceSearchDir(
 export async function buildWorkspaceGraphs(
 	options: WorkspaceGraphOptions
 ): Promise<WorkspaceGraphSet> {
-	const baseGraphs = await buildProjectGraphs(options.tsconfigPath);
+	const baseGraphs = await buildProjectGraphs(options.tsconfigPath, {
+		onProgress: options.onProgress,
+	});
 	if (!options.workspace) {
 		return { graphs: baseGraphs, workspaceRoot: null };
 	}
@@ -83,7 +88,10 @@ export async function buildWorkspaceGraphs(
 
 	const packageGraphs = await mapConcurrent(
 		workspace.packages.filter((pkg) => pkg.tsconfigPath),
-		async (pkg) => buildProjectGraphs(pkg.tsconfigPath as string),
+		async (pkg) =>
+			buildProjectGraphs(pkg.tsconfigPath as string, {
+				onProgress: options.onProgress,
+			}),
 		{ onError: () => [] as ProjectGraphResult[] }
 	);
 

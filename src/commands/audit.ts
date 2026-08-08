@@ -17,6 +17,7 @@ import { normalizePath } from "../core/resolver.ts";
 import { scanExports } from "../core/scanner.ts";
 import type { ReadOnlyCommandOptions } from "../types/commands.ts";
 import type { ModuleReference } from "../types/graph.ts";
+import type { ProgressCallback } from "../types/progress.ts";
 import type { ProjectConfig } from "../types.ts";
 import { setupCommandContext } from "./command-context.ts";
 
@@ -29,6 +30,8 @@ export interface AuditOptions extends ReadOnlyCommandOptions {
 	fanInThreshold?: number;
 	/** Export count threshold to flag (default: 8) */
 	exportThreshold?: number;
+	/** Optional programmatic observer; the human CLI supplies a TTY reporter. */
+	onProgress?: ProgressCallback;
 }
 
 export interface FileMetrics {
@@ -531,6 +534,8 @@ export async function auditCommand(options: AuditOptions): Promise<void> {
 	} = options;
 
 	const absoluteDir = path.resolve(directory);
+	const onProgress =
+		options.onProgress ?? logger.createFileScanProgress({ enabled: !json });
 
 	const context = await setupCommandContext({
 		project: projectArg,
@@ -539,6 +544,7 @@ export async function auditCommand(options: AuditOptions): Promise<void> {
 		workspace: workspace ? "projects" : "none",
 		workspaceStart: projectArg ? path.resolve(projectArg) : absoluteDir,
 		mergeWorkspaceGraphs: workspace,
+		onProgress,
 	});
 	if (!context) {
 		logger.error("Could not find tsconfig.json");

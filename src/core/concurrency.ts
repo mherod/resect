@@ -1,3 +1,5 @@
+import type { ProgressCallback } from "../types/progress.ts";
+
 /**
  * Map over items with bounded concurrency.
  * Runs up to `limit` tasks concurrently, preserving input order in results.
@@ -9,11 +11,13 @@ export async function mapConcurrent<T, R>(
 	options: {
 		concurrency?: number;
 		onError?: (item: T, error: unknown) => R;
+		onProgress?: ProgressCallback;
 	} = {}
 ): Promise<R[]> {
-	const { concurrency = 4, onError } = options;
+	const { concurrency = 4, onError, onProgress } = options;
 	const results: R[] = new Array(items.length);
 	let nextIndex = 0;
+	let completed = 0;
 
 	async function worker(): Promise<void> {
 		while (nextIndex < items.length) {
@@ -31,6 +35,8 @@ export async function mapConcurrent<T, R>(
 					throw error;
 				}
 			}
+			completed += 1;
+			onProgress?.(completed, items.length);
 		}
 	}
 

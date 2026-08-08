@@ -47,6 +47,7 @@ async function buildGraphSet(options: {
 	reportDirectory: string;
 	project?: string;
 	workspace?: boolean;
+	onProgress?: TidyOptions["onProgress"];
 }): Promise<{ graphs: ProjectGraphResult[]; scanDirectory: string }> {
 	const { graphs, workspaceRoot } = await buildWorkspaceGraphs(options);
 	if (workspaceRoot === null) {
@@ -248,6 +249,7 @@ export async function buildTidyReport(
 		reportDirectory,
 		project: options.project,
 		workspace: options.workspace,
+		onProgress: options.onProgress,
 	});
 	const scopeDir = options.scope ? path.resolve(options.scope) : scanDirectory;
 	const graph = buildMergedGraph(graphs);

@@ -28,6 +28,7 @@ import { getRuntime } from "../runtime/index.ts";
 import type { ExportInfo } from "../types/analysis.ts";
 import type { ReadOnlyCommandOptions } from "../types/commands.ts";
 import type { ModuleReference, ReferenceType } from "../types/graph.ts";
+import type { ProgressCallback } from "../types/progress.ts";
 
 const UNUSED_SCHEMA_VERSION = "1-experimental" as const;
 const ALL_BINDINGS = "__all__";
@@ -42,6 +43,7 @@ export interface UnusedOptions extends ReadOnlyCommandOptions {
 	json?: boolean;
 	ignore?: string;
 	entrypointGlobs?: string | string[];
+	onProgress?: ProgressCallback;
 }
 
 export interface UnusedExport {
@@ -121,6 +123,7 @@ export async function findUnusedExports(
 		ignore?: string;
 		workspace?: boolean;
 		entrypointGlobs?: string | string[];
+		onProgress?: ProgressCallback;
 	}
 ): Promise<UnusedReport> {
 	const absoluteDir = path.resolve(directory);
@@ -161,6 +164,7 @@ export async function findUnusedExports(
 		reportDirectory: absoluteDir,
 		project: options?.project,
 		workspace: options?.workspace,
+		onProgress: options?.onProgress,
 	});
 
 	return findUnusedExportsFromGraphs(directory, graphs, {
@@ -874,6 +878,8 @@ export function isExportUsed(
 export async function unusedCommand(options: UnusedOptions): Promise<void> {
 	const { directory, json, verbose, ignore, entrypointGlobs } = options;
 	const absoluteDir = path.resolve(directory);
+	const onProgress =
+		options.onProgress ?? logger.createFileScanProgress({ enabled: !json });
 
 	if (!json) {
 		logger.info(`\n🔍 Scanning for unused exports in ${absoluteDir}\n`);
@@ -884,6 +890,7 @@ export async function unusedCommand(options: UnusedOptions): Promise<void> {
 		ignore,
 		workspace: options.workspace,
 		entrypointGlobs,
+		onProgress,
 	});
 
 	if (json) {

@@ -77,6 +77,7 @@ export type {
 	NamingViolation,
 	PrimaryExportKind,
 } from "./types/naming.ts";
+export type { ProgressCallback } from "./types/progress.ts";
 export type {
 	FunctionInfo,
 	SimilarityBucket,

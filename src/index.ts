@@ -218,7 +218,7 @@ export type { WorkspaceOptions } from "./commands/workspace.ts";
 export { workspaceCommand } from "./commands/workspace.ts";
 // ── Core: dependency contracts ──────────────────────────────────────
 export { analyzeDependencyContracts } from "./core/dependency-contracts.ts";
-export type { DependencyGraph } from "./core/graph.ts";
+export type { DependencyGraph, GraphBuildOptions } from "./core/graph.ts";
 export {
 	buildDependencyGraph,
 	findAllReferences,
@@ -391,6 +391,7 @@ export type {
 	OrganiseReport,
 	SignatureInfo,
 } from "./types/organise.ts";
+export type { ProgressCallback } from "./types/progress.ts";
 export type {
 	DeclarationKind,
 	FunctionInfo,
