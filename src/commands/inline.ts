@@ -14,13 +14,14 @@ import {
 } from "../core/resolver.ts";
 import { scanBarrelExports } from "../core/scanner.ts";
 import { printVerificationResults } from "../core/verify.ts";
+import type { ModuleReference } from "../types/graph.ts";
 import type {
 	InlineConflict,
 	InlineOptions,
 	InlineResult,
 	InlineRewrite,
 } from "../types/inline.ts";
-import type { ModuleReference, ProjectConfig } from "../types.ts";
+import type { ProjectConfig } from "../types.ts";
 import {
 	type AliasChange,
 	applyChanges,

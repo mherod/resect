@@ -1,6 +1,11 @@
 import path from "node:path";
 import ts from "typescript";
 import type { ProjectConfig, ProjectReference } from "../types.ts";
+import {
+	enforceCacheLimit,
+	setCacheEntry,
+	touchCacheEntry,
+} from "./bounded-cache.ts";
 import { mtimesUnchanged, snapshotMtimes } from "./path-utils.ts";
 
 /** Directories to skip during tsconfig discovery */
@@ -49,7 +54,7 @@ export interface ProjectDiscovery {
 	rootConfig?: TsConfigInfo;
 }
 
-/** Per-invocation cache for discoverProject results, keyed by resolved path */
+/** Bounded per-process LRU for discoverProject results, keyed by resolved path. */
 const discoveryCache = new Map<string, ProjectDiscovery>();
 /**
  * Per-directory snapshot of each discovered tsconfig's mtime at discovery time.
@@ -85,7 +90,7 @@ export function setDiscoveryReglobThrottleMs(ms: number): void {
  */
 export function discoverProject(projectDir: string): ProjectDiscovery {
 	const absoluteDir = path.resolve(projectDir);
-	const cached = discoveryCache.get(absoluteDir);
+	const cached = touchCacheEntry(discoveryCache, absoluteDir);
 	const cachedMtimes = discoveryCacheMtimes.get(absoluteDir);
 	if (cached && cachedMtimes && mtimesUnchanged(cachedMtimes)) {
 		// Content edits + removals are caught by mtimesUnchanged above. A
@@ -147,10 +152,16 @@ export function discoverProject(projectDir: string): ProjectDiscovery {
 		configs.find((c) => c.path === path.join(absoluteDir, "tsconfig.json"));
 
 	const result: ProjectDiscovery = { configs, fileOwnership, rootConfig };
-	discoveryCache.set(absoluteDir, result);
+	setCacheEntry(discoveryCache, absoluteDir, result);
 	discoveryCacheMtimes.set(absoluteDir, mtimes);
 	discoveryCacheTsconfigSets.set(absoluteDir, new Set(tsconfigPaths));
 	discoveryCacheReglobAt.set(absoluteDir, Date.now());
+	enforceCacheLimit(discoveryCache, [
+		discoveryCache,
+		discoveryCacheMtimes,
+		discoveryCacheTsconfigSets,
+		discoveryCacheReglobAt,
+	]);
 	return result;
 }
 

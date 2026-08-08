@@ -116,6 +116,10 @@ import type { FilenameCasing } from "./types/naming.ts";
 import type { TidyFixCategory } from "./types/tidy.ts";
 import type { TransformRule } from "./types/transform.ts";
 
+export const renameSpecifierInputSchema = z
+	.string()
+	.refine((value) => value.includes("="), "Must be '<from>=<to>'");
+
 // ── Mutating-tool helpers ──────────────────────────────────────────
 
 /** Structured worktree check that does NOT call process.exit on dirty. */
@@ -2296,7 +2300,7 @@ server.registerTool(
 					"Normalization strategy: 'alias' = use tsconfig paths, 'relative' = use ./ paths, 'shortest' = pick the shorter option per import. Required unless renameSpecifiers is provided"
 				),
 			renameSpecifiers: z
-				.array(z.string())
+				.array(renameSpecifierInputSchema)
 				.optional()
 				.describe(
 					"Specifier rewrite pairs in '<from>=<to>' form, for example '@scope/error=@scope/shared/error'. Rewrites every exact '<from>' match; when '<to>' is non-relative it also redirects other importers that resolve to the same module (e.g. relative './error'). When provided, normalization strategy is skipped"

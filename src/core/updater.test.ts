@@ -324,4 +324,95 @@ describe("updateFileReferences — barrel reference detection", () => {
 		expect(newContent).toContain('from "@scope/pkg-b"');
 		expect(newContent).toContain('from "./barrel"');
 	});
+
+	test("keeps split-contained specifier edits in the original coordinate space", async () => {
+		const dir = nextDir();
+		await writeFixture(
+			dir,
+			"packages/pkg-a/package.json",
+			JSON.stringify({ name: "@scope/pkg-a" })
+		);
+		await writeFixture(
+			dir,
+			"packages/pkg-b/package.json",
+			JSON.stringify({ name: "@scope/pkg-b" })
+		);
+		await writeFixture(
+			dir,
+			"packages/pkg-a/src/moved.ts",
+			"export const a = 1;\n"
+		);
+		await writeFixture(
+			dir,
+			"packages/pkg-a/src/other.ts",
+			"export const c = 2;\n"
+		);
+		await writeFixture(
+			dir,
+			"packages/pkg-a/src/barrel.ts",
+			['export { a } from "./moved";', 'export { c } from "./other";', ""].join(
+				"\n"
+			)
+		);
+		const consumerPath = await writeFixture(
+			dir,
+			"packages/pkg-a/src/consumer.ts",
+			'import { a, c } from "./barrel"; const trailing = require("./barrel");\n'
+		);
+
+		const project = await makeProject(dir);
+		project.files = [
+			consumerPath,
+			path.join(dir, "packages/pkg-a/src/barrel.ts"),
+			path.join(dir, "packages/pkg-a/src/moved.ts"),
+			path.join(dir, "packages/pkg-a/src/other.ts"),
+		];
+		const program = ts.createProgram(project.files, project.compilerOptions);
+		const consumerSf = program.getSourceFile(consumerPath);
+		expect(consumerSf).toBeTruthy();
+		if (!consumerSf) {
+			return;
+		}
+
+		const oldPath = path.join(dir, "packages/pkg-a/src/moved.ts");
+		const newPath = path.join(dir, "packages/pkg-b/src/moved.ts");
+		const refs: ModuleReference[] = [
+			{
+				sourceFile: consumerPath,
+				specifier: "./barrel",
+				resolvedPath: oldPath,
+				type: "import-named",
+				line: 1,
+				column: 1,
+				bindings: [
+					{ name: "a", isType: false },
+					{ name: "c", isType: false },
+				],
+				isTypeOnly: false,
+			},
+			{
+				sourceFile: consumerPath,
+				specifier: "./barrel",
+				resolvedPath: oldPath,
+				type: "require",
+				line: 1,
+				column: 50,
+				isTypeOnly: false,
+			},
+		];
+
+		const { newContent } = updateFileReferences(
+			consumerSf,
+			refs,
+			oldPath,
+			newPath,
+			project,
+			makeWorkspace(dir),
+			[{ name: "a", type: "named", isType: false, line: 1 }]
+		);
+
+		expect(newContent).toBe(
+			'import { a } from "@scope/pkg-b";\nimport { c } from "./barrel"; const trailing = require("./barrel");\n'
+		);
+	});
 });

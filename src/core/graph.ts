@@ -2,6 +2,11 @@ import path from "node:path";
 import type ts from "typescript";
 import type { BarrelExport, ModuleReference } from "../types/graph.ts";
 import type { ProjectConfig } from "../types.ts";
+import {
+	enforceCacheLimit,
+	setCacheEntry,
+	touchCacheEntry,
+} from "./bounded-cache.ts";
 import { mapConcurrent } from "./concurrency.ts";
 import { mtimesUnchanged, snapshotMtimes } from "./path-utils.ts";
 import { createProgram, getProjectFiles, loadProject } from "./project.ts";
@@ -73,7 +78,7 @@ interface SkippedFileScan {
 
 type FileScanResult = SuccessfulFileScan | SkippedFileScan;
 
-/** Per-invocation cache for dependency graphs, keyed by tsconfig path */
+/** Bounded per-process LRU for dependency graphs, keyed by tsconfig path. */
 const graphCache = new Map<string, DependencyGraph>();
 /**
  * Per-tsconfig snapshot of each project file's mtime at the moment its graph
@@ -116,7 +121,7 @@ export async function buildDependencyGraph(
 	project: ProjectConfig
 ): Promise<DependencyGraph> {
 	const files = getProjectFiles(project).map(normalizePath);
-	const cached = graphCache.get(project.tsconfigPath);
+	const cached = touchCacheEntry(graphCache, project.tsconfigPath);
 	const cachedMtimes = graphCacheMtimes.get(project.tsconfigPath);
 	if (cached && cachedMtimes && isCacheValid(cached, cachedMtimes, files)) {
 		return cached;
@@ -186,8 +191,9 @@ export async function buildDependencyGraph(
 		barrelReExports,
 		program,
 	};
-	graphCache.set(project.tsconfigPath, result);
+	setCacheEntry(graphCache, project.tsconfigPath, result);
 	graphCacheMtimes.set(project.tsconfigPath, mtimes);
+	enforceCacheLimit(graphCache, [graphCache, graphCacheMtimes]);
 	return result;
 }
 

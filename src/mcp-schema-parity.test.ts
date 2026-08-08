@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
+import { renameSpecifierInputSchema } from "./mcp-server.ts";
 
 /**
  * MCP inputSchema ↔ CLI options parity guard (#129).
  *
- * mcp-server.ts calls `server.connect()` at module load, so it cannot be
- * imported directly in a test — instead this parses the registered
- * `inputSchema` keys straight out of the source text for each tool and
- * compares them against the option keys its CLI counterpart supports.
+ * This parses the registered `inputSchema` keys straight out of the source
+ * text for each tool and compares them against the option keys its CLI
+ * counterpart supports. Behavioural schemas are imported directly where a
+ * source-key comparison would not exercise their validation.
  * `json`/`format` are excluded per-tool where they only toggle CLI text
  * rendering — MCP tools already return structured JSON unconditionally, so
  * those flags would be no-ops over MCP (documented in #129's resolution).
@@ -166,5 +167,17 @@ describe("MCP inputSchema ↔ CLI options parity (#129)", () => {
 
 	test('"extract-component" schema intentionally omits json (CLI-only text rendering)', () => {
 		expect(extractInputSchemaKeys("extract-component")).not.toContain("json");
+	});
+
+	test('"alias" rejects malformed rename specifiers at the MCP schema boundary', () => {
+		const result = renameSpecifierInputSchema.safeParse("@scope/old");
+
+		expect(result.success).toBe(false);
+		if (!result.success) {
+			expect(result.error.issues[0]?.message).toBe("Must be '<from>=<to>'");
+		}
+		expect(
+			renameSpecifierInputSchema.safeParse("@scope/old=@scope/new").success
+		).toBe(true);
 	});
 });

@@ -165,9 +165,9 @@ Known violation: `audit.ts:81`. `buildDependencyGraph` creates a program; do not
 
 ### Workspace and graph caches
 
-`discoverWorkspace()` has no cache and performs 20+ reads in a 20-package monorepo; call it once per command and pass `WorkspaceInfo | null`. A future per-invocation cache should mirror `graphCache`, keyed by absolute directory.
+`discoverWorkspace()` uses a process-lifetime `workspaceCache` keyed by the resolved start directory. Call it once per command and pass `WorkspaceInfo | null`; use `clearWorkspaceCache()` only in tests that mutate workspace files between calls.
 
-`graphCache` (#78, #87) and `discoveryCache` (#88) use `snapshotMtimes(paths)` and `mtimesUnchanged(snapshot)` from `path-utils.ts`. The sync `statSync().mtimeMs` probe catches edits/deletions without rebuilding unchanged graphs. Discovery detects added configs with a throttled ~2s re-glob.
+`graphCache` (#78, #87) and `discoveryCache` (#88) are bounded LRUs and use `snapshotMtimes(paths)` plus `mtimesUnchanged(snapshot)` from `path-utils.ts`. Evict companion metadata through the shared bounded-cache helper so cache groups cannot drift. The sync `statSync().mtimeMs` probe catches edits/deletions without rebuilding unchanged graphs. Discovery detects added configs with a throttled ~2s re-glob.
 
 DO write invalidation regressions first in `graph.test.ts` or `tsconfig-discovery.test.ts`, then remeasure `unused` and `audit` against the 20s Bun test timeout.
 

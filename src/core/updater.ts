@@ -254,6 +254,16 @@ export function updateFileReferences(
 			newContent.slice(split.end);
 	}
 
+	// Exclude specifier edits covered by a split while every range still uses
+	// the original source coordinates. Adjusting first can move a covered edit
+	// beyond the split's original end and make it look independent.
+	const independentChanges = changes.filter(
+		(change) =>
+			!importSplits.some(
+				(split) => change.start >= split.start && change.end <= split.end
+			)
+	);
+
 	// After applying each split, adjust positions of pending specifier changes
 	// whose start is higher than the split's insertion point.
 	//
@@ -269,7 +279,7 @@ export function updateFileReferences(
 	for (const split of importSplits) {
 		const splitDelta = split.newText.length - (split.end - split.start);
 		if (splitDelta !== 0) {
-			for (const change of changes) {
+			for (const change of independentChanges) {
 				if (change.start > split.start) {
 					change.start += splitDelta;
 					change.end += splitDelta;
@@ -279,17 +289,9 @@ export function updateFileReferences(
 	}
 
 	// Apply specifier changes in reverse order to maintain positions
-	changes.sort((a, b) => b.start - a.start);
+	independentChanges.sort((a, b) => b.start - a.start);
 
-	for (const change of changes) {
-		// Skip changes that overlap with import splits (already handled)
-		const overlapsWithSplit = importSplits.some(
-			(split) => change.start >= split.start && change.end <= split.end
-		);
-		if (overlapsWithSplit) {
-			continue;
-		}
-
+	for (const change of independentChanges) {
 		newContent =
 			newContent.slice(0, change.start) +
 			change.newText +
