@@ -422,6 +422,18 @@ export async function unusedTool(
 			internalUsage: u.internalUsage,
 			internalRefCount: u.internalRefCount,
 		})),
+		transitivelyDeadCount: report.transitivelyDeadCount,
+		transitivelyDeadExports: report.transitivelyDeadExports.map((exp) => ({
+			name: exp.name,
+			file: path.relative(absoluteDir, exp.file),
+			line: exp.line,
+			isType: exp.isType,
+			kind: exp.type,
+			deadImporters: exp.deadImporters.map((file) =>
+				path.relative(absoluteDir, file)
+			),
+			chain: exp.chain.map((file) => path.relative(absoluteDir, file)),
+		})),
 		...(falsePositiveHint === null ? undefined : { falsePositiveHint }),
 	});
 }

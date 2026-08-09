@@ -31,6 +31,11 @@ import type { ExportInfo } from "../types/analysis.ts";
 import type { ReadOnlyCommandOptions } from "../types/commands.ts";
 import type { ModuleReference, ReferenceType } from "../types/graph.ts";
 import type { ProgressCallback } from "../types/progress.ts";
+import {
+	computeModuleReachability,
+	deadImportersOf,
+	findDeadImportChain,
+} from "./unused-reachability.ts";
 
 const UNUSED_SCHEMA_VERSION = "1-experimental" as const;
 const ALL_BINDINGS = "__all__";
@@ -73,6 +78,26 @@ export interface PublicApiExport {
 	line: number;
 }
 
+/**
+ * An export that only looks used because its importers are themselves dead
+ * (#193). Reported separately from `unused` so the existing direct-dead and
+ * internal-only classifications keep their meaning.
+ */
+export interface TransitivelyDeadExport {
+	file: string;
+	name: string;
+	type: ExportInfo["type"];
+	isType: boolean;
+	line: number;
+	/** Dead modules importing this export — remove these and it becomes directly dead. */
+	deadImporters: string[];
+	/**
+	 * Shortest chain of dead modules ending at this export's file, starting at a
+	 * directly-dead module. Read left to right as the planned removal order.
+	 */
+	chain: string[];
+}
+
 export interface OrphanFile {
 	file: string;
 	exportNames: string[];
@@ -101,6 +126,13 @@ export interface UnusedReport {
 	unknownExternalUsageExports: PublicApiExport[];
 	unknownExternalUsageExportCount: number;
 	unused: UnusedExport[];
+	/**
+	 * Exports whose only importers are unreachable from any live root, so they
+	 * become removable once those importers are deleted (#193). Additive: these
+	 * are not counted in `unused`, `deadCount`, or `internalOnlyCount`.
+	 */
+	transitivelyDeadExports: TransitivelyDeadExport[];
+	transitivelyDeadCount: number;
 	orphanFiles: OrphanFile[];
 	totalExports: number;
 	totalFiles: number;
@@ -158,6 +190,8 @@ export async function findUnusedExports(
 			unknownExternalUsageExports: [],
 			unknownExternalUsageExportCount: 0,
 			unused: [],
+			transitivelyDeadExports: [],
+			transitivelyDeadCount: 0,
 			orphanFiles: [],
 			totalExports: 0,
 			totalFiles: 0,
@@ -236,6 +270,8 @@ export async function findUnusedExportsFromGraphs(
 			unknownExternalUsageExports: [],
 			unknownExternalUsageExportCount: 0,
 			unused: [],
+			transitivelyDeadExports: [],
+			transitivelyDeadCount: 0,
 			orphanFiles: [],
 			totalExports: 0,
 			totalFiles: 0,
@@ -283,6 +319,10 @@ export async function findUnusedExportsFromGraphs(
 	const unused: UnusedExport[] = [];
 	const publicApiExports: PublicApiExport[] = [];
 	const unknownExternalUsageExports: PublicApiExport[] = [];
+	// Exports that passed every liveness guard on the single-pass check. They are
+	// revisited after reachability so an importer that is itself dead no longer
+	// counts as usage (#193).
+	const usedExports: Array<{ file: string; export: ExportInfo }> = [];
 	const exportedFiles = new Map<string, ExportInfo[]>();
 	const packageEntrypoints = await discoverPackageEntrypoints(absoluteDir, {
 		includeWorkspacePackages: true,
@@ -334,6 +374,7 @@ export async function findUnusedExportsFromGraphs(
 					continue;
 				}
 				if (isExportUsed(exp, file, fileImporters, graph)) {
+					usedExports.push({ file, export: exp });
 					continue;
 				}
 				const internalRefCount = countInternalReferences(
@@ -388,6 +429,44 @@ export async function findUnusedExportsFromGraphs(
 			normalizePath(exp.file)
 		)
 	);
+
+	// Reachability pass (#193). Roots are everything that keeps a module alive
+	// independently of the analysed directory: package and convention
+	// entrypoints, exports withheld as public API or unknown-usage, and any
+	// consumer outside the directory under analysis. Modules never reached are
+	// dead, so an export whose only importers are unreachable is transitively
+	// dead rather than used.
+	const liveRoots = new Set<string>([
+		...entrypointFiles,
+		...publicApiFiles,
+		...excludedEntrypointFiles,
+	]);
+	for (const file of graph.imports.keys()) {
+		const normalized = normalizePath(file);
+		if (!normalized.startsWith(absoluteDir)) {
+			liveRoots.add(normalized);
+		} else if (isConventionEntrypointFile(normalized, entrypointGlobPatterns)) {
+			liveRoots.add(normalized);
+		}
+	}
+	const { liveModules } = computeModuleReachability(graph, liveRoots);
+	const directlyDeadModules = new Set(
+		unused.map((entry) => normalizePath(entry.file))
+	);
+	const transitivelyDeadExports: TransitivelyDeadExport[] = usedExports
+		.filter(({ file }) => !liveModules.has(normalizePath(file)))
+		.map(({ file, export: exp }) => ({
+			file,
+			name: exp.name,
+			type: exp.type,
+			isType: exp.isType,
+			line: exp.line,
+			deadImporters: deadImportersOf(file, graph, liveModules),
+			chain: findDeadImportChain(file, graph, liveModules, directlyDeadModules),
+		}))
+		.sort(
+			(a, b) => a.file.localeCompare(b.file) || a.name.localeCompare(b.name)
+		);
 	const orphanFiles = computeOrphanFiles(graph, exportedFiles, {
 		entrypointFiles: new Set([...entrypointFiles, ...publicApiFiles]),
 		entrypointGlobs: entrypointGlobPatterns,
@@ -414,6 +493,8 @@ export async function findUnusedExportsFromGraphs(
 		unknownExternalUsageExports,
 		unknownExternalUsageExportCount: unknownExternalUsageExports.length,
 		unused,
+		transitivelyDeadExports,
+		transitivelyDeadCount: transitivelyDeadExports.length,
 		orphanFiles,
 		totalExports,
 		totalFiles: candidateFiles.length,
@@ -774,6 +855,41 @@ export function isExportUsed(
 	return fileImporters.has(exp.name);
 }
 
+/**
+ * Render the transitively-dead chains (#193). Printed as its own section so the
+ * direct dead-export list keeps its existing meaning and counts.
+ */
+function reportTransitivelyDead(
+	report: UnusedReport,
+	absoluteDir: string
+): void {
+	if (report.transitivelyDeadExports.length === 0) {
+		return;
+	}
+
+	logger.info(
+		`Transitively dead exports: ${report.transitivelyDeadCount} (only imported by dead code)`
+	);
+	for (const exp of report.transitivelyDeadExports) {
+		const rel = path.relative(absoluteDir, exp.file);
+		const typeLabel = exp.isType ? " (type)" : "";
+		logger.info(`  ${rel}`);
+		logger.info(`    • ${exp.name}${typeLabel} (line ${exp.line})`);
+		if (exp.chain.length > 1) {
+			const chain = exp.chain
+				.map((file) => path.relative(absoluteDir, file))
+				.join(" → ");
+			logger.info(`      remove in order: ${chain}`);
+		} else {
+			const importers = exp.deadImporters
+				.map((file) => path.relative(absoluteDir, file))
+				.join(", ");
+			logger.info(`      only imported by dead code: ${importers}`);
+		}
+	}
+	logger.empty();
+}
+
 export async function unusedCommand(options: UnusedOptions): Promise<void> {
 	const { directory, json, verbose, ignore, entrypointGlobs } = options;
 	const absoluteDir = path.resolve(directory);
@@ -861,7 +977,11 @@ export async function unusedCommand(options: UnusedOptions): Promise<void> {
 		logger.empty();
 	}
 
-	if (report.unused.length === 0 && report.orphanFiles.length === 0) {
+	if (
+		report.unused.length === 0 &&
+		report.orphanFiles.length === 0 &&
+		report.transitivelyDeadExports.length === 0
+	) {
 		logger.info("✅ No unused exports found.");
 		logger.empty();
 		return;
@@ -888,6 +1008,8 @@ export async function unusedCommand(options: UnusedOptions): Promise<void> {
 		}
 		logger.empty();
 	}
+
+	reportTransitivelyDead(report, absoluteDir);
 
 	if (report.unused.length === 0) {
 		logger.info("No unused individual exports found.");

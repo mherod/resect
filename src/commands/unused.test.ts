@@ -1305,3 +1305,113 @@ describe("unused --workspace cross-package consumers", () => {
 		}
 	});
 });
+
+// ─── Transitive dead-export chains (#193) ──────────────────────────────────
+
+describe("transitive dead-export chains", () => {
+	test("reports a dependency whose only importer is a dead wrapper", async () => {
+		const dir = await makeFixture("transitive-chain", {
+			"lib/query.ts":
+				"export function loadRecords() {\n  return [] as string[];\n}\n",
+			"lib/api.ts":
+				'import { loadRecords } from "./query";\n\nexport function fetchRecords() {\n  return loadRecords();\n}\n',
+		});
+		try {
+			const report = await findUnusedExports(path.join(dir, "lib"));
+
+			// The wrapper stays a DIRECT dead export — its classification is unchanged.
+			expect(report.unused.map((u) => u.name)).toEqual(["fetchRecords"]);
+			expect(report.deadCount).toBe(1);
+
+			// Its dependency is newly surfaced as transitively dead.
+			expect(report.transitivelyDeadCount).toBe(1);
+			const [transitive] = report.transitivelyDeadExports;
+			expect(transitive?.name).toBe("loadRecords");
+			expect(transitive?.deadImporters.map((f) => path.basename(f))).toEqual([
+				"api.ts",
+			]);
+			expect(transitive?.chain.map((f) => path.basename(f))).toEqual([
+				"api.ts",
+				"query.ts",
+			]);
+		} finally {
+			await cleanup(dir);
+		}
+	});
+
+	test("a dependency shared with a live entrypoint stays live", async () => {
+		const dir = await makeFixture("transitive-shared", {
+			"package.json": JSON.stringify({
+				name: "shared-fixture",
+				version: "1.0.0",
+				exports: { ".": "./lib/index.ts" },
+			}),
+			"lib/query.ts":
+				"export function loadRecords() {\n  return [] as string[];\n}\n",
+			"lib/api.ts":
+				'import { loadRecords } from "./query";\n\nexport function fetchRecords() {\n  return loadRecords();\n}\n',
+			"lib/index.ts":
+				'import { loadRecords } from "./query";\n\nexport function main() {\n  return loadRecords();\n}\n',
+		});
+		try {
+			const report = await findUnusedExports(path.join(dir, "lib"));
+
+			expect(report.transitivelyDeadExports.map((e) => e.name)).not.toContain(
+				"loadRecords"
+			);
+			expect(report.transitivelyDeadCount).toBe(0);
+		} finally {
+			await cleanup(dir);
+		}
+	});
+
+	test("an unreachable import cycle is reported without non-termination", async () => {
+		const dir = await makeFixture("transitive-cycle", {
+			"lib/a.ts":
+				'import { beta } from "./b";\n\nexport function alpha(): number {\n  return beta();\n}\n',
+			"lib/b.ts":
+				'import { alpha } from "./a";\n\nexport function beta(): number {\n  return alpha() + 1;\n}\n',
+		});
+		try {
+			const report = await findUnusedExports(path.join(dir, "lib"));
+
+			// Both sides of the cycle are dead; neither keeps the other alive.
+			expect(report.transitivelyDeadExports.map((e) => e.name).sort()).toEqual([
+				"alpha",
+				"beta",
+			]);
+		} finally {
+			await cleanup(dir);
+		}
+	});
+
+	test("a configured entrypoint keeps its dependency chain live", async () => {
+		const files = {
+			"lib/query.ts":
+				"export function loadRecords() {\n  return [] as string[];\n}\n",
+			"lib/worker.entry.ts":
+				'import { loadRecords } from "./query";\n\nexport function handler() {\n  return loadRecords();\n}\n',
+		};
+
+		const withoutGlob = await makeFixture("transitive-entry-off", files);
+		try {
+			const report = await findUnusedExports(path.join(withoutGlob, "lib"));
+			expect(report.transitivelyDeadExports.map((e) => e.name)).toEqual([
+				"loadRecords",
+			]);
+		} finally {
+			await cleanup(withoutGlob);
+		}
+
+		const withGlob = await makeFixture("transitive-entry-on", files);
+		try {
+			const report = await findUnusedExports(path.join(withGlob, "lib"), {
+				entrypointGlobs: "**/*.entry.ts",
+			});
+			expect(report.transitivelyDeadCount).toBe(0);
+			expect(report.excludedEntrypointFileCount).toBe(1);
+		} finally {
+			await cleanup(withGlob);
+		}
+	});
+});
