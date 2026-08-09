@@ -39,6 +39,17 @@ export class CLILogger {
 	}
 
 	/**
+	 * Write exactly one JSON document to stdout.
+	 *
+	 * The single seam every `--json` command writes through, so the stdout-purity
+	 * invariant lives in one place: diagnostics keep going to stderr via `warn`
+	 * and `error`, and stdout carries nothing but the report.
+	 */
+	json(report: unknown): void {
+		process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+	}
+
+	/**
 	 * Log warning messages (non-fatal diagnostics)
 	 */
 	warn(message: string): void {

@@ -8,6 +8,12 @@ export interface ReadOnlyCommandOptions {
 	project?: string;
 	/** Scan across all workspace packages */
 	workspace?: boolean;
+	/**
+	 * Emit exactly one machine-readable report to stdout instead of the human
+	 * report. Shared by every read-only reporting command (#141) rather than
+	 * redeclared per command.
+	 */
+	json?: boolean;
 }
 
 /**

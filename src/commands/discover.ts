@@ -21,10 +21,47 @@ export interface DiscoverOptions extends ReadOnlyCommandOptions {
 	onlyRelatedTo?: string;
 }
 
+/**
+ * Serialize a project discovery to the stable JSON report shape (#141).
+ *
+ * Shared by the CLI `--json` branch and the MCP `discover` tool so both
+ * surfaces emit one model rather than maintaining separate payloads.
+ */
+export function discoveryReportToJson(
+	discovery: ProjectDiscovery,
+	baseDir: string
+): Record<string, unknown> {
+	return {
+		rootConfig: discovery.rootConfig
+			? path.relative(baseDir, discovery.rootConfig.path)
+			: null,
+		totalFiles: discovery.fileOwnership.size,
+		configs: discovery.configs.map((config) => ({
+			path: path.relative(baseDir, config.path),
+			rootDir: path.relative(baseDir, config.rootDir) || ".",
+			isSolution: config.isSolution,
+			fileCount: config.files.length,
+			extends: config.extends ? path.relative(baseDir, config.extends) : null,
+			references: config.references.length,
+			pathAliases: Object.fromEntries(config.pathAliases),
+		})),
+	};
+}
+
 export async function discoverCommand(options: DiscoverOptions): Promise<void> {
-	const { directory, verbose, workspace = false, onlyRelatedTo } = options;
+	const {
+		directory,
+		verbose,
+		workspace = false,
+		onlyRelatedTo,
+		json,
+	} = options;
 	const absoluteDir = path.resolve(directory);
-	await printResectConfig(absoluteDir);
+	// The resect-config banner is human output on stdout, so JSON mode skips it
+	// to keep stdout to exactly one document (#141).
+	if (!json) {
+		await printResectConfig(absoluteDir);
+	}
 
 	if (workspace) {
 		const wsInfo = await discoverWorkspace(absoluteDir);
@@ -39,9 +76,11 @@ export async function discoverCommand(options: DiscoverOptions): Promise<void> {
 			process.exit(1);
 		}
 
-		logger.info(
-			`\n🔍 Discovering tsconfig files across ${wsInfo.packages.length} workspace package(s)\n`
-		);
+		if (!json) {
+			logger.info(
+				`\n🔍 Discovering tsconfig files across ${wsInfo.packages.length} workspace package(s)\n`
+			);
+		}
 
 		const { mapConcurrent } = await import("../core/concurrency.ts");
 		interface PkgDiscovery {
@@ -59,6 +98,23 @@ export async function discoverCommand(options: DiscoverOptions): Promise<void> {
 			},
 			{ onError: (pkg) => ({ pkg, discovery: null }) }
 		);
+		if (json) {
+			logger.json({
+				workspaceRoot: path.relative(absoluteDir, wsInfo.root) || ".",
+				packages: pkgDiscoveries
+					.filter((entry) => entry.discovery !== null)
+					.map(({ pkg, discovery }) => ({
+						name: pkg.name,
+						path: path.relative(absoluteDir, pkg.path),
+						...discoveryReportToJson(
+							discovery as ProjectDiscovery,
+							absoluteDir
+						),
+					})),
+			});
+			return;
+		}
+
 		for (const { pkg, discovery } of pkgDiscoveries) {
 			if (!discovery) {
 				continue;
@@ -83,9 +139,16 @@ export async function discoverCommand(options: DiscoverOptions): Promise<void> {
 		return;
 	}
 
-	logger.info(`\n🔍 Discovering tsconfig files in ${absoluteDir}\n`);
+	if (!json) {
+		logger.info(`\n🔍 Discovering tsconfig files in ${absoluteDir}\n`);
+	}
 
 	const discovery = discoverProject(absoluteDir);
+
+	if (json) {
+		logger.json(discoveryReportToJson(discovery, absoluteDir));
+		return;
+	}
 
 	if (onlyRelatedTo) {
 		const { matchesRelatedPath } = await import("../core/similarity.ts");

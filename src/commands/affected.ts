@@ -15,7 +15,6 @@ import type { ReadOnlyCommandOptions } from "../types.ts";
 
 export interface AffectedOptions extends ReadOnlyCommandOptions {
 	files: string[];
-	json?: boolean;
 }
 
 /**

@@ -17,7 +17,6 @@ import { setupCommandContext } from "./command-context.ts";
 
 export interface BarrelOptions extends ReadOnlyCommandOptions {
 	directory: string;
-	json?: boolean;
 }
 
 /**
@@ -197,9 +196,7 @@ export async function barrelCommand(options: BarrelOptions): Promise<void> {
 	const { report, baseDir } = await analyzeBarrels(options);
 
 	if (options.json) {
-		process.stdout.write(
-			`${JSON.stringify(barrelReportToJson(report, baseDir), null, 2)}\n`
-		);
+		logger.json(barrelReportToJson(report, baseDir));
 		return;
 	}
 

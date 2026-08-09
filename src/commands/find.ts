@@ -34,6 +34,39 @@ export interface ExportMatch {
 	export: ExportInfo;
 }
 
+/**
+ * Serialize a search result to the stable JSON report shape (#141).
+ *
+ * Shared by the CLI `--json` branch and the MCP `find` tool so both surfaces
+ * emit one model rather than maintaining separate payloads.
+ */
+export function findReportToJson(
+	query: string,
+	result: FindResult
+): {
+	query: string;
+	files: string[];
+	exports: Array<{
+		name: string;
+		file: string;
+		line: number;
+		isType: boolean;
+		kind: ExportInfo["type"];
+	}>;
+} {
+	return {
+		query,
+		files: result.files.map((file) => file.relativePath),
+		exports: result.exports.map((match) => ({
+			name: match.export.name,
+			file: match.relativePath,
+			line: match.export.line,
+			isType: match.export.isType,
+			kind: match.export.type,
+		})),
+	};
+}
+
 export async function findCommand(options: FindOptions): Promise<void> {
 	const {
 		query,
@@ -42,8 +75,18 @@ export async function findCommand(options: FindOptions): Promise<void> {
 		verbose,
 		workspace = false,
 		onlyRelatedTo,
+		json,
 	} = options;
 	const absoluteProject = path.resolve(project);
+	// In JSON mode stdout carries exactly one document, so every human line is
+	// suppressed rather than interleaved (#141, stdout purity from #149).
+	const emit = (result: FindResult): void => {
+		if (json) {
+			logger.json(findReportToJson(query, result));
+			return;
+		}
+		printResults(result, absoluteProject, verbose);
+	};
 
 	if (workspace) {
 		const wsInfo = await discoverWorkspace(absoluteProject);
@@ -60,9 +103,11 @@ export async function findCommand(options: FindOptions): Promise<void> {
 			process.exit(1);
 		}
 
-		logger.info(
-			`\n🔍 Searching for "${query}" across ${wsInfo.packages.length} workspace package(s)\n`
-		);
+		if (!json) {
+			logger.info(
+				`\n🔍 Searching for "${query}" across ${wsInfo.packages.length} workspace package(s)\n`
+			);
+		}
 
 		const { mapConcurrent } = await import("../core/concurrency.ts");
 		const pkgDiscoveries = await mapConcurrent(
@@ -100,11 +145,13 @@ export async function findCommand(options: FindOptions): Promise<void> {
 			);
 		}
 		const result = search(query, filesToSearch, absoluteProject, type);
-		printResults(result, absoluteProject, verbose);
+		emit(result);
 		return;
 	}
 
-	logger.info(`\n🔍 Searching for "${query}" in ${absoluteProject}\n`);
+	if (!json) {
+		logger.info(`\n🔍 Searching for "${query}" in ${absoluteProject}\n`);
+	}
 
 	const discovery = discoverProject(absoluteProject);
 
@@ -124,7 +171,7 @@ export async function findCommand(options: FindOptions): Promise<void> {
 	}
 	const result = search(query, filesToSearch, absoluteProject, type);
 
-	printResults(result, absoluteProject, verbose);
+	emit(result);
 }
 
 export function search(

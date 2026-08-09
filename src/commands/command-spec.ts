@@ -88,6 +88,7 @@ Options:
   --verbose          Show helpful tips for next steps
   --workspace        Scan across all workspace packages
   --only-related-to  Limit searched files to a file, folder, or glob pattern
+  --json             Output results as JSON
 
 Output includes:
   • Files matching the query by filename
@@ -120,6 +121,7 @@ Options:
   --workspace        Scan across all workspace packages
   --only-related-to  Filter referencedBy results to a file, folder, or glob pattern
   --entrypoint-globs Glob pattern(s) for externally dispatched entrypoints; repeatable
+  --json             Output results as JSON
 
 Output includes:
   • All exports from the file
@@ -154,6 +156,7 @@ Options:
   -p, --project   Path to project directory or tsconfig.json
   --workspace     Scan across all workspace packages
   --verbose       Show resolved source/target paths
+  --json          Output results as JSON
 
 Output includes:
   • Impacted files (direct + indirect importers)
@@ -214,6 +217,7 @@ Options:
   --verbose          Show detailed file ownership and path aliases
   --workspace        Scan across all workspace packages
   --only-related-to  Filter file ownership output to a file, folder, or glob pattern
+  --json             Output results as JSON
 
 Output includes:
   • All tsconfig.json files found

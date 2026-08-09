@@ -10,10 +10,11 @@
 
 import path from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { analyze } from "../commands/analyze.ts";
+import { analysisReportToJson, analyze } from "../commands/analyze.ts";
 import { auditReportToJson, buildAuditReport } from "../commands/audit.ts";
 import { analyzeBarrels, barrelReportToJson } from "../commands/barrel.ts";
 import { executeDeps } from "../commands/deps.ts";
+import { discoveryReportToJson } from "../commands/discover.ts";
 import {
 	analyzeExtractComponentFreeVariables,
 	buildExtractComponentModule,
@@ -21,7 +22,7 @@ import {
 	type FreeVariableReport,
 	locateExtractComponentTarget,
 } from "../commands/extract-component.ts";
-import { search } from "../commands/find.ts";
+import { findReportToJson, search } from "../commands/find.ts";
 import {
 	applyMockCleanup,
 	buildMockCleanupReport,
@@ -67,17 +68,7 @@ export function findTool(
 		return errorText(`No tsconfig.json files found in ${absoluteProject}`);
 	}
 	const result = search(query, discovery.fileOwnership, absoluteProject, type);
-	return jsonText({
-		query,
-		files: result.files.map((f) => f.relativePath),
-		exports: result.exports.map((e) => ({
-			name: e.export.name,
-			file: e.relativePath,
-			line: e.export.line,
-			isType: e.export.isType,
-			kind: e.export.type,
-		})),
-	});
+	return jsonText(findReportToJson(query, result));
 }
 
 export async function analyzeTool(
@@ -99,57 +90,7 @@ export async function analyzeTool(
 	const result = await analyze(absolutePath, projectConfig, {
 		entrypointGlobs: options.entrypointGlobs,
 	});
-	const root = projectConfig.rootDir;
-	return jsonText({
-		file: path.relative(root, result.file),
-		exports: result.exports.map((e) => ({
-			name: e.name,
-			line: e.line,
-			isType: e.isType,
-			kind: e.type,
-		})),
-		imports: result.imports.map((i) => ({
-			specifier: i.specifier,
-			type: i.type,
-			line: i.line,
-			isTypeOnly: i.isTypeOnly,
-			bindings: i.bindings?.map((b) =>
-				b.alias ? `${b.name} as ${b.alias}` : b.name
-			),
-		})),
-		referencedBy: result.referencedBy.map((r) => ({
-			file: path.relative(root, r.sourceFile),
-			line: r.line,
-			type: r.type,
-			specifier: r.specifier,
-		})),
-		barrelReExports: result.barrelExports.map((b) =>
-			path.relative(root, b.barrelPath)
-		),
-		unresolvableImports: result.unresolvable.map((u) => ({
-			specifier: u.specifier,
-			line: u.line,
-		})),
-		unusedExports: result.unusedExports.map((e) => ({
-			name: e.name,
-			line: e.line,
-			isType: e.isType,
-			internalUsage: e.internalUsage,
-			internalRefCount: e.internalRefCount,
-		})),
-		publicApiExports: result.publicApiExports.map((e) => ({
-			name: e.name,
-			line: e.line,
-			isType: e.isType,
-			kind: e.type,
-		})),
-		publicApiTraceIncomplete: result.publicApiTraceIncomplete,
-		noExternalUsage: result.noExternalUsage,
-		externalUsageAssumed: result.externalUsageAssumed,
-		skippedFileCount: result.skippedFiles.length,
-		skippedFiles: result.skippedFiles.map((file) => path.relative(root, file)),
-		coverageIncomplete: result.skippedFiles.length > 0,
-	});
+	return jsonText(analysisReportToJson(result, projectConfig.rootDir));
 }
 
 export async function extractComponentTool(
@@ -217,22 +158,9 @@ export async function extractComponentTool(
 
 export function discoverTool(directory: string): CallToolResult {
 	const absoluteDir = path.resolve(directory);
-	const discovery = discoverProject(absoluteDir);
-	return jsonText({
-		rootConfig: discovery.rootConfig
-			? path.relative(absoluteDir, discovery.rootConfig.path)
-			: null,
-		totalFiles: discovery.fileOwnership.size,
-		configs: discovery.configs.map((c) => ({
-			path: path.relative(absoluteDir, c.path),
-			rootDir: path.relative(absoluteDir, c.rootDir) || ".",
-			isSolution: c.isSolution,
-			fileCount: c.files.length,
-			extends: c.extends ? path.relative(absoluteDir, c.extends) : null,
-			references: c.references.length,
-			pathAliases: Object.fromEntries(c.pathAliases),
-		})),
-	});
+	return jsonText(
+		discoveryReportToJson(discoverProject(absoluteDir), absoluteDir)
+	);
 }
 
 export async function workspaceTool(

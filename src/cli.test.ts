@@ -169,3 +169,133 @@ describe("cli", () => {
 		}
 	});
 });
+
+// ─── --json on the read-only analysis commands (#141) ──────────────────────
+
+describe("--json on find, analyze, analyze-impact and discover", () => {
+	async function makeJsonFixture(): Promise<string> {
+		const dir = await mkdtemp(path.join(tmpdir(), "resect-cli-json-flag-"));
+		await Bun.write(
+			path.join(dir, "tsconfig.json"),
+			JSON.stringify({
+				compilerOptions: {
+					strict: true,
+					moduleResolution: "bundler",
+					module: "esnext",
+					target: "esnext",
+				},
+				include: ["lib/**/*.ts"],
+			})
+		);
+		await Bun.write(
+			path.join(dir, "lib/query.ts"),
+			"export function loadRecords() {\n  return [] as string[];\n}\n"
+		);
+		await Bun.write(
+			path.join(dir, "lib/api.ts"),
+			'import { loadRecords } from "./query";\n\nexport function fetchRecords() {\n  return loadRecords();\n}\n'
+		);
+		return dir;
+	}
+
+	async function runCli(
+		args: string[]
+	): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+		const proc = Bun.spawn([...CLI, ...args], {
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		const [stdout, stderr, exitCode] = await Promise.all([
+			new Response(proc.stdout).text(),
+			new Response(proc.stderr).text(),
+			proc.exited,
+		]);
+		return { stdout, stderr, exitCode };
+	}
+
+	test("each command emits exactly one parseable JSON document on stdout", async () => {
+		const dir = await makeJsonFixture();
+		try {
+			const invocations: Array<{ name: string; args: string[] }> = [
+				{ name: "discover", args: ["discover", dir, "--json"] },
+				{
+					name: "analyze",
+					args: ["analyze", path.join(dir, "lib/api.ts"), "--json"],
+				},
+				{
+					name: "find",
+					args: ["find", "loadRecords", "-p", dir, "--json"],
+				},
+				{
+					name: "analyze-impact",
+					args: [
+						"analyze-impact",
+						path.join(dir, "lib/api.ts"),
+						path.join(dir, "lib/moved.ts"),
+						"--json",
+					],
+				},
+			];
+
+			for (const { name, args } of invocations) {
+				const { stdout, exitCode } = await runCli(args);
+				expect(exitCode).toBe(0);
+				// Exactly one document: JSON.parse of the whole stdout must succeed.
+				const parsed = JSON.parse(stdout) as unknown;
+				expect(typeof parsed).toBe("object");
+				expect(parsed).not.toBeNull();
+				expect(name).toBeTruthy();
+			}
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("JSON mode keeps the human report off stdout", async () => {
+		const dir = await makeJsonFixture();
+		try {
+			const { stdout } = await runCli(["discover", dir, "--json"]);
+
+			// The human report's banner and config line must not leak into stdout.
+			expect(stdout).not.toContain("🔍 Discovering tsconfig files");
+			expect(stdout).not.toContain("Resect config:");
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("find reports matched exports in the JSON document", async () => {
+		const dir = await makeJsonFixture();
+		try {
+			const { stdout } = await runCli([
+				"find",
+				"loadRecords",
+				"-p",
+				dir,
+				"--json",
+			]);
+			const report = JSON.parse(stdout) as {
+				query: string;
+				exports: Array<{ name: string }>;
+			};
+
+			expect(report.query).toBe("loadRecords");
+			expect(report.exports.map((exp) => exp.name)).toContain("loadRecords");
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("omitting --json still produces the human report", async () => {
+		const dir = await makeJsonFixture();
+		try {
+			const { stdout, exitCode } = await runCli(["discover", dir]);
+
+			expect(exitCode).toBe(0);
+			expect(stdout).toContain("🔍 Discovering tsconfig files");
+			expect(() => JSON.parse(stdout)).toThrow();
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+});

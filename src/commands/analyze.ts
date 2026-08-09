@@ -40,6 +40,70 @@ export interface AnalyzeFileOptions {
 	entrypointGlobs?: EntrypointGlobs;
 }
 
+/**
+ * Serialize an analysis result to the stable JSON report shape (#141).
+ *
+ * Shared by the CLI `--json` branch and the MCP `analyze` tool so both surfaces
+ * emit one model rather than maintaining separate payloads.
+ */
+export function analysisReportToJson(
+	result: AnalysisResult,
+	rootDir: string
+): Record<string, unknown> {
+	return {
+		file: path.relative(rootDir, result.file),
+		exports: result.exports.map((exp) => ({
+			name: exp.name,
+			line: exp.line,
+			isType: exp.isType,
+			kind: exp.type,
+		})),
+		imports: result.imports.map((imp) => ({
+			specifier: imp.specifier,
+			type: imp.type,
+			line: imp.line,
+			isTypeOnly: imp.isTypeOnly,
+			bindings: imp.bindings?.map((binding) =>
+				binding.alias ? `${binding.name} as ${binding.alias}` : binding.name
+			),
+		})),
+		referencedBy: result.referencedBy.map((ref) => ({
+			file: path.relative(rootDir, ref.sourceFile),
+			line: ref.line,
+			type: ref.type,
+			specifier: ref.specifier,
+		})),
+		barrelReExports: result.barrelExports.map((barrel) =>
+			path.relative(rootDir, barrel.barrelPath)
+		),
+		unresolvableImports: result.unresolvable.map((unresolved) => ({
+			specifier: unresolved.specifier,
+			line: unresolved.line,
+		})),
+		unusedExports: result.unusedExports.map((exp) => ({
+			name: exp.name,
+			line: exp.line,
+			isType: exp.isType,
+			internalUsage: exp.internalUsage,
+			internalRefCount: exp.internalRefCount,
+		})),
+		publicApiExports: result.publicApiExports.map((exp) => ({
+			name: exp.name,
+			line: exp.line,
+			isType: exp.isType,
+			kind: exp.type,
+		})),
+		publicApiTraceIncomplete: result.publicApiTraceIncomplete,
+		noExternalUsage: result.noExternalUsage,
+		externalUsageAssumed: result.externalUsageAssumed,
+		skippedFileCount: result.skippedFiles.length,
+		skippedFiles: result.skippedFiles.map((file) =>
+			path.relative(rootDir, file)
+		),
+		coverageIncomplete: result.skippedFiles.length > 0,
+	};
+}
+
 export async function analyzeCommand(options: AnalyzeOptions): Promise<void> {
 	const {
 		file,
@@ -48,6 +112,7 @@ export async function analyzeCommand(options: AnalyzeOptions): Promise<void> {
 		workspace = false,
 		onlyRelatedTo,
 		entrypointGlobs,
+		json,
 	} = options;
 
 	const absolutePath = path.resolve(file);
@@ -101,6 +166,11 @@ export async function analyzeCommand(options: AnalyzeOptions): Promise<void> {
 		result.referencedBy = result.referencedBy.filter((ref) =>
 			matchesRelatedPath(ref.sourceFile, onlyRelatedTo)
 		);
+	}
+
+	if (json) {
+		logger.json(analysisReportToJson(result, project.rootDir));
+		return;
 	}
 
 	printAnalysis(result, project.rootDir, verbose);

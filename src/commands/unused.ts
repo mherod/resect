@@ -47,7 +47,6 @@ const RE_EXPORT_TYPES = new Set<ReferenceType>([
 
 export interface UnusedOptions extends ReadOnlyCommandOptions {
 	directory: string;
-	json?: boolean;
 	ignore?: string;
 	entrypointGlobs?: string | string[];
 	onProgress?: ProgressCallback;
@@ -909,7 +908,7 @@ export async function unusedCommand(options: UnusedOptions): Promise<void> {
 	});
 
 	if (json) {
-		process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+		logger.json(report);
 		return;
 	}
 

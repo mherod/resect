@@ -189,6 +189,7 @@ export const COMMANDS: CommandDef[] = [
 			"workspace",
 			"only-related-to",
 			"entrypoint-globs",
+			"json",
 		],
 		run: async ([file], values) => {
 			requireArg("analyze", "<file>", file);
@@ -197,6 +198,7 @@ export const COMMANDS: CommandDef[] = [
 				verbose: values.verbose,
 				project: values.project,
 				workspace: values.workspace,
+				json: values.json,
 				onlyRelatedTo: values["only-related-to"],
 				entrypointGlobs: values["entrypoint-globs"],
 			});
@@ -206,7 +208,7 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "analyze-impact",
 		helpText: cliHelp("analyze-impact"),
-		options: ["verbose", "project", "workspace"],
+		options: ["verbose", "project", "workspace", "json"],
 		run: async ([source, target], values) => {
 			requireArg("analyze-impact", "<source>", source);
 			requireArg("analyze-impact", "<target>", target);
@@ -216,6 +218,7 @@ export const COMMANDS: CommandDef[] = [
 				verbose: values.verbose,
 				project: values.project,
 				workspace: values.workspace,
+				json: values.json,
 			});
 		},
 	},
@@ -243,13 +246,14 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "discover",
 		helpText: cliHelp("discover"),
-		options: ["verbose", "workspace", "only-related-to"],
+		options: ["verbose", "workspace", "only-related-to", "json"],
 		run: async ([directory], values) => {
 			requireArg("discover", "<directory>", directory);
 			await discoverCommand({
 				directory,
 				verbose: values.verbose,
 				workspace: values.workspace,
+				json: values.json,
 				onlyRelatedTo: values["only-related-to"],
 			});
 		},
@@ -289,7 +293,14 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "find",
 		helpText: cliHelp("find"),
-		options: ["project", "type", "verbose", "workspace", "only-related-to"],
+		options: [
+			"project",
+			"type",
+			"verbose",
+			"workspace",
+			"only-related-to",
+			"json",
+		],
 		run: async ([query], values) => {
 			requireArg("find", "<query>", query);
 			if (!values.project) {
@@ -308,6 +319,7 @@ export const COMMANDS: CommandDef[] = [
 				type: findType,
 				verbose: values.verbose,
 				workspace: values.workspace,
+				json: values.json,
 				onlyRelatedTo: values["only-related-to"],
 			});
 		},

@@ -316,6 +316,7 @@ Understand a module's place in your codebase.
 resect analyze src/components/Button.tsx --verbose
 resect analyze src/core/resolver.ts -p .
 resect analyze hooks/dispatch.ts --entrypoint-globs="hooks/**"
+resect analyze src/core/resolver.ts --json    # Machine-readable output
 ```
 
 Shows:
@@ -335,6 +336,7 @@ Scout the blast radius of a proposed move/rename **before** mutating anything. R
 ```bash
 resect analyze-impact src/utils/foo.ts packages/shared/src/foo.ts
 resect analyze-impact src/old.ts src/new.ts --verbose
+resect analyze-impact src/old.ts src/new.ts --json    # Machine-readable output
 ```
 
 Reports:
@@ -353,6 +355,7 @@ Search for files and exports by name.
 resect find User -p /path/to/project
 resect find Button --type export
 resect find helpers --type file
+resect find User -p . --json                          # Machine-readable output
 ```
 
 - Case-insensitive partial matching
@@ -400,6 +403,7 @@ Map all tsconfig.json files in a project.
 
 ```bash
 resect discover /path/to/monorepo --verbose
+resect discover /path/to/monorepo --json    # Machine-readable output
 ```
 
 Shows tsconfig inheritance, project references, file ownership, and path aliases.

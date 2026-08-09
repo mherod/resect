@@ -23,7 +23,6 @@ import { setupCommandContext } from "./command-context.ts";
 
 export interface AuditOptions extends ReadOnlyCommandOptions {
 	directory: string;
-	json?: boolean;
 	/** Fan-out threshold to flag (default: 10) */
 	fanOutThreshold?: number;
 	/** Fan-in threshold to flag (default: 10) */
@@ -580,8 +579,7 @@ export async function auditCommand(options: AuditOptions): Promise<void> {
 	);
 
 	if (json) {
-		const jsonReport = auditReportToJson(report, absoluteDir);
-		process.stdout.write(`${JSON.stringify(jsonReport, null, 2)}\n`);
+		logger.json(auditReportToJson(report, absoluteDir));
 		return;
 	}
 

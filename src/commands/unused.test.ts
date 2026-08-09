@@ -128,7 +128,12 @@ describe("unused command", () => {
 		expect(toolSource).toContain(
 			"coverageIncomplete: report.coverageIncomplete"
 		);
-		expect(toolSource).toContain(
+		// The analyze payload moved into its owning command module (#141); the
+		// MCP tool now delegates to the shared builder.
+		const analyzeSource = await Bun.file(
+			path.resolve(import.meta.dir, "analyze.ts")
+		).text();
+		expect(analyzeSource).toContain(
 			"skippedFileCount: result.skippedFiles.length"
 		);
 		expect(toolSource).toContain("...auditReportToJson(report, absoluteDir)");

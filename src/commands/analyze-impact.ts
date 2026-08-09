@@ -178,6 +178,12 @@ export async function analyzeImpactCommand(
 		logger.error(error instanceof Error ? error.message : String(error));
 		process.exit(1);
 	}
+	if (options.json) {
+		// `analyzeImpact` already returns the structured report the MCP tool
+		// serializes, so the CLI emits it directly rather than remodelling it.
+		logger.json(report);
+		return;
+	}
 	printImpact(report, options.verbose);
 }
 
