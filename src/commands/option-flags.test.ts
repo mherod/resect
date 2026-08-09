@@ -63,6 +63,7 @@ const EXPECTED_FLAGS = [
 	"transform",
 	"batch",
 	"extensions",
+	"include-ignored",
 ] as const;
 
 describe("option-flags", () => {
@@ -95,6 +96,7 @@ describe("option-flags", () => {
 			"workspace",
 			"experimental",
 			"include-tests",
+			"include-ignored",
 		] as const;
 
 		for (const flag of booleanFlags) {

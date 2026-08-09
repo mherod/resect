@@ -3,17 +3,39 @@ import { logger } from "../cli-logger.ts";
 import { getRuntime } from "../runtime/index.ts";
 import { JOURNAL_RELATIVE_PATH } from "./journal.ts";
 
+/** A file set split by whether Git tracks the paths as source (#202). */
+export interface GitignorePartition {
+	/** Files Git does not ignore — the source resect should analyse. */
+	tracked: string[];
+	/**
+	 * Files Git ignores. Empty when git is unavailable, the directory is not a
+	 * repository, or the operator explicitly targeted an ignored directory — in
+	 * every one of those cases the whole set is returned as `tracked`, so a
+	 * caller that trusts this partition never silently drops files.
+	 */
+	ignored: string[];
+}
+
 /**
- * Filter out files that are ignored by .gitignore.
- * Uses `git check-ignore` for accurate matching against all gitignore rules.
- * Falls back to returning the full list if git is unavailable.
+ * Split a file set into Git-tracked source and Git-ignored output.
+ *
+ * A file excluded from version control is not source, and nothing resect does —
+ * moving, renaming, rewriting specifiers, reporting dead exports — is meaningful
+ * for it. Analysing build output as though it were source produces findings an
+ * operator cannot act on: auditing this repository with the default tsconfig put
+ * six bundler chunks in the top eight most-depended-upon modules (#202).
+ *
+ * Uses one `git check-ignore --stdin` call for the whole set. Degrades to
+ * "everything is tracked" whenever the answer cannot be established, so an
+ * unavailable git, a non-repository directory, or an unexpected exit code can
+ * never cause files to disappear from analysis.
  */
-export async function filterGitignored(
+export async function partitionGitignored(
 	files: string[],
 	scanDir?: string
-): Promise<string[]> {
+): Promise<GitignorePartition> {
 	if (files.length === 0) {
-		return files;
+		return { tracked: files, ignored: [] };
 	}
 
 	try {
@@ -27,7 +49,7 @@ export async function filterGitignored(
 			{ cwd }
 		);
 		if (dirCheck.exitCode === 0) {
-			return files;
+			return { tracked: files, ignored: [] };
 		}
 
 		const { stdout: output, exitCode } = await runtime.process.exec(
@@ -36,7 +58,7 @@ export async function filterGitignored(
 		);
 
 		if (exitCode !== 0 && exitCode !== 1) {
-			return files;
+			return { tracked: files, ignored: [] };
 		}
 
 		const ignored = new Set(
@@ -45,10 +67,25 @@ export async function filterGitignored(
 				.split("\n")
 				.filter((l) => l.length > 0)
 		);
-		return files.filter((f) => !ignored.has(f));
+		return {
+			tracked: files.filter((f) => !ignored.has(f)),
+			ignored: files.filter((f) => ignored.has(f)),
+		};
 	} catch {
-		return files;
+		return { tracked: files, ignored: [] };
 	}
+}
+
+/**
+ * Filter out files that are ignored by .gitignore.
+ * Uses `git check-ignore` for accurate matching against all gitignore rules.
+ * Falls back to returning the full list if git is unavailable.
+ */
+export async function filterGitignored(
+	files: string[],
+	scanDir?: string
+): Promise<string[]> {
+	return (await partitionGitignored(files, scanDir)).tracked;
 }
 
 /** Resolve the repository root containing `dir`, or `null` outside Git. */

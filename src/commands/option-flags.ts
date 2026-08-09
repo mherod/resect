@@ -61,6 +61,7 @@ export const OPTION_FLAGS = {
 	transform: { type: "string" },
 	batch: { type: "string" },
 	extensions: { type: "string" },
+	"include-ignored": { type: "boolean" },
 } as const satisfies Record<string, FlagSpec>;
 
 /** A canonical long-form option name accepted by the CLI parser. */

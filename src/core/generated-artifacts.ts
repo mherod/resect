@@ -251,16 +251,32 @@ export function generatedArtifactWarning(count: number): string {
 	return `Excluded ${count} framework-generated TypeScript file(s) from analysis.`;
 }
 
-/** Remove framework-generated nodes from both sides of a dependency graph. */
-export function excludeFrameworkGeneratedArtifacts(
+/**
+ * Any classifier that can judge a file excludable and return a record keyed by
+ * its path. Generic so one graph pruner serves both framework-generated source
+ * (#190) and non-source build output (#202) rather than two parallel walks.
+ */
+export interface ExcludableFileClassifier<T extends { file: string }> {
+	classify(file: string): T | undefined;
+}
+
+/**
+ * Remove excluded nodes from both sides of a dependency graph.
+ *
+ * Prunes every position a file can occupy — import source, import target,
+ * `importedBy`, skipped files, barrel files, and barrel re-export targets — so
+ * an excluded file cannot survive as a dangling edge and inflate another file's
+ * fan-in.
+ */
+export function excludeClassifiedFiles<T extends { file: string }>(
 	graph: DependencyGraph,
-	classifier: FrameworkGeneratedArtifactClassifier
+	classifier: ExcludableFileClassifier<T>
 ): {
 	graph: DependencyGraph;
-	excludedGeneratedFiles: FrameworkGeneratedArtifact[];
+	excludedFiles: T[];
 } {
-	const excludedByFile = new Map<string, FrameworkGeneratedArtifact>();
-	const classify = (file: string): FrameworkGeneratedArtifact | undefined => {
+	const excludedByFile = new Map<string, T>();
+	const classify = (file: string): T | undefined => {
 		const artifact = classifier.classify(file);
 		if (artifact) {
 			excludedByFile.set(artifact.file, artifact);
@@ -309,8 +325,28 @@ export function excludeFrameworkGeneratedArtifacts(
 			),
 			barrelReExports,
 		},
-		excludedGeneratedFiles: [...excludedByFile.values()].sort((a, b) =>
+		excludedFiles: [...excludedByFile.values()].sort((a, b) =>
 			a.file.localeCompare(b.file)
 		),
 	};
+}
+
+/**
+ * Remove framework-generated nodes from both sides of a dependency graph.
+ *
+ * Thin naming wrapper over {@link excludeClassifiedFiles}; kept so existing
+ * callers and their tests read in framework terms.
+ */
+export function excludeFrameworkGeneratedArtifacts(
+	graph: DependencyGraph,
+	classifier: FrameworkGeneratedArtifactClassifier
+): {
+	graph: DependencyGraph;
+	excludedGeneratedFiles: FrameworkGeneratedArtifact[];
+} {
+	const { graph: pruned, excludedFiles } = excludeClassifiedFiles(
+		graph,
+		classifier
+	);
+	return { graph: pruned, excludedGeneratedFiles: excludedFiles };
 }

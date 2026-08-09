@@ -635,6 +635,9 @@ Options:
   --fan-out-threshold    Flag files with more than N imports (default: 10)
   --fan-in-threshold     Flag files with more than N consumers (default: 10)
   --export-threshold     Flag files with more than N exports (default: 8)
+  --include-ignored      Analyse git-ignored files too. Off by default: a file
+                         excluded from version control is not source, so build
+                         output cannot distort coupling metrics
 
 Metrics:
   Fan-out       Number of distinct modules a file imports

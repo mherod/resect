@@ -40,6 +40,7 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 | SRC-023 | Repository owner issue | 2026-08-09 | https://github.com/mherod/resect/issues/141 | Machine-readable output for the find, analyze, analyze-impact, and discover commands |
 | SRC-024 | Repository owner issue | 2026-08-09 | https://github.com/mherod/resect/issues/175 | Optional explicit file extensions in rewritten specifiers for move and alias |
 | SRC-025 | Repository owner issue | 2026-08-09 | https://github.com/mherod/resect/issues/203 | Filename-convention inference restricted to names that express a convention |
+| SRC-026 | Repository owner issue | 2026-08-09 | https://github.com/mherod/resect/issues/202 | Git-ignored files treated as non-source and excluded from architecture analysis |
 
 ## Delivery and Decision Register
 
@@ -561,6 +562,39 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 **Then** each excluded generated file identifies its project and output boundary
 **And** an unambiguous authored source counterpart is identified when available
 
+### AUDIT-005 — Operator — Exclude version-control-ignored files from architecture analysis
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P1 | **Fidelity:** VERIFIED | **Sources:** SRC-026
+
+**Given** a project whose analysed scope contains files excluded from version control
+**When** an Operator audits module health
+**Then** those files contribute no module, dependency, or coupling metric
+
+### AUDIT-006 — Operator — Learn why analysed files were excluded as non-source
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P2 | **Fidelity:** VERIFIED | **Sources:** SRC-026
+
+**Given** an audit excludes files as non-source
+**When** the Operator reads the audit result
+**Then** the result reports how many files were excluded, the location holding most of them, and why they were judged non-source
+
+### AUDIT-007 — Operator — Audit ignored output on request
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P2 | **Fidelity:** VERIFIED | **Sources:** SRC-026
+
+**Given** an Operator deliberately wants version-control-ignored files analysed
+**When** the Operator audits module health with the ignored-file option enabled
+**Then** those files are analysed and no non-source exclusion is reported
+
+### AUDIT-008 — Operator — Analyse every file when version-control status is unavailable
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P1 | **Fidelity:** VERIFIED | **Sources:** SRC-026
+
+**Given** a project whose version-control status cannot be established
+**When** an Operator audits module health
+**Then** every analysed file is retained
+**And** no non-source exclusion is reported
+
 ## Feature: Source Analysis Scope and Public API Safety
 
 ### ANLY-001 — Analysis Consumer — Exclude Next-generated type artifacts from source analysis
@@ -757,8 +791,8 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 
 | Layer | Status | Receipt | Current artifact |
 |---|---|---|---|
-| Structure | PASS | STRUCT-20260809-014 | [.requirements-status.json](.requirements-status.json) `validation.structure` |
-| Document quality | PASS | QUALITY-20260809-014 | [.requirements-status.json](.requirements-status.json) `validation.documentQuality` |
-| Implementation | PASS | IMPL-20260809-014 | [.requirements-status.json](.requirements-status.json) `validation.implementation` |
+| Structure | PASS | STRUCT-20260809-015 | [.requirements-status.json](.requirements-status.json) `validation.structure` |
+| Document quality | PASS | QUALITY-20260809-015 | [.requirements-status.json](.requirements-status.json) `validation.documentQuality` |
+| Implementation | PASS | IMPL-20260809-015 | [.requirements-status.json](.requirements-status.json) `validation.implementation` |
 
 The canonical validator, manual product-contract review, and focused implementation audit are independent. Counts, hashes, source commit, commands, timestamps, warning dispositions, and evidence summaries live only in the derived status artifact.

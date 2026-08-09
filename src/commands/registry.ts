@@ -846,6 +846,7 @@ export const COMMANDS: CommandDef[] = [
 			"fan-out-threshold",
 			"fan-in-threshold",
 			"export-threshold",
+			"include-ignored",
 		],
 		run: async ([directory], values) => {
 			requireArg("audit", "<directory>", directory);
@@ -863,6 +864,7 @@ export const COMMANDS: CommandDef[] = [
 				exportThreshold: values["export-threshold"]
 					? Number(values["export-threshold"])
 					: undefined,
+				includeIgnored: values["include-ignored"],
 			});
 		},
 	},

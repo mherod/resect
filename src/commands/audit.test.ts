@@ -527,3 +527,101 @@ describe("audit command stylesheet diagnostics", () => {
 		}
 	});
 });
+
+// ─── non-source exclusion (#202) ───────────────────────────────────────────
+
+describe("audit non-source exclusion", () => {
+	/** A project whose tsconfig sweeps in a gitignored build directory. */
+	async function makeBuildOutputProject(): Promise<string> {
+		const dir = await makeFixture(
+			"audit-non-source",
+			{
+				".gitignore": "dist\n",
+				"src/app.ts":
+					'import { helper } from "./helper.ts";\nexport const app = helper;\n',
+				"src/helper.ts": "export const helper = 1;\n",
+				// Build output the tsconfig sweeps in: emitted declarations, plus a
+				// hash-suffixed chunk they re-export. `.ts`-family so the fixture's
+				// `include: ["**/*.ts"]` actually pulls them into the graph, which is
+				// the condition the exclusion exists to handle.
+				"dist/index.d.ts": 'export { chunk } from "./index-a1b2c3d4.ts";\n',
+				"dist/index-a1b2c3d4.ts": "export const chunk = 1;\n",
+			},
+			{ tsconfig: true, outsideRepo: true }
+		);
+		const init = Bun.spawn(["git", "init", "-b", "main"], {
+			cwd: dir,
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		await init.exited;
+		return dir;
+	}
+
+	test("excludes git-ignored build output and says why", async () => {
+		const dir = await makeBuildOutputProject();
+		try {
+			const result = await captureOutput(async () =>
+				auditCommand({ directory: dir, json: true })
+			);
+			const report = JSON.parse(result.stdout);
+
+			// stdout stays one parseable document (CLI-006).
+			expect(typeof report).toBe("object");
+			expect(report.warnings.join("\n")).toContain("dist");
+			expect(report.warnings.join("\n")).toContain("non-source");
+			// No dist file survives as a node or as another file's dependency.
+			const files = (report.highFanIn as Array<{ file: string }>)
+				.concat(report.highFanOut as Array<{ file: string }>)
+				.map((m) => m.file);
+			expect(files.some((f) => f.includes("dist"))).toBe(false);
+		} finally {
+			await cleanup(dir);
+		}
+	});
+
+	test("includeIgnored re-admits them for a deliberate audit", async () => {
+		const dir = await makeBuildOutputProject();
+		try {
+			const excluded = await captureOutput(async () =>
+				auditCommand({ directory: dir, json: true })
+			);
+			const included = await captureOutput(async () =>
+				auditCommand({ directory: dir, json: true, includeIgnored: true })
+			);
+
+			const excludedReport = JSON.parse(excluded.stdout);
+			const includedReport = JSON.parse(included.stdout);
+
+			expect(includedReport.totalFiles).toBeGreaterThan(
+				excludedReport.totalFiles
+			);
+			expect(includedReport.warnings.join("\n")).not.toContain("non-source");
+		} finally {
+			await cleanup(dir);
+		}
+	});
+
+	test("analyses everything when the directory is not a git repository", async () => {
+		// Detection must never silently drop files on an inconclusive probe.
+		const dir = await makeFixture(
+			"audit-non-git",
+			{
+				".gitignore": "dist\n",
+				"src/app.ts": "export const app = 1;\n",
+				"dist/index.d.ts": "export const built = 1;\n",
+			},
+			{ tsconfig: true, outsideRepo: true }
+		);
+		try {
+			const result = await captureOutput(async () =>
+				auditCommand({ directory: dir, json: true })
+			);
+			const report = JSON.parse(result.stdout);
+
+			expect(report.warnings.join("\n")).not.toContain("non-source");
+		} finally {
+			await cleanup(dir);
+		}
+	});
+});

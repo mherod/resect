@@ -3,6 +3,7 @@ import { logger } from "../cli-logger.ts";
 import { removeExtension } from "../core/constants.ts";
 import {
 	createFrameworkGeneratedArtifactClassifier,
+	excludeClassifiedFiles,
 	excludeFrameworkGeneratedArtifacts,
 	type FrameworkGeneratedArtifact,
 	type FrameworkGeneratedArtifactClassifier,
@@ -13,6 +14,12 @@ import {
 	mergeDependencyGraphs,
 	withGraphSourceFile,
 } from "../core/graph.ts";
+import {
+	createNonSourceClassifier,
+	type NonSourceClassifier,
+	type NonSourceFile,
+	nonSourceWarning,
+} from "../core/non-source-files.ts";
 import { normalizePath } from "../core/resolver.ts";
 import { scanExports } from "../core/scanner.ts";
 import type { ReadOnlyCommandOptions } from "../types/commands.ts";
@@ -29,6 +36,12 @@ export interface AuditOptions extends ReadOnlyCommandOptions {
 	fanInThreshold?: number;
 	/** Export count threshold to flag (default: 8) */
 	exportThreshold?: number;
+	/**
+	 * Analyse git-ignored files too (#202). Off by default: a file excluded from
+	 * version control is not source, and reporting on it produces findings the
+	 * operator cannot act on. Set when deliberately auditing generated output.
+	 */
+	includeIgnored?: boolean;
 	/** Optional programmatic observer; the human CLI supplies a TTY reporter. */
 	onProgress?: ProgressCallback;
 }
@@ -50,6 +63,8 @@ export interface AuditReport {
 	skippedFiles: string[];
 	excludedGeneratedFiles: ExcludedGeneratedFile[];
 	excludedFrameworkGeneratedFiles: FrameworkGeneratedArtifact[];
+	/** Git-ignored files excluded as non-source (#202). */
+	excludedNonSourceFiles: NonSourceFile[];
 	metrics: FileMetrics[];
 	cycles: Cycle[];
 	highFanOut: FileMetrics[];
@@ -260,10 +275,12 @@ const projectAuditGraph = (
 const prepareAuditGraph = (
 	graph: DependencyGraph,
 	projectGraphs: AuditProjectGraph[],
-	frameworkClassifier?: FrameworkGeneratedArtifactClassifier
+	frameworkClassifier?: FrameworkGeneratedArtifactClassifier,
+	nonSourceClassifier?: NonSourceClassifier
 ): {
 	excludedGeneratedFiles: ExcludedGeneratedFile[];
 	excludedFrameworkGeneratedFiles: FrameworkGeneratedArtifact[];
+	excludedNonSourceFiles: NonSourceFile[];
 	graph: DependencyGraph;
 } => {
 	const boundaries = projectGraphs.map(({ project }) =>
@@ -282,12 +299,18 @@ const prepareAuditGraph = (
 		projected.length > 0
 			? mergeDependencyGraphs(projected.map((item) => item.graph))
 			: graph;
+	// Non-source files are pruned before framework classification: a build
+	// artifact is not source at all, so it should never reach the framework
+	// heuristics or contribute an edge to a real module's fan-in (#202).
+	const sourceFiltered = nonSourceClassifier
+		? excludeClassifiedFiles(compilerFilteredGraph, nonSourceClassifier)
+		: { graph: compilerFilteredGraph, excludedFiles: [] as NonSourceFile[] };
 	const frameworkFiltered = frameworkClassifier
 		? excludeFrameworkGeneratedArtifacts(
-				compilerFilteredGraph,
+				sourceFiltered.graph,
 				frameworkClassifier
 			)
-		: { graph: compilerFilteredGraph, excludedGeneratedFiles: [] };
+		: { graph: sourceFiltered.graph, excludedGeneratedFiles: [] };
 	for (const artifact of frameworkFiltered.excludedGeneratedFiles) {
 		if (!excludedByFile.has(artifact.file)) {
 			excludedByFile.set(artifact.file, {
@@ -302,6 +325,7 @@ const prepareAuditGraph = (
 			a.file.localeCompare(b.file)
 		),
 		excludedFrameworkGeneratedFiles: frameworkFiltered.excludedGeneratedFiles,
+		excludedNonSourceFiles: sourceFiltered.excludedFiles,
 		graph: frameworkFiltered.graph,
 	};
 };
@@ -455,9 +479,15 @@ export function buildAuditReport(
 		exportThreshold: number;
 	},
 	projectGraphs: AuditProjectGraph[] = [],
-	frameworkClassifier?: FrameworkGeneratedArtifactClassifier
+	frameworkClassifier?: FrameworkGeneratedArtifactClassifier,
+	nonSourceClassifier?: NonSourceClassifier
 ): AuditReport {
-	const prepared = prepareAuditGraph(graph, projectGraphs, frameworkClassifier);
+	const prepared = prepareAuditGraph(
+		graph,
+		projectGraphs,
+		frameworkClassifier,
+		nonSourceClassifier
+	);
 	const metrics = computeMetrics(prepared.graph);
 	const cycles = detectCycles(prepared.graph);
 
@@ -472,6 +502,7 @@ export function buildAuditReport(
 		skippedFiles: prepared.graph.skippedFiles,
 		excludedGeneratedFiles: prepared.excludedGeneratedFiles,
 		excludedFrameworkGeneratedFiles: prepared.excludedFrameworkGeneratedFiles,
+		excludedNonSourceFiles: prepared.excludedNonSourceFiles,
 		metrics,
 		cycles,
 		highFanOut,
@@ -488,14 +519,18 @@ export function auditReportToJson(
 		...metric,
 		file: path.relative(baseDir, metric.file),
 	});
-	const warnings =
-		report.excludedFrameworkGeneratedFiles.length > 0
+	const warnings = [
+		...(report.excludedFrameworkGeneratedFiles.length > 0
 			? [
 					generatedArtifactWarning(
 						report.excludedFrameworkGeneratedFiles.length
 					),
 				]
-			: [];
+			: []),
+		...(report.excludedNonSourceFiles.length > 0
+			? [nonSourceWarning(report.excludedNonSourceFiles)]
+			: []),
+	];
 	return {
 		totalFiles: report.totalFiles,
 		skippedFileCount: report.skippedFiles.length,
@@ -530,6 +565,7 @@ export async function auditCommand(options: AuditOptions): Promise<void> {
 		fanOutThreshold = 10,
 		fanInThreshold = 10,
 		exportThreshold = 8,
+		includeIgnored = false,
 	} = options;
 
 	const absoluteDir = path.resolve(directory);
@@ -567,6 +603,15 @@ export async function auditCommand(options: AuditOptions): Promise<void> {
 	const frameworkClassifier = await createFrameworkGeneratedArtifactClassifier(
 		context.graphs.map(({ tsconfigPath }) => tsconfigPath)
 	);
+	// Git is consulted once here, outside the pure report builder, so the
+	// classifier handed to it stays synchronous (#202).
+	const nonSourceClassifier = includeIgnored
+		? undefined
+		: await createNonSourceClassifier(
+				[...graph.imports.keys()],
+				absoluteDir,
+				context.project
+			);
 	const report = buildAuditReport(
 		graph,
 		{
@@ -575,7 +620,8 @@ export async function auditCommand(options: AuditOptions): Promise<void> {
 			exportThreshold,
 		},
 		projectGraphs,
-		frameworkClassifier
+		frameworkClassifier,
+		nonSourceClassifier
 	);
 
 	if (json) {
@@ -605,6 +651,13 @@ function printReport(
 		logger.warn(
 			`⚠️  ${generatedArtifactWarning(report.excludedFrameworkGeneratedFiles.length)}`
 		);
+		logger.empty();
+	}
+
+	if (report.excludedNonSourceFiles.length > 0) {
+		// Without this the operator sees only the post-exclusion file count and
+		// has no way to tell that most of the tree was dropped, or why (#202).
+		logger.warn(`⚠️  ${nonSourceWarning(report.excludedNonSourceFiles)}`);
 		logger.empty();
 	}
 
