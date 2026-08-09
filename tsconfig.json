@@ -26,5 +26,24 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false
-  }
+  },
+
+  // Scope the program explicitly (#205). Without this TypeScript includes every
+  // file under this directory, which swept in the repository's own `dist/` —
+  // 181 emitted files typechecked on every commit, push and CI run — and let a
+  // stray `.ts` under a gitignored fixture directory fail `pnpm typecheck`.
+  //
+  // `scripts` is listed deliberately: it holds `check-tarball-size.ts`, which
+  // `verify:size` runs in the `prepublishOnly` release gate, plus the hook
+  // tests. Narrowing to `src` alone would silently stop checking release tooling.
+  //
+  // `tsconfig.build.json` declares its own `include`/`exclude`, which replace
+  // rather than merge with these, so `build:lib` is unaffected.
+  "include": ["src", "scripts"],
+
+  // Test fixtures are generated under `src/` at run time and are gitignored,
+  // so `include` alone cannot keep them out. They are deliberately broken
+  // projects — unresolved imports, malformed manifests — and a leftover one
+  // failed `pnpm typecheck` with TS2307 during #203.
+  "exclude": ["**/__fixtures__", "**/__tmp_*"]
 }
