@@ -2,9 +2,9 @@
   "schemaVersion": 2,
   "projectId": "mherod/resect",
   "requirementsFile": "REQUIREMENTS.md",
-  "requirementsSha256": "6fc8718c0deb3d15ffb96f8a095b6fdb7cd5857aed07c06bf22d051a0b1d354f",
-  "sourceCommit": "de17cc3ccc0db42061b789be076deed0940252b9",
-  "generatedAt": "2026-08-09T00:00:55Z",
+  "requirementsSha256": "83e8bcc9ed1899710f428b93d544f27f95e4dbeb840ac2be079dc23d663c3761",
+  "sourceCommit": "d631cdd07b484cf395479cd59c1f4b5afa858c5c",
+  "generatedAt": "2026-08-09T00:54:29Z",
   "validator": {
     "name": "generate-requirements",
     "version": "2.0.0",
@@ -13,15 +13,15 @@
   "validation": {
     "structure": {
       "status": "PASS",
-      "receiptId": "STRUCT-20260808-010",
+      "receiptId": "STRUCT-20260809-011",
       "validator": "validate-bdd",
       "validatorVersion": "2.0.0",
       "command": "bun /Users/matthewherod/.claude/skills/generate-requirements/scripts/validate-bdd.js /Users/matthewherod/Development/resect/REQUIREMENTS.md --status-log /Users/matthewherod/Development/resect/.requirements-status.json",
-      "requirementsSha256": "6fc8718c0deb3d15ffb96f8a095b6fdb7cd5857aed07c06bf22d051a0b1d354f",
-      "sourceCommit": "de17cc3ccc0db42061b789be076deed0940252b9",
-      "generatedAt": "2026-08-09T00:00:55Z",
+      "requirementsSha256": "83e8bcc9ed1899710f428b93d544f27f95e4dbeb840ac2be079dc23d663c3761",
+      "sourceCommit": "d631cdd07b484cf395479cd59c1f4b5afa858c5c",
+      "generatedAt": "2026-08-09T00:54:29Z",
       "counts": {
-        "checked": 58,
+        "checked": 61,
         "errors": 0,
         "warnings": 0
       },
@@ -31,15 +31,15 @@
     },
     "documentQuality": {
       "status": "PASS",
-      "receiptId": "QUALITY-20260808-010",
+      "receiptId": "QUALITY-20260809-011",
       "validator": "generate-requirements-manual-review",
       "validatorVersion": "2.0.0",
       "command": "bun /Users/matthewherod/.claude/skills/generate-requirements/scripts/validate-bdd.js /Users/matthewherod/Development/resect/REQUIREMENTS.md --status-log /Users/matthewherod/Development/resect/.requirements-status.json",
-      "requirementsSha256": "6fc8718c0deb3d15ffb96f8a095b6fdb7cd5857aed07c06bf22d051a0b1d354f",
-      "sourceCommit": "de17cc3ccc0db42061b789be076deed0940252b9",
-      "generatedAt": "2026-08-09T00:00:55Z",
+      "requirementsSha256": "83e8bcc9ed1899710f428b93d544f27f95e4dbeb840ac2be079dc23d663c3761",
+      "sourceCommit": "d631cdd07b484cf395479cd59c1f4b5afa858c5c",
+      "generatedAt": "2026-08-09T00:54:29Z",
       "counts": {
-        "checked": 58,
+        "checked": 61,
         "errors": 0,
         "warnings": 0
       },
@@ -56,15 +56,15 @@
     },
     "implementation": {
       "status": "PASS",
-      "receiptId": "IMPL-20260808-010",
+      "receiptId": "IMPL-20260809-011",
       "validator": "bun-test-plus-clause-audit",
       "validatorVersion": "1.3.14+generate-requirements-2.0.0",
       "command": "bun /Users/matthewherod/.claude/skills/generate-requirements/scripts/validate-bdd.js /Users/matthewherod/Development/resect/REQUIREMENTS.md --status-log /Users/matthewherod/Development/resect/.requirements-status.json",
-      "requirementsSha256": "6fc8718c0deb3d15ffb96f8a095b6fdb7cd5857aed07c06bf22d051a0b1d354f",
-      "sourceCommit": "de17cc3ccc0db42061b789be076deed0940252b9",
-      "generatedAt": "2026-08-09T00:00:55Z",
+      "requirementsSha256": "83e8bcc9ed1899710f428b93d544f27f95e4dbeb840ac2be079dc23d663c3761",
+      "sourceCommit": "d631cdd07b484cf395479cd59c1f4b5afa858c5c",
+      "generatedAt": "2026-08-09T00:54:29Z",
       "counts": {
-        "checked": 58,
+        "checked": 61,
         "errors": 0,
         "warnings": 0
       },
@@ -97,28 +97,28 @@
     }
   },
   "metrics": {
-    "totalScenarios": 58,
+    "totalScenarios": 61,
     "byDelivery": {
-      "V1": 58,
+      "V1": 61,
       "V2": 0,
       "LATER": 0,
       "UNSLICED": 0
     },
     "byDecision": {
-      "DECIDED": 58,
+      "DECIDED": 61,
       "OPEN": 0
     },
     "byPriority": {
       "P0": 4,
       "P1": 33,
-      "P2": 21,
+      "P2": 24,
       "P3": 0
     },
     "priorityByDelivery": {
       "V1": {
         "P0": 4,
         "P1": 33,
-        "P2": 21,
+        "P2": 24,
         "P3": 0
       },
       "V2": {
@@ -141,15 +141,15 @@
       }
     },
     "byFidelity": {
-      "VERIFIED": 58,
+      "VERIFIED": 61,
       "DRIFTED": 0,
       "MISSING": 0,
       "UNTESTABLE": 0
     },
     "coverage": {
       "v1Decided": {
-        "eligible": 58,
-        "verified": 58,
+        "eligible": 61,
+        "verified": 61,
         "percentage": 100
       },
       "v1LaunchCritical": {
@@ -191,8 +191,8 @@
     "fidelityNoteMismatchIds": [],
     "orphanAnchorIds": [],
     "preamble": {
-      "linesBeforeFirstScenario": 114,
-      "percentageBeforeFirstScenario": 17.6,
+      "linesBeforeFirstScenario": 115,
+      "percentageBeforeFirstScenario": 17,
       "warning": false,
       "disposition": null
     },
