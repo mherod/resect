@@ -68,4 +68,6 @@ export interface BarrelReport {
 	unusedBarrels: BarrelInfo[];
 	/** Sub-path-export shadowing findings (#93) */
 	subpathShadowing: SubpathShadowing[];
+	/** Non-blocking notices, e.g. non-source files excluded from analysis (#202). */
+	warnings: string[];
 }

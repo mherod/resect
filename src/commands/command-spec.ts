@@ -501,6 +501,8 @@ Options:
   --bucket          Filter groups by similarity bucket: exact, high, or medium
   --format          Output format: compact (minimal name + file:line per group)
   --workspace       Scan across all workspace packages
+  --include-ignored Analyse git-ignored files too. Off by default: a bundled
+                    copy of a source declaration is a guaranteed duplicate of it
   -p, --project     Path to project directory or tsconfig.json
 
 Similarity buckets:
@@ -670,6 +672,9 @@ Options:
   --json          Output results as JSON
   --workspace     Scan across all workspace packages
   --verbose       Show detailed output
+  --include-ignored  Analyse git-ignored files too. Off by default: an emitted
+                  bundle re-exporting its chunks is structurally a barrel, but
+                  not one you maintain
 
 Findings:
   Sub-path export shadowing — files reachable through a barrel that ALSO have a
@@ -751,6 +756,9 @@ Options:
   --entrypoint-globs    Glob pattern(s) for convention entrypoints to exclude from
                         orphan/dead reporting (e.g. "hooks/**", "scripts/*.ts").
                         Repeat the flag for multiple patterns.
+  --include-ignored     Analyse git-ignored files too. Off by default: build
+                        output that imports a source export makes it look
+                        consumed, hiding a genuinely dead export
 
 Recognized Next.js App Router code entrypoints are excluded automatically.
 
@@ -845,6 +853,9 @@ Options:
   --majority-threshold    Required casing majority 0.0-1.0 (default: 0.6)
   --case=STYLE            Require kebab-case, camelCase, PascalCase, or snake_case
   --include-tests         Include *.test.* and *.spec.* files
+  --include-ignored       Analyse git-ignored files too. Off by default: a
+                          gitignored build directory is not a naming convention
+                          anyone maintains
   --fix                   Rename flagged files to their suggested names
   -n, --dry-run           Preview planned renames without writing files
   --force                 Allow --fix when the git worktree is dirty

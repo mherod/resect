@@ -31,6 +31,7 @@ export async function similarCommand(options: SimilarOptions): Promise<void> {
 		kinds,
 		bucket,
 		format,
+		includeIgnored,
 	} = options;
 	const absoluteDir = path.resolve(directory);
 
@@ -54,6 +55,7 @@ export async function similarCommand(options: SimilarOptions): Promise<void> {
 		skipDirectives,
 		skipWrappers,
 		kinds,
+		includeIgnored,
 	});
 
 	// Apply bucket filter if specified
@@ -159,6 +161,11 @@ function printReport(
 	logger.info(
 		`📊 Scanned ${report.totalFunctions} declaration(s) across ${report.totalFiles} file(s)\n`
 	);
+
+	for (const warning of report.warnings ?? []) {
+		logger.warn(`⚠️  ${warning}`);
+		logger.empty();
+	}
 
 	if (report.groups.length === 0) {
 		logger.info("✅ No similar declarations found.");

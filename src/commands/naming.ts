@@ -15,6 +15,10 @@ import {
 	mergeDependencyGraphs,
 	withGraphSourceFile,
 } from "../core/graph.ts";
+import {
+	createNonSourceClassifier,
+	nonSourceWarning,
+} from "../core/non-source-files.ts";
 import { isWithinPath, toRelativePath } from "../core/path-utils.ts";
 import { resolveTsConfig } from "../core/project.ts";
 import { isTestFile } from "../core/test-files.ts";
@@ -431,6 +435,9 @@ function getCandidateFiles(
 		if (directory && !isWithinPath(directory, file)) {
 			return false;
 		}
+		if (options.nonSourceFiles?.has(file)) {
+			return false;
+		}
 		return (options.includeTests ?? false) || !isTestFile(file);
 	});
 	return [...new Set(files)].sort();
@@ -691,12 +698,23 @@ export async function buildNamingReport(
 	const minSiblings = options.minSiblings ?? DEFAULT_MIN_SIBLINGS;
 	const majorityThreshold =
 		options.majorityThreshold ?? DEFAULT_MAJORITY_THRESHOLD;
+	// A gitignored build directory is not a naming convention anyone maintains,
+	// and its filenames would otherwise vote in the sibling majority (#202).
+	const nonSourceClassifier = options.includeIgnored
+		? undefined
+		: await createNonSourceClassifier(
+				[...graph.imports.keys()],
+				reportDirectory
+			);
 	const analysis = analyzeNaming(graph, {
 		directory: reportDirectory,
 		minSiblings,
 		majorityThreshold,
 		case: options.case,
 		includeTests: options.includeTests,
+		nonSourceFiles: new Set(
+			(nonSourceClassifier?.excluded ?? []).map(({ file }) => file)
+		),
 	});
 	const warnings: string[] =
 		options.case && options.majorityThreshold !== undefined
@@ -706,6 +724,9 @@ export async function buildNamingReport(
 		warnings.push(
 			generatedArtifactWarning(preparedGraph.excludedGeneratedFiles.length)
 		);
+	}
+	if (nonSourceClassifier && nonSourceClassifier.excluded.length > 0) {
+		warnings.push(nonSourceWarning(nonSourceClassifier.excluded));
 	}
 
 	return {

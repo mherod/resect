@@ -258,6 +258,12 @@ export function registerAnalysisTools(server: McpServer): void {
 					.describe(
 						"Flag files exporting more than N symbols (default 8). High counts suggest a module doing too much"
 					),
+				includeIgnored: z
+					.boolean()
+					.optional()
+					.describe(
+						"Analyse git-ignored files too (#202). Off by default: a file excluded from version control is not source, so build output cannot distort the result. Set true only to deliberately analyse generated output"
+					),
 			},
 		},
 		async ({
@@ -266,6 +272,7 @@ export function registerAnalysisTools(server: McpServer): void {
 			fanOutThreshold,
 			fanInThreshold,
 			exportThreshold,
+			includeIgnored,
 		}) => {
 			return withErrorHandling(async () => {
 				return auditTool(directory, {
@@ -273,6 +280,7 @@ export function registerAnalysisTools(server: McpServer): void {
 					fanOutThreshold,
 					fanInThreshold,
 					exportThreshold,
+					includeIgnored,
 				});
 			});
 		}
@@ -300,11 +308,21 @@ export function registerAnalysisTools(server: McpServer): void {
 					.describe(
 						"Scan barrels across every workspace package, not just the resolved tsconfig"
 					),
+				includeIgnored: z
+					.boolean()
+					.optional()
+					.describe(
+						"Analyse git-ignored files too (#202). Off by default: a file excluded from version control is not source, so build output cannot distort the result. Set true only to deliberately analyse generated output"
+					),
 			},
 		},
-		async ({ directory, project, workspace }) => {
+		async ({ directory, project, workspace, includeIgnored }) => {
 			return withErrorHandling(async () => {
-				return barrelTool(directory, { project, workspace });
+				return barrelTool(directory, {
+					project,
+					workspace,
+					includeIgnored,
+				});
 			});
 		}
 	);
@@ -343,9 +361,22 @@ export function registerAnalysisTools(server: McpServer): void {
 					.describe(
 						"Merge sibling workspace packages into the usage graph so an export consumed only from another package is not reported dead. The report still covers `directory` only"
 					),
+				includeIgnored: z
+					.boolean()
+					.optional()
+					.describe(
+						"Analyse git-ignored files too (#202). Off by default: a file excluded from version control is not source, so build output cannot distort the result. Set true only to deliberately analyse generated output"
+					),
 			},
 		},
-		async ({ directory, project, ignore, entrypointGlobs, workspace }) => {
+		async ({
+			directory,
+			project,
+			ignore,
+			entrypointGlobs,
+			workspace,
+			includeIgnored,
+		}) => {
 			return withErrorHandling(async () => {
 				const defaults = await mcpConfig("unused");
 				return unusedTool(directory, {
@@ -353,6 +384,7 @@ export function registerAnalysisTools(server: McpServer): void {
 					ignore: ignore ?? defaults.ignore,
 					entrypointGlobs,
 					workspace,
+					includeIgnored,
 				});
 			});
 		}
@@ -422,6 +454,12 @@ export function registerAnalysisTools(server: McpServer): void {
 					.describe(
 						"Only return groups in this similarity bucket (exact/high/medium)"
 					),
+				includeIgnored: z
+					.boolean()
+					.optional()
+					.describe(
+						"Analyse git-ignored files too (#202). Off by default: a file excluded from version control is not source, so build output cannot distort the result. Set true only to deliberately analyse generated output"
+					),
 			},
 		},
 		async ({
@@ -435,6 +473,7 @@ export function registerAnalysisTools(server: McpServer): void {
 			minLines,
 			kinds,
 			bucket,
+			includeIgnored,
 		}) => {
 			return withErrorHandling(async () => {
 				return similarTool(directory, {
@@ -447,6 +486,7 @@ export function registerAnalysisTools(server: McpServer): void {
 					minLines,
 					kinds,
 					bucket,
+					includeIgnored,
 				});
 			});
 		}

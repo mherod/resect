@@ -8,6 +8,10 @@ import type {
 	SimilarityReport,
 } from "../types/similar.ts";
 import { TS_JS_VUE_EXTENSIONS } from "./constants.ts";
+import {
+	createNonSourceClassifier,
+	nonSourceWarning,
+} from "./non-source-files.ts";
 import { resolveTsConfig } from "./project.ts";
 import {
 	extractAllIdentifiers,
@@ -765,6 +769,12 @@ export interface SimilarityDiscoveryOptions extends SimilarityFilterOptions {
 	directory: string;
 	project?: string;
 	workspace?: boolean;
+	/**
+	 * Analyse git-ignored files too (#202). Off by default: a bundled copy of a
+	 * source declaration is a guaranteed duplicate of it, so build output turns
+	 * every emitted function into a false similarity group.
+	 */
+	includeIgnored?: boolean;
 }
 
 export type AnalyzeSimilarityOptions = SimilarityDiscoveryOptions;
@@ -800,18 +810,48 @@ export async function analyzeSimilarity(
 		kinds: opts.kinds,
 	};
 
+	// Drop non-source declarations before grouping (#202). A bundled copy of a
+	// source function is a guaranteed duplicate of it, so build output would
+	// pair every emitted declaration with its original at similarity 1.
+	const excludeNonSource = async (
+		functions: FunctionInfo[]
+	): Promise<{ functions: FunctionInfo[]; warnings: string[] }> => {
+		if (opts.includeIgnored) {
+			return { functions, warnings: [] };
+		}
+		const classifier = await createNonSourceClassifier(
+			functions.map((fn) => fn.file),
+			dir
+		);
+		if (classifier.excluded.length === 0) {
+			return { functions, warnings: [] };
+		}
+		return {
+			functions: functions.filter((fn) => !classifier.classify(fn.file)),
+			warnings: [nonSourceWarning(classifier.excluded)],
+		};
+	};
+
 	if (ws) {
 		const result = await scanWorkspaceFunctions(dir);
-		const groups = findSimilarGroups(result.functions, filterOpts);
+		const filtered = await excludeNonSource(result.functions);
+		const groups = findSimilarGroups(filtered.functions, filterOpts);
 		return {
 			groups,
-			totalFunctions: result.functions.length,
+			totalFunctions: filtered.functions.length,
 			totalFiles: result.totalFiles,
 			packageCount: result.packageCount,
+			warnings: filtered.warnings,
 		};
 	}
 
 	const { functions, totalFiles } = await scanProjectFunctions(dir, pr);
-	const groups = findSimilarGroups(functions, filterOpts);
-	return { groups, totalFunctions: functions.length, totalFiles };
+	const filtered = await excludeNonSource(functions);
+	const groups = findSimilarGroups(filtered.functions, filterOpts);
+	return {
+		groups,
+		totalFunctions: filtered.functions.length,
+		totalFiles,
+		warnings: filtered.warnings,
+	};
 }

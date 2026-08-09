@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "projectId": "mherod/resect",
   "requirementsFile": "REQUIREMENTS.md",
-  "requirementsSha256": "843f480208f2291986218b778acfd090119841ea5fff490e8bfa84b2ab47a730",
-  "sourceCommit": "7d9451d1db33cecaae4f73489d18a85f8290bbbf",
+  "requirementsSha256": "5bf9713e92b2a3d5f0ab4bad12b360c2da20a1f477476dcca54d76019401c13f",
+  "sourceCommit": "b4ab752166769dc8b93c5d50131be940b900a438",
   "generatedAt": "2026-08-09T01:29:47Z",
   "validator": {
     "name": "generate-requirements",
@@ -13,15 +13,15 @@
   "validation": {
     "structure": {
       "status": "PASS",
-      "receiptId": "STRUCT-20260809-015",
+      "receiptId": "STRUCT-20260809-016",
       "validator": "validate-bdd",
       "validatorVersion": "2.0.0",
       "command": "bun /Users/matthewherod/.claude/skills/generate-requirements/scripts/validate-bdd.js /Users/matthewherod/Development/resect/REQUIREMENTS.md --status-log /Users/matthewherod/Development/resect/.requirements-status.json",
-      "requirementsSha256": "843f480208f2291986218b778acfd090119841ea5fff490e8bfa84b2ab47a730",
-      "sourceCommit": "7d9451d1db33cecaae4f73489d18a85f8290bbbf",
+      "requirementsSha256": "5bf9713e92b2a3d5f0ab4bad12b360c2da20a1f477476dcca54d76019401c13f",
+      "sourceCommit": "b4ab752166769dc8b93c5d50131be940b900a438",
       "generatedAt": "2026-08-09T01:29:47Z",
       "counts": {
-        "checked": 75,
+        "checked": 77,
         "errors": 0,
         "warnings": 0
       },
@@ -31,15 +31,15 @@
     },
     "documentQuality": {
       "status": "PASS",
-      "receiptId": "QUALITY-20260809-015",
+      "receiptId": "QUALITY-20260809-016",
       "validator": "generate-requirements-manual-review",
       "validatorVersion": "2.0.0",
       "command": "bun /Users/matthewherod/.claude/skills/generate-requirements/scripts/validate-bdd.js /Users/matthewherod/Development/resect/REQUIREMENTS.md --status-log /Users/matthewherod/Development/resect/.requirements-status.json",
-      "requirementsSha256": "843f480208f2291986218b778acfd090119841ea5fff490e8bfa84b2ab47a730",
-      "sourceCommit": "7d9451d1db33cecaae4f73489d18a85f8290bbbf",
+      "requirementsSha256": "5bf9713e92b2a3d5f0ab4bad12b360c2da20a1f477476dcca54d76019401c13f",
+      "sourceCommit": "b4ab752166769dc8b93c5d50131be940b900a438",
       "generatedAt": "2026-08-09T01:29:47Z",
       "counts": {
-        "checked": 75,
+        "checked": 77,
         "errors": 0,
         "warnings": 0
       },
@@ -54,20 +54,21 @@
         "The 33 source-backed V1/P1 scenarios now represent 60.0% of the V1 slice, below the priority-skew warning threshold, while the four launch-critical scenarios remain P0.",
         "Reviewed the five EXTN scenarios for issue #175: extension policy is stated as a product outcome independent of specifier style, each scenario carries one trigger, and the alias-unaffected clause records the composition decision rather than leaving it implicit.",
         "Reviewed NAM-006..008 for issue #203: each states a product outcome about which filenames may be inferred from or indicted, carries one trigger, and keeps explicit-target-casing behaviour (NAM-001, NAM-003) untouched.",
-        "Reviewed AUDIT-005..008 for issue #202: each states a product outcome about which files analysis reports on, carries one trigger, and AUDIT-008 records the fail-open decision so an inconclusive version-control probe can never silently drop files."
+        "Reviewed AUDIT-005..008 for issue #202: each states a product outcome about which files analysis reports on, carries one trigger, and AUDIT-008 records the fail-open decision so an inconclusive version-control probe can never silently drop files.",
+        "Reviewed AUDIT-009..010 for issue #202: AUDIT-009 generalises the exclusion across every architecture report, and AUDIT-010 states the consequence that motivated pruning the graph rather than filtering the report."
       ]
     },
     "implementation": {
       "status": "PASS",
-      "receiptId": "IMPL-20260809-015",
+      "receiptId": "IMPL-20260809-016",
       "validator": "bun-test-plus-clause-audit",
       "validatorVersion": "1.3.14+generate-requirements-2.0.0",
       "command": "bun /Users/matthewherod/.claude/skills/generate-requirements/scripts/validate-bdd.js /Users/matthewherod/Development/resect/REQUIREMENTS.md --status-log /Users/matthewherod/Development/resect/.requirements-status.json",
-      "requirementsSha256": "843f480208f2291986218b778acfd090119841ea5fff490e8bfa84b2ab47a730",
-      "sourceCommit": "7d9451d1db33cecaae4f73489d18a85f8290bbbf",
+      "requirementsSha256": "5bf9713e92b2a3d5f0ab4bad12b360c2da20a1f477476dcca54d76019401c13f",
+      "sourceCommit": "b4ab752166769dc8b93c5d50131be940b900a438",
       "generatedAt": "2026-08-09T01:29:47Z",
       "counts": {
-        "checked": 75,
+        "checked": 77,
         "errors": 0,
         "warnings": 0
       },
@@ -98,32 +99,33 @@
         "CLI-003 through CLI-005 map to src/core/concurrency.ts, src/core/graph.ts, src/cli-logger.ts, src/commands/audit.ts, src/commands/unused.ts, src/commands/tidy.ts, their focused tests, and the public option types at source commit cbf6587.",
         "EXTN-001..005 verified against src/core/resolver.ts calculateRelativeSpecifier/calculateNewSpecifier, src/commands/command-context.ts warnIfExplicitExtensionsUnsupported, and src/commands/registry.ts domain validation; covered by src/core/resolver.test.ts and src/commands/move.test.ts.",
         "NAM-006..008 verified against src/commands/naming.ts discriminatesCasing, isDeliberatelyPrefixed, and the Majority.sampleSize denominator; covered by src/commands/naming.test.ts.",
-        "AUDIT-005..008 verified against src/core/non-source-files.ts, src/core/git.ts partitionGitignored, and src/commands/audit.ts prepareAuditGraph; covered by src/commands/audit.test.ts."
+        "AUDIT-005..008 verified against src/core/non-source-files.ts, src/core/git.ts partitionGitignored, and src/commands/audit.ts prepareAuditGraph; covered by src/commands/audit.test.ts.",
+        "AUDIT-009..010 verified against unused, barrel, similar and naming wiring; the ignored-consumer case is covered by src/commands/unused.test.ts."
       ]
     }
   },
   "metrics": {
-    "totalScenarios": 75,
+    "totalScenarios": 77,
     "byDelivery": {
-      "V1": 75,
+      "V1": 77,
       "V2": 0,
       "LATER": 0,
       "UNSLICED": 0
     },
     "byDecision": {
-      "DECIDED": 75,
+      "DECIDED": 77,
       "OPEN": 0
     },
     "byPriority": {
       "P0": 4,
-      "P1": 36,
+      "P1": 38,
       "P2": 35,
       "P3": 0
     },
     "priorityByDelivery": {
       "V1": {
         "P0": 4,
-        "P1": 36,
+        "P1": 38,
         "P2": 35,
         "P3": 0
       },
@@ -147,15 +149,15 @@
       }
     },
     "byFidelity": {
-      "VERIFIED": 75,
+      "VERIFIED": 77,
       "DRIFTED": 0,
       "MISSING": 0,
       "UNTESTABLE": 0
     },
     "coverage": {
       "v1Decided": {
-        "eligible": 75,
-        "verified": 75,
+        "eligible": 77,
+        "verified": 77,
         "percentage": 100
       },
       "v1LaunchCritical": {
@@ -198,7 +200,7 @@
     "orphanAnchorIds": [],
     "preamble": {
       "linesBeforeFirstScenario": 119,
-      "percentageBeforeFirstScenario": 14.9,
+      "percentageBeforeFirstScenario": 14.6,
       "warning": false,
       "disposition": null
     },

@@ -51,4 +51,6 @@ export interface SimilarityReport {
 	totalFunctions: number;
 	/** Total files scanned */
 	totalFiles: number;
+	/** Non-blocking notices, e.g. non-source files excluded from analysis (#202). */
+	warnings?: string[];
 }

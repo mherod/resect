@@ -414,6 +414,7 @@ export const COMMANDS: CommandDef[] = [
 			"kinds",
 			"bucket",
 			"format",
+			"include-ignored",
 		],
 		run: async ([directory], values) => {
 			requireArg("similar", "<directory>", directory);
@@ -484,6 +485,7 @@ export const COMMANDS: CommandDef[] = [
 				kinds: kindsArg,
 				bucket: bucketArg,
 				format: formatArg,
+				includeIgnored: values["include-ignored"],
 			});
 		},
 	},
@@ -672,6 +674,7 @@ export const COMMANDS: CommandDef[] = [
 			"majority-threshold",
 			"case",
 			"include-tests",
+			"include-ignored",
 		],
 		run: async ([directory], values) => {
 			requireArg("naming", "<directory>", directory);
@@ -725,6 +728,7 @@ export const COMMANDS: CommandDef[] = [
 					majorityThreshold,
 					case: targetCase,
 					includeTests: values["include-tests"],
+					includeIgnored: values["include-ignored"],
 				});
 			} catch (error) {
 				logger.error(error instanceof Error ? error.message : String(error));
@@ -879,6 +883,7 @@ export const COMMANDS: CommandDef[] = [
 			"ignore",
 			"workspace",
 			"entrypoint-globs",
+			"include-ignored",
 		],
 		run: async ([directory], values) => {
 			requireArg("unused", "<directory>", directory);
@@ -891,6 +896,7 @@ export const COMMANDS: CommandDef[] = [
 				ignore: values.ignore,
 				workspace: values.workspace,
 				entrypointGlobs: values["entrypoint-globs"],
+				includeIgnored: values["include-ignored"],
 			});
 		},
 	},
@@ -898,7 +904,7 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "barrel",
 		helpText: cliHelp("barrel"),
-		options: ["project", "json", "workspace", "verbose"],
+		options: ["project", "json", "workspace", "verbose", "include-ignored"],
 		run: async ([directory], values) => {
 			requireArg("barrel", "<directory>", directory);
 			try {
@@ -908,6 +914,7 @@ export const COMMANDS: CommandDef[] = [
 					json: values.json,
 					workspace: values.workspace,
 					verbose: values.verbose,
+					includeIgnored: values["include-ignored"],
 				});
 			} catch (error) {
 				logger.error(error instanceof Error ? error.message : String(error));

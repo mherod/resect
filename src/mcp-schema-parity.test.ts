@@ -122,6 +122,7 @@ const EXPECTED: Record<string, string[]> = {
 		"minLines",
 		"kinds",
 		"bucket", // #129
+		"includeIgnored", // #202
 	],
 	"extract-common": [
 		"directory",
@@ -146,6 +147,7 @@ const EXPECTED: Record<string, string[]> = {
 		"project",
 		"ignore",
 		"entrypointGlobs", // #129
+		"includeIgnored", // #202
 	],
 	analyze: ["file", "project", "entrypointGlobs"],
 	naming: [
@@ -156,6 +158,7 @@ const EXPECTED: Record<string, string[]> = {
 		"majorityThreshold",
 		"case",
 		"includeTests",
+		"includeIgnored", // #202
 		"fix",
 		"dryRun",
 		"force",

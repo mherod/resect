@@ -42,6 +42,7 @@ import {
 import { findUnusedExports } from "../commands/unused.ts";
 import { createFrameworkGeneratedArtifactClassifier } from "../core/generated-artifacts.ts";
 import { buildDependencyGraph } from "../core/graph.ts";
+import { createNonSourceClassifier } from "../core/non-source-files.ts";
 import { loadProject, resolveTsConfig } from "../core/project.ts";
 import { analyzeSimilarity } from "../core/similarity.ts";
 import { serializeStructuredEdits } from "../core/text-changes.ts";
@@ -222,6 +223,7 @@ export async function auditTool(
 		fanOutThreshold?: number;
 		fanInThreshold?: number;
 		exportThreshold?: number;
+		includeIgnored?: boolean;
 	}
 ): Promise<CallToolResult> {
 	const absoluteDir = path.resolve(directory);
@@ -239,11 +241,19 @@ export async function auditTool(
 		fanInThreshold: options.fanInThreshold ?? 10,
 		exportThreshold: options.exportThreshold ?? 8,
 	};
+	const nonSourceClassifier = options.includeIgnored
+		? undefined
+		: await createNonSourceClassifier(
+				[...graph.imports.keys()],
+				absoluteDir,
+				projectConfig
+			);
 	const report = buildAuditReport(
 		graph,
 		thresholds,
 		[{ graph, project: projectConfig }],
-		frameworkClassifier
+		frameworkClassifier,
+		nonSourceClassifier
 	);
 	return jsonText({
 		...auditReportToJson(report, absoluteDir),
@@ -257,12 +267,14 @@ export async function barrelTool(
 	options: {
 		project?: string;
 		workspace?: boolean;
+		includeIgnored?: boolean;
 	}
 ): Promise<CallToolResult> {
 	const { report, baseDir } = await analyzeBarrels({
 		directory,
 		project: options.project,
 		workspace: options.workspace,
+		includeIgnored: options.includeIgnored,
 	});
 	return jsonText(barrelReportToJson(report, baseDir));
 }
@@ -274,6 +286,7 @@ export async function unusedTool(
 		ignore?: string;
 		entrypointGlobs?: string | string[];
 		workspace?: boolean;
+		includeIgnored?: boolean;
 	}
 ): Promise<CallToolResult> {
 	const absoluteDir = path.resolve(directory);
@@ -282,6 +295,7 @@ export async function unusedTool(
 		ignore: options.ignore,
 		entrypointGlobs: options.entrypointGlobs,
 		workspace: options.workspace,
+		includeIgnored: options.includeIgnored,
 	});
 	const selfContainedOrphans = report.orphanFiles.filter(
 		(o) => o.selfContained
@@ -378,6 +392,7 @@ export async function similarTool(
 		minLines?: number;
 		kinds?: ("function" | "type" | "interface")[];
 		bucket?: "exact" | "high" | "medium";
+		includeIgnored?: boolean;
 	}
 ): Promise<CallToolResult> {
 	const absoluteDir = path.resolve(directory);
@@ -390,6 +405,7 @@ export async function similarTool(
 		skipSameFile: options.skipSameFile,
 		minLines: options.minLines,
 		kinds: options.kinds,
+		includeIgnored: options.includeIgnored,
 	});
 	// Mirrors similarCommand's post-hoc bucket filter (CLI: similar.ts:60-65).
 	const report = options.bucket
@@ -536,6 +552,7 @@ export async function namingTool(
 		fix?: boolean;
 		dryRun?: boolean;
 		force?: boolean;
+		includeIgnored?: boolean;
 	}
 ): Promise<CallToolResult> {
 	if (options.fix && !options.dryRun) {
@@ -572,6 +589,7 @@ export async function namingTool(
 		majorityThreshold: options.majorityThreshold,
 		case: options.case,
 		includeTests: options.includeTests,
+		includeIgnored: options.includeIgnored,
 	});
 	return jsonText(report);
 }

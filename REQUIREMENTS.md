@@ -595,6 +595,22 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 **Then** every analysed file is retained
 **And** no non-source exclusion is reported
 
+### AUDIT-009 — Analysis Consumer — Exclude version-control-ignored files from every architecture report
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P1 | **Fidelity:** VERIFIED | **Sources:** SRC-026
+
+**Given** a project whose analysed scope contains files excluded from version control
+**When** an Analysis Consumer requests dead-export, barrel, duplication, or filename-convention results
+**Then** those files contribute no finding and no evidence to any of those results
+
+### AUDIT-010 — Analysis Consumer — Keep an ignored consumer from concealing a dead export
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P1 | **Fidelity:** VERIFIED | **Sources:** SRC-026
+
+**Given** an export whose only consumer is a file excluded from version control
+**When** an Analysis Consumer requests dead-export results
+**Then** the export is reported as dead
+
 ## Feature: Source Analysis Scope and Public API Safety
 
 ### ANLY-001 — Analysis Consumer — Exclude Next-generated type artifacts from source analysis
@@ -791,8 +807,8 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 
 | Layer | Status | Receipt | Current artifact |
 |---|---|---|---|
-| Structure | PASS | STRUCT-20260809-015 | [.requirements-status.json](.requirements-status.json) `validation.structure` |
-| Document quality | PASS | QUALITY-20260809-015 | [.requirements-status.json](.requirements-status.json) `validation.documentQuality` |
-| Implementation | PASS | IMPL-20260809-015 | [.requirements-status.json](.requirements-status.json) `validation.implementation` |
+| Structure | PASS | STRUCT-20260809-016 | [.requirements-status.json](.requirements-status.json) `validation.structure` |
+| Document quality | PASS | QUALITY-20260809-016 | [.requirements-status.json](.requirements-status.json) `validation.documentQuality` |
+| Implementation | PASS | IMPL-20260809-016 | [.requirements-status.json](.requirements-status.json) `validation.implementation` |
 
 The canonical validator, manual product-contract review, and focused implementation audit are independent. Counts, hashes, source commit, commands, timestamps, warning dispositions, and evidence summaries live only in the derived status artifact.

@@ -24,6 +24,12 @@ export interface NamingAnalysisOptions {
 	majorityThreshold?: number;
 	case?: FilenameCasing;
 	includeTests?: boolean;
+	/**
+	 * Absolute paths to omit as non-source (#202). Passed as plain paths rather
+	 * than a classifier so this domain type stays free of core dependencies; the
+	 * command layer owns detection and the warning.
+	 */
+	nonSourceFiles?: ReadonlySet<string>;
 }
 
 export interface NamingOptions
@@ -34,6 +40,8 @@ export interface NamingOptions
 	fix?: boolean;
 	force?: boolean;
 	dryRun?: boolean;
+	/** Analyse git-ignored files too (#202). */
+	includeIgnored?: boolean;
 }
 
 export interface NamingViolation {

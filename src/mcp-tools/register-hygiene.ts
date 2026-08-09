@@ -197,6 +197,12 @@ export function registerHygieneTools(server: McpServer): void {
 					.describe(
 						"Bypass the dirty-worktree guard when fix=true. Rollback is disabled when force=true on a dirty tree."
 					),
+				includeIgnored: z
+					.boolean()
+					.optional()
+					.describe(
+						"Analyse git-ignored files too (#202). Off by default: a gitignored build directory is not a naming convention anyone maintains. Set true only to deliberately analyse generated output"
+					),
 			},
 		},
 		async ({
@@ -207,6 +213,7 @@ export function registerHygieneTools(server: McpServer): void {
 			majorityThreshold,
 			case: targetCase,
 			includeTests,
+			includeIgnored,
 			fix,
 			dryRun,
 			force,
@@ -219,6 +226,7 @@ export function registerHygieneTools(server: McpServer): void {
 					majorityThreshold,
 					case: targetCase,
 					includeTests,
+					includeIgnored,
 					fix,
 					dryRun: fix ? (dryRun ?? true) : undefined,
 					force,

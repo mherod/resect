@@ -1,7 +1,13 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
 import { isFrameworkConventionFile } from "../core/framework-conventions.ts";
+import { excludeClassifiedFiles } from "../core/generated-artifacts.ts";
 import { type DependencyGraph, withGraphSourceFile } from "../core/graph.ts";
+import {
+	createNonSourceClassifier,
+	type NonSourceFile,
+	nonSourceWarning,
+} from "../core/non-source-files.ts";
 import { loadProject } from "../core/project.ts";
 import { findSubpathExportForFile, normalizePath } from "../core/resolver.ts";
 import { scanBarrelExports } from "../core/scanner.ts";
@@ -17,6 +23,11 @@ import { setupCommandContext } from "./command-context.ts";
 
 export interface BarrelOptions extends ReadOnlyCommandOptions {
 	directory: string;
+	/**
+	 * Analyse git-ignored files too (#202). Off by default: an emitted bundle
+	 * re-exporting a module is not a barrel the operator maintains.
+	 */
+	includeIgnored?: boolean;
 }
 
 /**
@@ -28,6 +39,8 @@ export interface BarrelReportContext {
 	barrelFiles: Set<string>;
 	/** Project files omitted because they could not be parsed. */
 	skippedFiles: readonly string[];
+	/** Git-ignored files pruned before barrels were collected (#202). */
+	excludedNonSourceFiles?: readonly NonSourceFile[];
 	/** Number of files importing the given barrel */
 	consumersOf: (file: string) => number;
 	/** Dedicated sub-path export for a file, or null (issue #93 shadowing) */
@@ -110,6 +123,11 @@ export function buildBarrelReport(
 				barrel.consumers === 0 && !isFrameworkConventionFile(barrel.barrel)
 		),
 		subpathShadowing,
+		warnings:
+			context.excludedNonSourceFiles &&
+			context.excludedNonSourceFiles.length > 0
+				? [nonSourceWarning(context.excludedNonSourceFiles)]
+				: [],
 	};
 }
 
@@ -179,14 +197,35 @@ export async function analyzeBarrels(
 	if (!merged) {
 		throw new Error("Dependency graph was not built");
 	}
-	const scans = collectBarrelScans(pairs);
+
+	// Prune non-source files before barrels are collected (#202): an emitted
+	// bundle re-exporting its chunks is structurally a barrel, but not one the
+	// operator maintains, and its consumers inflate real barrels' counts.
+	const nonSourceClassifier = options.includeIgnored
+		? undefined
+		: await createNonSourceClassifier(
+				[...merged.imports.keys()],
+				absoluteDir,
+				context.project
+			);
+	const sourceGraph = nonSourceClassifier
+		? excludeClassifiedFiles(merged, nonSourceClassifier).graph
+		: merged;
+	const sourcePairs = nonSourceClassifier
+		? pairs.map((pair) => ({
+				...pair,
+				graph: excludeClassifiedFiles(pair.graph, nonSourceClassifier).graph,
+			}))
+		: pairs;
+	const scans = collectBarrelScans(sourcePairs);
 
 	const report = buildBarrelReport(scans, {
-		barrelFiles: merged.barrelFiles,
-		skippedFiles: merged.skippedFiles,
+		barrelFiles: sourceGraph.barrelFiles,
+		skippedFiles: sourceGraph.skippedFiles,
 		consumersOf: (file) =>
-			(merged.importedBy.get(normalizePath(file)) ?? []).length,
+			(sourceGraph.importedBy.get(normalizePath(file)) ?? []).length,
 		subpathExportOf: (file) => subpathExportOf(file, workspaceInfo ?? null),
+		excludedNonSourceFiles: nonSourceClassifier?.excluded ?? [],
 	});
 
 	return { report, baseDir: absoluteDir };
@@ -225,6 +264,7 @@ export function barrelReportToJson(report: BarrelReport, baseDir: string) {
 		reExportsBarrels: b.reExportsBarrels.map(rel),
 	});
 	return {
+		warnings: report.warnings,
 		totalBarrels: report.totalBarrels,
 		skippedFileCount: report.skippedFiles.length,
 		skippedFiles: report.skippedFiles.map(rel),
@@ -242,6 +282,11 @@ export function barrelReportToJson(report: BarrelReport, baseDir: string) {
 
 function printReport(report: BarrelReport, baseDir: string): void {
 	logger.info(`\n🛢️  Barrel Report (${report.totalBarrels} barrels)\n`);
+
+	for (const warning of report.warnings) {
+		logger.warn(`⚠️  ${warning}`);
+		logger.empty();
+	}
 
 	if (report.skippedFiles.length > 0) {
 		logger.warn(

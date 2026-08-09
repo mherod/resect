@@ -1420,3 +1420,64 @@ describe("transitive dead-export chains", () => {
 		}
 	});
 });
+
+// ─── non-source exclusion (#202) ───────────────────────────────────────────
+
+describe("unused non-source exclusion", () => {
+	/**
+	 * A project where the ONLY consumer of an export is gitignored build output.
+	 * Filtering the report alone would not help: the ignored file still supplies
+	 * a usage edge, so the export looks alive.
+	 */
+	async function makeIgnoredConsumerProject(): Promise<string> {
+		const dir = await makeFixtureBase(
+			"unused-ignored-consumer",
+			{
+				"tsconfig.json": JSON.stringify({
+					compilerOptions: { strict: true },
+					include: ["**/*.ts"],
+				}),
+				".gitignore": "dist\n",
+				"src/lib.ts": "export const onlyUsedByBuildOutput = 1;\n",
+				"src/index.ts": "export const entry = 1;\n",
+				"dist/bundle.d.ts":
+					'import { onlyUsedByBuildOutput } from "../src/lib.ts";\nexport const bundled = onlyUsedByBuildOutput;\n',
+			},
+			{ outsideRepo: true }
+		);
+		const init = Bun.spawn(["git", "init", "-b", "main"], {
+			cwd: dir,
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		await init.exited;
+		return dir;
+	}
+
+	test("an ignored consumer does not keep a dead export alive", async () => {
+		const dir = await makeIgnoredConsumerProject();
+		try {
+			const report = await findUnusedExports(dir);
+			const deadNames = report.unused.map(({ name }) => name);
+
+			expect(deadNames).toContain("onlyUsedByBuildOutput");
+			expect(report.excludedNonSourceFileCount).toBeGreaterThan(0);
+			expect(report.warnings.join("\n")).toContain("non-source");
+		} finally {
+			await cleanup(dir);
+		}
+	});
+
+	test("includeIgnored restores the ignored consumer's usage edge", async () => {
+		const dir = await makeIgnoredConsumerProject();
+		try {
+			const report = await findUnusedExports(dir, { includeIgnored: true });
+			const deadNames = report.unused.map(({ name }) => name);
+
+			expect(deadNames).not.toContain("onlyUsedByBuildOutput");
+			expect(report.excludedNonSourceFileCount).toBe(0);
+		} finally {
+			await cleanup(dir);
+		}
+	});
+});

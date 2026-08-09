@@ -7,6 +7,7 @@ import {
 } from "../core/framework-conventions.ts";
 import {
 	createFrameworkGeneratedArtifactClassifier,
+	excludeClassifiedFiles,
 	excludeFrameworkGeneratedArtifacts,
 	generatedArtifactWarning,
 } from "../core/generated-artifacts.ts";
@@ -17,6 +18,10 @@ import {
 	mergeDependencyGraphs,
 	withGraphSourceFile,
 } from "../core/graph.ts";
+import {
+	createNonSourceClassifier,
+	nonSourceWarning,
+} from "../core/non-source-files.ts";
 import {
 	discoverPackageEntrypoints,
 	findPackagePublicApiExports,
@@ -49,6 +54,12 @@ export interface UnusedOptions extends ReadOnlyCommandOptions {
 	directory: string;
 	ignore?: string;
 	entrypointGlobs?: string | string[];
+	/**
+	 * Analyse git-ignored files too (#202). Off by default: build output that
+	 * imports a source export makes that export look consumed, hiding a
+	 * genuinely dead one behind a file nobody edits.
+	 */
+	includeIgnored?: boolean;
 	onProgress?: ProgressCallback;
 }
 
@@ -115,6 +126,8 @@ export interface UnusedReport {
 	warnings: string[];
 	excludedGeneratedFiles: string[];
 	excludedGeneratedFileCount: number;
+	/** Git-ignored files pruned from the usage graph as non-source (#202). */
+	excludedNonSourceFileCount: number;
 	/** Built-in or configured entrypoint files omitted from unused/dead verdicts. */
 	excludedEntrypointFiles: string[];
 	excludedEntrypointFileCount: number;
@@ -170,6 +183,7 @@ export async function findUnusedExports(
 		ignore?: string;
 		workspace?: boolean;
 		entrypointGlobs?: string | string[];
+		includeIgnored?: boolean;
 		onProgress?: ProgressCallback;
 	}
 ): Promise<UnusedReport> {
@@ -182,6 +196,7 @@ export async function findUnusedExports(
 			warnings: [],
 			excludedGeneratedFiles: [],
 			excludedGeneratedFileCount: 0,
+			excludedNonSourceFileCount: 0,
 			excludedEntrypointFiles: [],
 			excludedEntrypointFileCount: 0,
 			publicApiExports: [],
@@ -223,6 +238,7 @@ export async function findUnusedExports(
 	return findUnusedExportsFromGraphs(directory, graphs, {
 		ignore: options?.ignore,
 		entrypointGlobs: options?.entrypointGlobs,
+		includeIgnored: options?.includeIgnored,
 	});
 }
 
@@ -235,16 +251,34 @@ export async function findUnusedExports(
 export async function findUnusedExportsFromGraphs(
 	directory: string,
 	graphs: ProjectGraphResult[],
-	options?: { ignore?: string; entrypointGlobs?: string | string[] }
+	options?: {
+		ignore?: string;
+		entrypointGlobs?: string | string[];
+		includeIgnored?: boolean;
+	}
 ): Promise<UnusedReport> {
 	const absoluteDir = path.resolve(directory);
 	const frameworkClassifier = await createFrameworkGeneratedArtifactClassifier(
 		graphs.map(({ tsconfigPath }) => tsconfigPath)
 	);
+	// Prune non-source files from the graph, not just from the reported
+	// candidates (#202). A gitignored build file that imports a source export
+	// makes that export look consumed, so filtering only the report would leave
+	// a genuinely dead export hidden behind a file nobody edits.
+	const nonSourceClassifier = options?.includeIgnored
+		? undefined
+		: await createNonSourceClassifier(
+				graphs.flatMap((result) => [...result.graph.imports.keys()]),
+				absoluteDir
+			);
+	const excludedNonSourceFiles = nonSourceClassifier?.excluded ?? [];
 	const excludedGeneratedFiles = new Set<string>();
 	const filteredGraphs = graphs.map((result) => {
+		const sourceOnly = nonSourceClassifier
+			? excludeClassifiedFiles(result.graph, nonSourceClassifier).graph
+			: result.graph;
 		const filtered = excludeFrameworkGeneratedArtifacts(
-			result.graph,
+			sourceOnly,
 			frameworkClassifier
 		);
 		for (const artifact of filtered.excludedGeneratedFiles) {
@@ -262,6 +296,7 @@ export async function findUnusedExportsFromGraphs(
 			warnings: [],
 			excludedGeneratedFiles: [],
 			excludedGeneratedFileCount: 0,
+			excludedNonSourceFileCount: 0,
 			excludedEntrypointFiles: [],
 			excludedEntrypointFileCount: 0,
 			publicApiExports: [],
@@ -477,6 +512,9 @@ export async function findUnusedExportsFromGraphs(
 			...(excludedGeneratedFiles.size > 0
 				? [generatedArtifactWarning(excludedGeneratedFiles.size)]
 				: []),
+			...(excludedNonSourceFiles.length > 0
+				? [nonSourceWarning(excludedNonSourceFiles)]
+				: []),
 			...(unknownExternalUsageExports.length > 0
 				? [
 						`Package entrypoint tracing is incomplete for ${unknownExternalUsageExports.length} export(s); external usage is unknown, so destructive verdicts were withheld.`,
@@ -485,6 +523,7 @@ export async function findUnusedExportsFromGraphs(
 		],
 		excludedGeneratedFiles: [...excludedGeneratedFiles].sort(),
 		excludedGeneratedFileCount: excludedGeneratedFiles.size,
+		excludedNonSourceFileCount: excludedNonSourceFiles.length,
 		excludedEntrypointFiles: [...excludedEntrypointFiles].sort(),
 		excludedEntrypointFileCount: excludedEntrypointFiles.size,
 		publicApiExports,
@@ -904,6 +943,7 @@ export async function unusedCommand(options: UnusedOptions): Promise<void> {
 		ignore,
 		workspace: options.workspace,
 		entrypointGlobs,
+		includeIgnored: options.includeIgnored,
 		onProgress,
 	});
 
@@ -950,6 +990,18 @@ export async function unusedCommand(options: UnusedOptions): Promise<void> {
 			}
 		}
 		logger.empty();
+	}
+
+	if (report.excludedNonSourceFileCount > 0) {
+		// The warnings array already carries the sentence; reuse it so the human
+		// and JSON surfaces cannot drift (#202).
+		const nonSource = report.warnings.find((warning) =>
+			warning.includes("non-source")
+		);
+		if (nonSource) {
+			logger.warn(`⚠️  ${nonSource}`);
+			logger.empty();
+		}
 	}
 
 	if (report.excludedGeneratedFileCount > 0) {
