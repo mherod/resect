@@ -4,21 +4,28 @@
  * resect MCP server — exposes resect's analysis and refactoring capabilities as
  * Model Context Protocol tools over stdio.
  *
+ * This module owns server construction, the tool registrations (name,
+ * description, and Zod input schema), and `main()`. The implementations live
+ * in `./mcp-tools/read-only.ts` (#185) and `./mcp-tools/mutating.ts` (#186),
+ * with helpers shared through `./mcp-tools/shared.ts`; those modules never
+ * import this one, so the dependency direction stays one-way.
+ *
  * Design notes:
  *  - A stdio MCP server speaks JSON-RPC on stdout, so NOTHING may be written to
- *    stdout except the transport itself. This entry deliberately calls the
+ *    stdout except the transport itself. The tool modules deliberately call the
  *    data-returning functions (`search`, `analyze`, `buildAuditReport`,
  *    `moveModule`, `renameSymbol`, `normalizeImports`, …) rather than the
  *    `*Command` wrappers, which print via the `logger` (stdout) and call
  *    `process.exit()` on bad input — both fatal here.
- *  - Every tool handler is wrapped in try/catch so failures become an `isError`
- *    result instead of throwing/exiting and killing the server.
+ *  - Every tool handler is wrapped in `withErrorHandling` so failures become an
+ *    `isError` result instead of throwing/exiting and killing the server.
  *  - Mutating tools (`move`, `rename`, `alias`) default to `dryRun: true` so
  *    callers always preview the diff first. When `dryRun` is false and
  *    `verify` is on (the default), each tool runs `tsc --noEmit` before AND
  *    after applying changes; the diagnostic delta is included in the result
  *    so the caller can see exactly which errors the refactor introduced or
- *    fixed.
+ *    fixed. That defaulting is applied here, at the registration, so it is
+ *    visible beside the schema that documents it.
  *  - Mutating tools use `isWorktreeDirty` (not `ensureCleanWorktree`, which
  *    calls `process.exit`). A dirty worktree becomes a structured error
  *    unless `force: true` is set.
@@ -27,54 +34,28 @@
  *    mutating tools (#60).
  */
 
-import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { version } from "../package.json";
 import { affected } from "./commands/affected.ts";
-import {
-	type AliasResult,
-	applyChanges as applyAliasChanges,
-	applyChangesWithVerification as applyAliasChangesWithVerification,
-	normalizeImports,
-	parseSpecifierRenames,
-	planAliasEdits,
-	renameImportSpecifiers,
-} from "./commands/alias.ts";
 import { analyzeImpact } from "./commands/analyze-impact.ts";
 import { mcpDescription } from "./commands/command-spec.ts";
-import { runExtractCommon } from "./commands/extract-common.ts";
-import { inlineBarrel } from "./commands/inline.ts";
-import { moveModule, rollbackTransformMove } from "./commands/move.ts";
-import {
-	type MoveBatchEntry,
-	moveBatchWithDependencies,
-	serializeMoveBatchResult,
-} from "./commands/move-batch.ts";
 import {
 	FILENAME_CASING_STYLES,
 	FIND_TYPES,
 	PREFER_STRATEGIES,
-	type PreferStrategy,
 } from "./commands/option-domains.ts";
-import { renameSymbol } from "./commands/rename.ts";
 import { ALL_TIDY_FIX_CATEGORIES } from "./commands/tidy.ts";
 import { executeUndo } from "./commands/undo.ts";
-import { isWorktreeDirty } from "./core/git.ts";
 import {
-	completeOperationJournal,
-	prepareOperationJournal,
-} from "./core/journal.ts";
-import { loadProject, resolveTsConfig } from "./core/project.ts";
-import { serializeStructuredEdits } from "./core/text-changes.ts";
-import { loadTransformConfig } from "./core/transform-config.ts";
-import {
-	runWithTypecheckGuard,
-	type VerificationResult,
-} from "./core/verify.ts";
-import { discoverWorkspace } from "./core/workspace.ts";
+	aliasTool,
+	extractCommonTool,
+	inlineTool,
+	moveBatchTool,
+	moveTool,
+	renameTool,
+} from "./mcp-tools/mutating.ts";
 import {
 	analyzeTool,
 	auditTool,
@@ -93,23 +74,20 @@ import {
 	workspaceTool,
 } from "./mcp-tools/read-only.ts";
 import {
-	checkWorktree,
 	errorText,
 	jsonText,
 	mcpConfig,
-	tsconfigNotFound,
-	WORKTREE_BLOCKED_MESSAGE,
 	withErrorHandling,
 } from "./mcp-tools/shared.ts";
-import type { InlineConflict, InlineRewrite } from "./types/inline.ts";
-import type { TransformRule } from "./types/transform.ts";
 
 export const renameSpecifierInputSchema = z
 	.string()
 	.refine((value) => value.includes("="), "Must be '<from>=<to>'");
 
-// Re-exported for `src/mcp-entrypoints.test.ts`, which imports these tools from
-// the server entry; the implementations now live in `./mcp-tools/read-only.ts`.
+// Re-exported for `src/mcp-entrypoints.test.ts` and `src/mcp-rename.test.ts`,
+// which import these tools from the server entry; the implementations now live
+// in `./mcp-tools/read-only.ts` (#185) and `./mcp-tools/mutating.ts` (#186).
+export { renameTool } from "./mcp-tools/mutating.ts";
 export { analyzeTool, unusedTool } from "./mcp-tools/read-only.ts";
 
 // ── Server wiring ───────────────────────────────────────────────────
@@ -920,400 +898,6 @@ server.registerTool(
 	}
 );
 
-// ── Mutating tool implementations ──────────────────────────────────
-
-async function moveBatchTool(args: {
-	batch: MoveBatchEntry[];
-	project?: string;
-	dryRun: boolean;
-	force: boolean;
-	journal?: boolean;
-	verify: boolean;
-	verbose: boolean;
-	transform?: string;
-	prefer?: PreferStrategy;
-}): Promise<CallToolResult> {
-	const result = await moveBatchWithDependencies(
-		{
-			moves: args.batch,
-			project: args.project,
-			dryRun: args.dryRun,
-			force: false,
-			journal: args.journal ?? false,
-			verify: args.verify,
-			verbose: args.verbose,
-			transform: args.transform,
-			prefer: args.prefer,
-		},
-		{
-			ensureCleanWorktree: async (directory, _force, dryRun) => {
-				if (args.force || dryRun) {
-					return;
-				}
-				if (await isWorktreeDirty(directory)) {
-					throw new Error(WORKTREE_BLOCKED_MESSAGE);
-				}
-			},
-		}
-	);
-	return jsonText(serializeMoveBatchResult(result));
-}
-
-async function moveTool(args: {
-	source: string;
-	target: string;
-	project?: string;
-	dryRun: boolean;
-	force: boolean;
-	journal?: boolean;
-	verify: boolean;
-	verbose: boolean;
-	transform?: string;
-	prefer?: PreferStrategy;
-}): Promise<CallToolResult> {
-	const absoluteSource = path.resolve(args.source);
-	const absoluteTarget = path.resolve(args.target);
-	const tsconfigPath = resolveTsConfig(
-		args.project,
-		path.dirname(absoluteSource)
-	);
-	if (!tsconfigPath) {
-		return tsconfigNotFound(absoluteSource);
-	}
-	const project = loadProject(tsconfigPath, absoluteSource);
-
-	const wt = await checkWorktree(project.rootDir, args.force);
-	if (wt.blocked) {
-		return errorText(WORKTREE_BLOCKED_MESSAGE);
-	}
-
-	const workspace = (await discoverWorkspace(project.rootDir)) ?? undefined;
-	const journalContext = await prepareOperationJournal(
-		project.rootDir,
-		(args.journal ?? false) && !args.dryRun
-	);
-
-	// Load the declarative transform config (epic #103, slice A) before the move
-	// runs so a missing/malformed config fails fast and writes nothing.
-	let transformRules: TransformRule[] = [];
-	if (args.transform) {
-		try {
-			transformRules = await loadTransformConfig(
-				project.rootDir,
-				args.transform
-			);
-		} catch (error) {
-			return errorText(error instanceof Error ? error.message : String(error));
-		}
-	}
-
-	const runMove = async () =>
-		moveModule(
-			absoluteSource,
-			absoluteTarget,
-			project,
-			args.dryRun,
-			args.verbose,
-			workspace,
-			// MCP gates force at the worktree layer above; moveModule's conflict
-			// force stays at its default (unchanged behaviour). The 8th arg threads
-			// the loaded transform rules (#123), the 9th the specifier style (#173).
-			false,
-			transformRules,
-			args.prefer
-		);
-
-	const shouldVerify = args.verify && !args.dryRun;
-	const { result, delta } = shouldVerify
-		? await runWithTypecheckGuard(project, runMove)
-		: { result: await runMove(), delta: undefined };
-
-	// #103 C: a transform move whose post-move verify introduced new type errors
-	// is rolled back, mirroring the CLI. Plain moves keep the report-only delta.
-	let transformRolledBack = false;
-	if (
-		shouldVerify &&
-		delta &&
-		(result.transformRewrites?.length ?? 0) > 0 &&
-		(delta.newErrors.length > 0 || delta.verificationIncomplete)
-	) {
-		transformRolledBack = await rollbackTransformMove(project, result);
-	}
-	const journalEntry =
-		result.success &&
-		!args.dryRun &&
-		!transformRolledBack &&
-		(delta?.success ?? true)
-			? await completeOperationJournal(journalContext, {
-					args: {
-						prefer: args.prefer ?? null,
-						source: path.relative(project.rootDir, absoluteSource),
-						target: path.relative(project.rootDir, absoluteTarget),
-						transform: args.transform ?? null,
-					},
-					command: "move",
-					movedFiles: [{ from: absoluteSource, to: absoluteTarget }],
-				})
-			: null;
-
-	const root = project.rootDir;
-	return jsonText({
-		dryRun: args.dryRun,
-		force: args.force,
-		worktreeDirty: wt.dirty,
-		success: result.success,
-		movedFile: {
-			from: path.relative(root, result.movedFile.from),
-			to: path.relative(root, result.movedFile.to),
-		},
-		edits: serializeStructuredEdits(result.edits, (file) =>
-			path.relative(root, file)
-		),
-		updatedReferenceCount: result.updatedReferences.length,
-		updatedReferences: result.updatedReferences.map((r) => ({
-			file: path.relative(root, r.file),
-			line: r.line,
-			oldSpecifier: r.oldSpecifier,
-			newSpecifier: r.newSpecifier,
-		})),
-		dependencyChanges: (result.dependencyChanges ?? []).map((d) => ({
-			packageJson: path.relative(root, d.packageJsonPath),
-			name: d.name,
-			version: d.version,
-			field: d.field,
-		})),
-		restrictedViolations: (result.restrictedViolations ?? []).map((v) => ({
-			name: v.name,
-			destinationPackage: v.destinationPackage,
-			packageJson: path.relative(root, v.packageJsonPath),
-		})),
-		transformRules: (result.transformRules ?? []).map((r) => ({
-			from: r.from,
-			to: r.to,
-		})),
-		transformRewrites: (result.transformRewrites ?? []).map((r) => ({
-			from: r.from,
-			to: r.to,
-			line: r.line,
-			file: path.relative(root, r.file),
-		})),
-		errors: result.errors.map((e) => ({
-			file: path.relative(root, e.file),
-			message: e.message,
-			recoverable: e.recoverable,
-		})),
-		transformRolledBack,
-		typecheck: delta,
-		journalEntryId: journalEntry?.id,
-	});
-}
-
-export async function renameTool(args: {
-	file: string;
-	oldName: string;
-	newName: string;
-	project?: string;
-	dryRun: boolean;
-	force: boolean;
-	journal?: boolean;
-	verify: boolean;
-	verbose: boolean;
-}): Promise<CallToolResult> {
-	const absolutePath = path.resolve(args.file);
-	const tsconfigPath = resolveTsConfig(
-		args.project,
-		path.dirname(absolutePath)
-	);
-	if (!tsconfigPath) {
-		return tsconfigNotFound(absolutePath);
-	}
-	const project = loadProject(tsconfigPath, absolutePath);
-
-	const wt = await checkWorktree(project.rootDir, args.force);
-	if (wt.blocked) {
-		return errorText(WORKTREE_BLOCKED_MESSAGE);
-	}
-	const journalContext = await prepareOperationJournal(
-		project.rootDir,
-		(args.journal ?? false) && !args.dryRun
-	);
-
-	const runRename = async () =>
-		renameSymbol(
-			absolutePath,
-			args.oldName,
-			args.newName,
-			project,
-			args.dryRun,
-			args.verbose,
-			[],
-			args.force
-		);
-
-	const shouldVerify = args.verify && !args.dryRun;
-	const { result, delta } = shouldVerify
-		? await runWithTypecheckGuard(project, runRename)
-		: { result: await runRename(), delta: undefined };
-	const journalEntry =
-		result.success && !args.dryRun && (delta?.success ?? true)
-			? await completeOperationJournal(journalContext, {
-					args: {
-						file: path.relative(project.rootDir, absolutePath),
-						newName: args.newName,
-						oldName: args.oldName,
-					},
-					command: "rename",
-				})
-			: null;
-
-	const root = project.rootDir;
-	return jsonText({
-		dryRun: args.dryRun,
-		force: args.force,
-		worktreeDirty: wt.dirty,
-		success: result.success,
-		renamedSymbol: {
-			file: path.relative(root, result.renamedSymbol.file),
-			oldName: result.renamedSymbol.oldName,
-			newName: result.renamedSymbol.newName,
-		},
-		edits: serializeStructuredEdits(result.edits, (file) =>
-			path.relative(root, file)
-		),
-		updatedReferenceCount: result.updatedReferences.length,
-		updatedReferences: result.updatedReferences.map((r) => ({
-			file: path.relative(root, r.file),
-			line: r.line,
-			oldSpecifier: r.oldSpecifier,
-			newSpecifier: r.newSpecifier,
-		})),
-		errors: result.errors.map((e) => ({
-			file: path.relative(root, e.file),
-			message: e.message,
-		})),
-		typecheck: delta,
-		journalEntryId: journalEntry?.id,
-	});
-}
-
-async function aliasTool(args: {
-	target: string;
-	prefer?: "alias" | "relative" | "shortest";
-	renameSpecifiers?: string[];
-	project?: string;
-	dryRun: boolean;
-	force: boolean;
-	journal?: boolean;
-	verify: boolean;
-}): Promise<CallToolResult> {
-	const absoluteTarget = path.resolve(args.target);
-	const tsconfigPath = resolveTsConfig(args.project, absoluteTarget);
-	if (!tsconfigPath) {
-		return tsconfigNotFound(absoluteTarget);
-	}
-	const project = loadProject(tsconfigPath);
-
-	const wt = await checkWorktree(project.rootDir, args.force);
-	if (wt.blocked) {
-		return errorText(WORKTREE_BLOCKED_MESSAGE);
-	}
-	const journalContext = await prepareOperationJournal(
-		project.rootDir,
-		(args.journal ?? false) && !args.dryRun
-	);
-
-	const renames = parseSpecifierRenames(args.renameSpecifiers ?? []);
-	if (renames.length === 0 && !args.prefer) {
-		return errorText("alias requires either prefer or renameSpecifiers");
-	}
-	const result: AliasResult =
-		renames.length > 0
-			? renameImportSpecifiers(absoluteTarget, renames, project)
-			: normalizeImports(absoluteTarget, args.prefer ?? "alias", project);
-	result.edits =
-		result.conflicts.length === 0 ? await planAliasEdits(result.changes) : [];
-
-	let delta: VerificationResult | undefined;
-	let rolledBack = false;
-	if (
-		!args.dryRun &&
-		result.changes.length > 0 &&
-		result.conflicts.length === 0
-	) {
-		if (args.verify && renames.length > 0) {
-			const verification = await applyAliasChangesWithVerification(
-				result.changes,
-				project
-			);
-			delta = verification;
-			rolledBack = !verification.success;
-		} else {
-			const guarded = args.verify
-				? await runWithTypecheckGuard(project, async () =>
-						applyAliasChanges(result.changes)
-					)
-				: { delta: undefined };
-			delta = guarded.delta;
-			if (!args.verify) {
-				await applyAliasChanges(result.changes);
-			}
-		}
-	}
-
-	const root = project.rootDir;
-	const journalEntry =
-		!args.dryRun &&
-		result.changes.length > 0 &&
-		result.conflicts.length === 0 &&
-		!rolledBack &&
-		(delta?.success ?? true)
-			? await completeOperationJournal(journalContext, {
-					args: {
-						prefer: args.prefer ?? null,
-						renameSpecifiers: args.renameSpecifiers ?? [],
-						target: path.relative(project.rootDir, absoluteTarget),
-					},
-					command: "alias",
-				})
-			: null;
-	return jsonText({
-		dryRun: args.dryRun,
-		force: args.force,
-		worktreeDirty: wt.dirty,
-		success: result.conflicts.length === 0 && !rolledBack,
-		strategy: renames.length > 0 ? "rename-specifier" : args.prefer,
-		rolledBack,
-		filesProcessed: result.filesProcessed,
-		importsUpdated: result.importsUpdated,
-		edits: serializeStructuredEdits(result.edits, (file) =>
-			path.relative(root, file)
-		),
-		changes: result.changes.map((c) => ({
-			file: path.relative(root, c.file),
-			line: c.line,
-			oldSpecifier: c.oldSpecifier,
-			newSpecifier: c.newSpecifier,
-			strategy: c.strategy,
-		})),
-		conflicts: result.conflicts.map((c) => ({
-			file: path.relative(root, c.file),
-			line: c.line,
-			oldSpecifier: c.oldSpecifier,
-			newSpecifier: c.newSpecifier,
-			reason: c.reason,
-		})),
-		missedEquivalents: (result.missedEquivalents ?? []).map((m) => ({
-			file: path.relative(root, m.file),
-			line: m.line,
-			specifier: m.specifier,
-			from: m.from,
-			to: m.to,
-		})),
-		typecheck: delta,
-		journalEntryId: journalEntry?.id,
-	});
-}
-
 // ── Mutating tool registrations ────────────────────────────────────
 
 server.registerTool(
@@ -1660,99 +1244,6 @@ server.registerTool(
 	}
 );
 
-async function extractCommonTool(args: {
-	directory: string;
-	project?: string;
-	threshold?: number;
-	group?: number;
-	output?: string;
-	workspace: boolean;
-	dryRun: boolean;
-	force: boolean;
-	verify: boolean;
-	strict?: boolean;
-	nameThreshold?: number;
-	sameNameOnly?: boolean;
-	skipSameFile?: boolean;
-	minLines?: number;
-	skipDirectives?: boolean;
-	skipWrappers?: boolean;
-}): Promise<CallToolResult> {
-	const absoluteDir = path.resolve(args.directory);
-	const tsconfigPath = resolveTsConfig(args.project, absoluteDir);
-	if (!tsconfigPath) {
-		return tsconfigNotFound(absoluteDir);
-	}
-	const project = loadProject(tsconfigPath);
-
-	const runExtract = async () =>
-		runExtractCommon({
-			directory: absoluteDir,
-			project: args.project,
-			threshold: args.threshold,
-			group: args.group,
-			output: args.output,
-			workspace: args.workspace,
-			dryRun: args.dryRun,
-			force: args.force,
-			nameThreshold: args.nameThreshold,
-			sameNameOnly: args.sameNameOnly,
-			skipSameFile: args.skipSameFile,
-			minLines: args.minLines,
-			skipDirectives: args.skipDirectives,
-			skipWrappers: args.skipWrappers,
-		});
-
-	const shouldVerify = args.verify && !args.dryRun;
-	type Result = Awaited<ReturnType<typeof runExtractCommon>>;
-	const guarded: { result: Result; delta: VerificationResult | undefined } =
-		shouldVerify
-			? await runWithTypecheckGuard(project, runExtract)
-			: { result: await runExtract(), delta: undefined };
-	const { result, delta } = guarded;
-
-	const root = project.rootDir;
-	const payload = {
-		dryRun: args.dryRun,
-		force: args.force,
-		worktreeDirty: result.worktreeDirty,
-		success: result.success,
-		totalGroups: result.totalGroups,
-		totalRemoved: result.totalRemoved,
-		modifiedFiles: result.modifiedFiles.map((f) => path.relative(root, f)),
-		groups: result.groups.map((g) => ({
-			canonical: {
-				file: path.relative(root, g.canonical.file),
-				line: g.canonical.line,
-				name: g.canonical.name,
-			},
-			removed: g.removed.map((r) => ({
-				file: path.relative(root, r.file),
-				line: r.line,
-				name: r.name,
-			})),
-			functions: g.functions.map((f) => ({
-				file: path.relative(root, f.file),
-				line: f.line,
-				name: f.name,
-			})),
-		})),
-		errors: result.errors,
-		typecheck: delta,
-	};
-
-	// Mirror the CLI's `--strict` gate: surface duplicate groups as a tool error
-	// so agent callers treat "duplicates found" as a failed check, not a quiet
-	// success (matches extractCommonCommand's process.exit(1) semantics).
-	if (args.strict && result.totalGroups > 0) {
-		const response = jsonText(payload);
-		response.isError = true;
-		return response;
-	}
-
-	return jsonText(payload);
-}
-
 server.registerTool(
 	"extract-common",
 	{
@@ -1896,73 +1387,6 @@ server.registerTool(
 		});
 	}
 );
-
-async function inlineTool(args: {
-	barrelFile: string;
-	project?: string;
-	dryRun: boolean;
-	force: boolean;
-	verify: boolean;
-}): Promise<CallToolResult> {
-	const absoluteBarrel = path.resolve(args.barrelFile);
-	const tsconfigPath = resolveTsConfig(args.project, absoluteBarrel);
-	if (!tsconfigPath) {
-		return tsconfigNotFound(absoluteBarrel);
-	}
-	const project = loadProject(tsconfigPath, absoluteBarrel);
-
-	const wt = await checkWorktree(project.rootDir, args.force);
-	if (wt.blocked) {
-		return errorText(WORKTREE_BLOCKED_MESSAGE);
-	}
-
-	const { result, changes } = await inlineBarrel(absoluteBarrel, project, {
-		dryRun: args.dryRun,
-		force: args.force,
-	});
-
-	let delta: VerificationResult | undefined;
-	let rolledBack = false;
-	if (!args.dryRun && result.isPureBarrel && changes.length > 0) {
-		if (args.verify) {
-			const verification = await applyAliasChangesWithVerification(
-				changes,
-				project
-			);
-			delta = verification;
-			rolledBack = !verification.success;
-		} else {
-			await applyAliasChanges(changes);
-		}
-	}
-
-	const root = project.rootDir;
-	return jsonText({
-		dryRun: args.dryRun,
-		force: args.force,
-		worktreeDirty: wt.dirty,
-		success:
-			result.isPureBarrel && result.conflicts.length === 0 && !rolledBack,
-		isPureBarrel: result.isPureBarrel,
-		canonicalSpecifier: result.canonicalSpecifier,
-		rolledBack,
-		filesChanged: rolledBack ? 0 : result.filesChanged,
-		rewrites: result.rewrites.map((r: InlineRewrite) => ({
-			file: path.relative(root, r.file),
-			line: r.line,
-			oldSpecifier: r.oldSpecifier,
-			newSpecifier: r.newSpecifier,
-			bindings: r.bindings,
-			typeOnly: r.typeOnly,
-		})),
-		conflicts: result.conflicts.map((c: InlineConflict) => ({
-			file: path.relative(root, c.file),
-			line: c.line,
-			reason: c.reason,
-		})),
-		typecheck: delta,
-	});
-}
 
 server.registerTool(
 	"inline",
