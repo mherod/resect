@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
-import { CLI, captureOutput, cleanup, makeFixture } from "./__test-helpers";
+import {
+	CLI,
+	captureOutput,
+	cleanup,
+	makeFixture,
+	readRegistrationSource,
+} from "./__test-helpers";
 import { mockCleanupCommand } from "./mock-cleanup.ts";
 
 function tsconfig(): string {
@@ -143,14 +149,16 @@ describe("mock-cleanup command", () => {
 	});
 
 	test("MCP tool is registered with dryRun default behavior", async () => {
-		const serverSource = await Bun.file(
-			path.resolve(import.meta.dir, "../mcp-server.ts")
-		).text();
+		// Registrations moved to per-domain modules in #187; they sit inside
+		// `register<Domain>Tools(server)`, hence the extra tab.
+		const registrationSource = await readRegistrationSource();
 		const toolSource = await Bun.file(
 			path.resolve(import.meta.dir, "../mcp-tools/read-only.ts")
 		).text();
 
-		expect(serverSource).toContain('server.registerTool(\n\t"mock-cleanup"');
+		expect(registrationSource).toContain(
+			'\tserver.registerTool(\n\t\t"mock-cleanup"'
+		);
 		expect(toolSource).toContain("const dryRun = options.dryRun ?? true");
 	});
 

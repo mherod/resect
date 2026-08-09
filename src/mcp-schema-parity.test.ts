@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import path from "node:path";
+import {
+	REGISTRATION_MODULES,
+	readRegistrationSource,
+} from "./commands/__test-helpers.ts";
 import { renameSpecifierInputSchema } from "./mcp-server.ts";
 
 /**
@@ -14,22 +17,31 @@ import { renameSpecifierInputSchema } from "./mcp-server.ts";
  * those flags would be no-ops over MCP (documented in #129's resolution).
  */
 
-const MCP_SERVER_SOURCE = await Bun.file(
-	path.join(import.meta.dir, "mcp-server.ts")
-).text();
+// Split out of `mcp-server.ts` per domain in #187; the server entry now holds
+// only construction and the register calls, so scraping it would find no tools.
+const REGISTRATION_SOURCE = await readRegistrationSource();
 
 function extractInputSchemaKeys(toolName: string): string[] {
-	const toolStart = MCP_SERVER_SOURCE.indexOf(
-		`server.registerTool(\n\t"${toolName}",`
+	// Registrations sit inside `register<Domain>Tools(server)`, so every line
+	// carries one more tab than it did at module top level. The depth is load
+	// bearing: it selects top-level schema keys and skips nested ones (e.g. the
+	// `source`/`target` pair inside `move`'s `batch` array element).
+	const toolStart = REGISTRATION_SOURCE.indexOf(
+		`\tserver.registerTool(\n\t\t"${toolName}",`
 	);
 	if (toolStart === -1) {
-		throw new Error(`Tool "${toolName}" not found in mcp-server.ts`);
+		throw new Error(
+			`Tool "${toolName}" not found in ${REGISTRATION_MODULES.join(", ")}`
+		);
 	}
-	const schemaStart = MCP_SERVER_SOURCE.indexOf("inputSchema: {", toolStart);
-	const schemaEnd = MCP_SERVER_SOURCE.indexOf("\n\t\t},\n\t},", schemaStart);
-	const block = MCP_SERVER_SOURCE.slice(schemaStart, schemaEnd);
+	const schemaStart = REGISTRATION_SOURCE.indexOf("inputSchema: {", toolStart);
+	const schemaEnd = REGISTRATION_SOURCE.indexOf(
+		"\n\t\t\t},\n\t\t},",
+		schemaStart
+	);
+	const block = REGISTRATION_SOURCE.slice(schemaStart, schemaEnd);
 	const keys: string[] = [];
-	for (const match of block.matchAll(/\n\t\t\t(\w+):/g)) {
+	for (const match of block.matchAll(/\n\t\t\t\t(\w+):/g)) {
 		const key = match[1];
 		if (key) {
 			keys.push(key);

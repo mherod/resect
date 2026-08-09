@@ -5,6 +5,7 @@ import {
 	captureOutput,
 	cleanup,
 	makeFixture as makeFixtureBase,
+	readRegistrationSource,
 } from "./__test-helpers";
 import { testRelocationCommand } from "./test-relocation.ts";
 
@@ -138,15 +139,16 @@ describe("test-relocation command", () => {
 	});
 
 	test("registers the MCP tool", async () => {
-		const serverSource = await readFile(
-			path.resolve(import.meta.dir, "../mcp-server.ts"),
-			"utf8"
-		);
+		// Registrations moved to per-domain modules in #187; they sit inside
+		// `register<Domain>Tools(server)`, hence the extra tab.
+		const registrationSource = await readRegistrationSource();
 		const toolSource = await readFile(
 			path.resolve(import.meta.dir, "../mcp-tools/read-only.ts"),
 			"utf8"
 		);
-		expect(serverSource).toContain('server.registerTool(\n\t"test-relocation"');
+		expect(registrationSource).toContain(
+			'\tserver.registerTool(\n\t\t"test-relocation"'
+		);
 		expect(toolSource).toContain("buildTestRelocationReport");
 	});
 });

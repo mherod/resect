@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readRegistrationSource } from "./__test-helpers.ts";
 import {
 	COMMAND_NAMES,
 	COMMAND_SPECS,
@@ -28,10 +29,11 @@ describe("command roster parity", () => {
 	});
 
 	test("MCP tools and roster declare the same command set", async () => {
-		// Read mcp-server.ts as text and extract the registerTool names rather
-		// than importing it, so this assertion stays independent of the module's
-		// tool-registration side effects.
-		const source = await Bun.file(`${import.meta.dir}/../mcp-server.ts`).text();
+		// Read the registration modules as text and extract the registerTool
+		// names rather than importing them, so this assertion stays independent
+		// of the modules' tool-registration side effects. Split per domain in
+		// #187 — the server entry no longer registers anything itself.
+		const source = await readRegistrationSource();
 		const mcpNames = new Set(
 			[...source.matchAll(/registerTool\(\s*"([^"]+)"/g)].map(
 				(match) => match[1]
@@ -101,8 +103,10 @@ describe("command prose derivation", () => {
 	});
 
 	test("every MCP tool derives its description from the spec", async () => {
-		// Assert against mcp-server.ts source text, not the imported module.
-		const source = await Bun.file(`${import.meta.dir}/../mcp-server.ts`).text();
+		// Assert against the registration source text, not the imported modules.
+		// The registrations were split out of mcp-server.ts per domain in #187,
+		// so the server entry no longer contains any tool description.
+		const source = await readRegistrationSource();
 		// No inline description string literals survive the consolidation.
 		expect(source).not.toMatch(/description:\s*\n\s*["'`]/);
 		// Every command's tool references mcpDescription("<name>").

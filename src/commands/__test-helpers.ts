@@ -158,3 +158,32 @@ export async function runCli(args: string[]): Promise<CliResult> {
 	await proc.exited;
 	return { stdout, stderr, exitCode: proc.exitCode };
 }
+
+/**
+ * The modules that own every `server.registerTool(...)` call and its Zod
+ * `inputSchema`. Split out of `src/mcp-server.ts` per domain in #187.
+ */
+export const REGISTRATION_MODULES = [
+	"register-analysis.ts",
+	"register-hygiene.ts",
+	"register-mutation.ts",
+] as const;
+
+/**
+ * Concatenated source text of every MCP registration module.
+ *
+ * Several structural guards assert against registration *source text* rather
+ * than the imported modules, so that registering a tool cannot be faked by a
+ * runtime shim and so the assertions stay free of registration side effects.
+ * Before #187 each read `src/mcp-server.ts` directly; the file list now lives
+ * here so adding a fourth domain module means updating one constant rather
+ * than hunting every scraper.
+ */
+export async function readRegistrationSource(): Promise<string> {
+	const sources = await Promise.all(
+		REGISTRATION_MODULES.map(async (module) =>
+			Bun.file(path.resolve(import.meta.dir, "../mcp-tools", module)).text()
+		)
+	);
+	return sources.join("\n");
+}

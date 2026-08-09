@@ -5,6 +5,7 @@ import {
 	captureOutput,
 	cleanup,
 	makeFixture as makeFixtureBase,
+	readRegistrationSource,
 	runCli,
 } from "./__test-helpers";
 import { namingCommand } from "./naming.ts";
@@ -814,19 +815,20 @@ describe("naming command", () => {
 	});
 
 	test("registers the MCP naming tool with fix parameter", async () => {
-		const serverSource = await readFile(
-			path.resolve(import.meta.dir, "../mcp-server.ts"),
-			"utf8"
-		);
+		// Registrations moved to per-domain modules in #187; they sit inside
+		// `register<Domain>Tools(server)`, hence the extra tab.
+		const registrationSource = await readRegistrationSource();
 		const toolSource = await readFile(
 			path.resolve(import.meta.dir, "../mcp-tools/read-only.ts"),
 			"utf8"
 		);
-		expect(serverSource).toContain('server.registerTool(\n\t"naming"');
+		expect(registrationSource).toContain(
+			'\tserver.registerTool(\n\t\t"naming"'
+		);
 		expect(toolSource).toContain("buildNamingReport");
 		expect(toolSource).toContain("applyNamingFix");
-		expect(serverSource).toContain("fix: z");
-		expect(serverSource).toContain("case: z");
-		expect(serverSource).toContain(".enum(FILENAME_CASING_STYLES)");
+		expect(registrationSource).toContain("fix: z");
+		expect(registrationSource).toContain("case: z");
+		expect(registrationSource).toContain(".enum(FILENAME_CASING_STYLES)");
 	});
 });
