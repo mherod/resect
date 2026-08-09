@@ -70,6 +70,7 @@ const EXPECTED: Record<string, string[]> = {
 		"verbose",
 		"transform",
 		"prefer",
+		"extensions",
 	],
 	rename: [
 		"file",
@@ -85,6 +86,7 @@ const EXPECTED: Record<string, string[]> = {
 	alias: [
 		"target",
 		"prefer",
+		"extensions",
 		"renameSpecifiers",
 		"project",
 		"dryRun",

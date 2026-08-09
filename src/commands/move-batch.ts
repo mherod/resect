@@ -30,7 +30,7 @@ import {
 	moveModule,
 	runPackageBuilds,
 } from "./move.ts";
-import type { PreferStrategy } from "./option-domains.ts";
+import type { ExtensionPolicy, PreferStrategy } from "./option-domains.ts";
 
 export interface MoveBatchEntry {
 	source: string;
@@ -45,6 +45,8 @@ export interface MoveBatchOptions extends MutatingCommandOptions {
 	verify?: boolean;
 	transform?: string;
 	prefer?: PreferStrategy;
+	/** File-extension policy for rewritten specifiers (#175). */
+	extensions?: ExtensionPolicy;
 }
 
 export interface MoveBatchItemResult {
@@ -248,6 +250,7 @@ export async function moveBatchWithDependencies(
 				force,
 				transformRules,
 				options.prefer,
+				options.extensions,
 				moduleContext
 			);
 			const item = { move, result };

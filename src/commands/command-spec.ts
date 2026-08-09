@@ -308,6 +308,7 @@ Arguments:
 
 Options:
   --prefer        Strategy: alias, relative, or shortest (required unless --rename-specifier is used)
+  --extensions    File-extension policy: preserve (default) or explicit
   --rename-specifier  Exact specifier rewrite pair: <from>=<to> (repeatable)
   -p, --project   Path to project directory or tsconfig.json
   -n, --dry-run   Preview changes without modifying files
@@ -369,6 +370,11 @@ Options:
                     (relative stays relative, aliased stays aliased). Use
                     relative for code run by node --experimental-strip-types,
                     which does not resolve tsconfig paths
+  --extensions=POLICY File-extension policy for rewritten specifiers: preserve
+                    (default) keeps each importer's convention, explicit emits
+                    the target's real extension. Pair with --prefer=relative for
+                    node --experimental-strip-types, whose loader cannot resolve
+                    an extensionless specifier
   --transform=PATH  Apply declarative AST rewrites from a config (e.g.
                     .resect/transforms.js) to the moved file; verified and
                     rolled back on new type errors. The config is executed as
@@ -386,6 +392,7 @@ Examples:
   ${CLI_NAME} move src/utils/old.ts src/helpers/new.ts
   ${CLI_NAME} move src/components/Button.tsx src/ui/Button.tsx --dry-run
   ${CLI_NAME} move lib/locale.ts lib/i18n/locale.ts --prefer=relative
+  ${CLI_NAME} move lib/locale.ts lib/i18n/locale.ts --prefer=relative --extensions=explicit
   ${CLI_NAME} move src/config.ts packages/shared/src/config.ts --transform=.resect/transforms.js
   ${CLI_NAME} move --batch moves.json --dry-run
 `,

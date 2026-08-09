@@ -2,6 +2,10 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import path from "node:path";
 import type ts from "typescript";
 import { cleanup, makeFixture } from "../commands/__test-helpers.ts";
+import type {
+	ExtensionPolicy,
+	PreferStrategy,
+} from "../commands/option-domains.ts";
 import type { ProjectConfig } from "../types.ts";
 import {
 	calculateNewSpecifier,
@@ -233,6 +237,197 @@ describe("calculateRelativeSpecifier", () => {
 		expect(result.startsWith(".")).toBe(true);
 		expect(result).not.toBe("../src/core/cookies/foo");
 	});
+});
+
+// ─── extension policy (#175) ───────────────────────────────────────────────
+
+describe("calculateRelativeSpecifier extension policy", () => {
+	const FROM = "/project/src/app/page.ts";
+	const TARGET = "/project/src/lib/locale.ts";
+
+	describe("preserve reproduces the pre-#175 rule byte-for-byte", () => {
+		// Each case pairs the explicit "preserve" argument with the omitted
+		// argument. If the default ever stops meaning preserve, these diverge.
+		const cases: Array<{ name: string; oldSpecifier?: string }> = [
+			{ name: "extensionless old specifier", oldSpecifier: "@/lib/locale" },
+			{ name: "extension-carrying old specifier", oldSpecifier: "./locale.ts" },
+			{ name: "no old specifier", oldSpecifier: undefined },
+		];
+
+		for (const { name, oldSpecifier } of cases) {
+			test(name, () => {
+				const explicitDefault = calculateRelativeSpecifier(
+					FROM,
+					TARGET,
+					oldSpecifier,
+					"preserve"
+				);
+				const omitted = calculateRelativeSpecifier(FROM, TARGET, oldSpecifier);
+				expect(explicitDefault).toBe(omitted);
+			});
+		}
+
+		test("still strips the extension for an extensionless source specifier", () => {
+			expect(
+				calculateRelativeSpecifier(FROM, TARGET, "@/lib/locale", "preserve")
+			).toBe("../lib/locale");
+		});
+
+		test("still keeps the extension for an extension-carrying source specifier", () => {
+			expect(
+				calculateRelativeSpecifier(FROM, TARGET, "./locale.ts", "preserve")
+			).toBe("../lib/locale.ts");
+		});
+	});
+
+	describe("explicit emits the target's real extension", () => {
+		test("adds the extension an extensionless source specifier lacked", () => {
+			// The #175 repro: `@/lib/locale` -> `../lib/locale` is unresolvable
+			// under `node --experimental-strip-types`, which needs the `.ts`.
+			expect(
+				calculateRelativeSpecifier(FROM, TARGET, "@/lib/locale", "explicit")
+			).toBe("../lib/locale.ts");
+		});
+
+		test("leaves an already-explicit specifier unchanged", () => {
+			expect(
+				calculateRelativeSpecifier(FROM, TARGET, "./locale.ts", "explicit")
+			).toBe("../lib/locale.ts");
+		});
+
+		test("applies with no old specifier to compare against", () => {
+			expect(
+				calculateRelativeSpecifier(FROM, TARGET, undefined, "explicit")
+			).toBe("../lib/locale.ts");
+		});
+
+		test("emits the target's own extension, not the source specifier's", () => {
+			expect(
+				calculateRelativeSpecifier(
+					FROM,
+					"/project/src/lib/Button.tsx",
+					"./old.ts",
+					"explicit"
+				)
+			).toBe("../lib/Button.tsx");
+		});
+
+		test("keeps index.ts addressable instead of collapsing it to the directory", () => {
+			// `preserve` collapses to `../lib`, which the strip-types loader cannot
+			// resolve — directory resolution is exactly what it does not do.
+			expect(
+				calculateRelativeSpecifier(
+					FROM,
+					"/project/src/lib/index.ts",
+					"@/lib",
+					"preserve"
+				)
+			).toBe("../lib");
+			expect(
+				calculateRelativeSpecifier(
+					FROM,
+					"/project/src/lib/index.ts",
+					"@/lib",
+					"explicit"
+				)
+			).toBe("../lib/index.ts");
+		});
+	});
+});
+
+describe("calculateNewSpecifier prefer x extensions matrix (#175)", () => {
+	// `@/*` maps onto src/*, so an aliased import can stay aliased or become
+	// relative depending on `prefer` — the two axes have to compose.
+	const project = makeProject("/project", { "@/*": ["/project/src/*"] });
+	const FROM = "/project/src/app/page.ts";
+	const OLD_TARGET = "/project/src/lib/locale.ts";
+	const NEW_TARGET = "/project/src/i18n/locale.ts";
+
+	function specifier(
+		oldSpecifier: string,
+		prefer: PreferStrategy | undefined,
+		extensions: ExtensionPolicy | undefined
+	): string {
+		return calculateNewSpecifier(
+			oldSpecifier,
+			FROM,
+			OLD_TARGET,
+			NEW_TARGET,
+			project,
+			prefer,
+			extensions
+		);
+	}
+
+	// Every combination is defined, so a future change cannot leave a hole.
+	// `alias` rows are identical across the extension axis by design: an alias
+	// is resolved by tsconfig paths, not by Node's ESM loader, so an extension
+	// on it would be meaningless. See the decision recorded on issue #175.
+	const MATRIX: Array<{
+		prefer: PreferStrategy | undefined;
+		oldSpecifier: string;
+		preserve: string;
+		explicit: string;
+	}> = [
+		{
+			prefer: "relative",
+			oldSpecifier: "@/lib/locale",
+			preserve: "../i18n/locale",
+			explicit: "../i18n/locale.ts",
+		},
+		{
+			prefer: "relative",
+			oldSpecifier: "../lib/locale.ts",
+			preserve: "../i18n/locale.ts",
+			explicit: "../i18n/locale.ts",
+		},
+		{
+			prefer: "alias",
+			oldSpecifier: "@/lib/locale",
+			preserve: "@/i18n/locale",
+			explicit: "@/i18n/locale",
+		},
+		{
+			prefer: "shortest",
+			oldSpecifier: "@/lib/locale",
+			preserve: "@/i18n/locale",
+			explicit: "@/i18n/locale",
+		},
+		{
+			prefer: undefined,
+			oldSpecifier: "@/lib/locale",
+			preserve: "@/i18n/locale",
+			explicit: "@/i18n/locale",
+		},
+		{
+			prefer: undefined,
+			oldSpecifier: "../lib/locale",
+			preserve: "../i18n/locale",
+			explicit: "../i18n/locale.ts",
+		},
+	];
+
+	for (const row of MATRIX) {
+		const label = `prefer=${row.prefer ?? "omitted"} old=${row.oldSpecifier}`;
+
+		test(`${label} -> preserve`, () => {
+			expect(specifier(row.oldSpecifier, row.prefer, "preserve")).toBe(
+				row.preserve
+			);
+		});
+
+		test(`${label} -> explicit`, () => {
+			expect(specifier(row.oldSpecifier, row.prefer, "explicit")).toBe(
+				row.explicit
+			);
+		});
+
+		test(`${label} -> omitted matches preserve`, () => {
+			expect(specifier(row.oldSpecifier, row.prefer, undefined)).toBe(
+				row.preserve
+			);
+		});
+	}
 });
 
 // ─── matchPathAlias ────────────────────────────────────────────────────────

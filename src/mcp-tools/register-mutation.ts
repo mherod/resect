@@ -13,7 +13,10 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { mcpDescription } from "../commands/command-spec.ts";
-import { PREFER_STRATEGIES } from "../commands/option-domains.ts";
+import {
+	EXTENSION_POLICIES,
+	PREFER_STRATEGIES,
+} from "../commands/option-domains.ts";
 import { executeUndo } from "../commands/undo.ts";
 import {
 	aliasTool,
@@ -156,6 +159,12 @@ export function registerMutationTools(server: McpServer): void {
 					.describe(
 						"Import-specifier style for rewritten references (#173). Omit to preserve each importer's existing style (relative stays relative, aliased stays aliased). 'relative' forces relative paths — needed when the output must run under `node --experimental-strip-types`, which does not resolve tsconfig paths"
 					),
+				extensions: z
+					.enum(EXTENSION_POLICIES)
+					.optional()
+					.describe(
+						"File-extension policy for rewritten specifiers (#175), orthogonal to `prefer`. 'preserve' (default) keeps each importer's existing convention; 'explicit' emits the target file's real extension. Pair with prefer='relative' for `node --experimental-strip-types`, whose loader cannot resolve an extensionless specifier"
+					),
 			},
 		},
 		async ({
@@ -170,6 +179,7 @@ export function registerMutationTools(server: McpServer): void {
 			verbose,
 			transform,
 			prefer,
+			extensions,
 		}) => {
 			return withErrorHandling(async () => {
 				const defaults = await mcpConfig("move");
@@ -189,6 +199,7 @@ export function registerMutationTools(server: McpServer): void {
 						verbose: verbose ?? false,
 						transform: transform ?? defaults.transformConfigPath,
 						prefer: prefer ?? defaults.prefer,
+						extensions,
 					});
 				}
 				if (!(source && target)) {
@@ -205,6 +216,7 @@ export function registerMutationTools(server: McpServer): void {
 					verbose: verbose ?? false,
 					transform: transform ?? defaults.transformConfigPath,
 					prefer: prefer ?? defaults.prefer,
+					extensions,
 				});
 			});
 		}
@@ -361,6 +373,12 @@ export function registerMutationTools(server: McpServer): void {
 					.describe(
 						"Normalization strategy: 'alias' = use tsconfig paths, 'relative' = use ./ paths, 'shortest' = pick the shorter option per import. Required unless renameSpecifiers is provided"
 					),
+				extensions: z
+					.enum(EXTENSION_POLICIES)
+					.optional()
+					.describe(
+						"File-extension policy for rewritten specifiers (#175), orthogonal to `prefer`. 'preserve' (default) keeps each importer's existing convention; 'explicit' emits the target file's real extension. Pair with prefer='relative' for `node --experimental-strip-types`, whose loader cannot resolve an extensionless specifier"
+					),
 				renameSpecifiers: z
 					.array(renameSpecifierInputSchema)
 					.optional()
@@ -402,6 +420,7 @@ export function registerMutationTools(server: McpServer): void {
 		async ({
 			target,
 			prefer,
+			extensions,
 			renameSpecifiers,
 			project,
 			dryRun,
@@ -414,6 +433,7 @@ export function registerMutationTools(server: McpServer): void {
 				return aliasTool({
 					target,
 					prefer: prefer ?? defaults.prefer,
+					extensions,
 					renameSpecifiers,
 					project,
 					dryRun: dryRun ?? true,

@@ -17,6 +17,7 @@ import { moveCommand } from "./move.ts";
 import { moveBatchCommand } from "./move-batch.ts";
 import { namingCommand } from "./naming.ts";
 import {
+	EXTENSION_POLICIES,
 	FILENAME_CASING_STYLES,
 	FIND_TYPES,
 	isInDomain,
@@ -70,6 +71,7 @@ export const COMMANDS: CommandDef[] = [
 			"workspace",
 			"transform",
 			"prefer",
+			"extensions",
 		],
 		run: async ([source, target], values) => {
 			if (values.batch && (source || target)) {
@@ -91,6 +93,14 @@ export const COMMANDS: CommandDef[] = [
 				);
 				process.exit(1);
 			}
+			const extensions = values.extensions;
+			if (
+				extensions !== undefined &&
+				!isInDomain(EXTENSION_POLICIES, extensions)
+			) {
+				logger.error("Error: --extensions must be 'preserve' or 'explicit'");
+				process.exit(1);
+			}
 			if (values.batch) {
 				await moveBatchCommand({
 					batch: values.batch,
@@ -104,6 +114,7 @@ export const COMMANDS: CommandDef[] = [
 					workspace: values.workspace,
 					transform: values.transform,
 					prefer,
+					extensions,
 				});
 				return;
 			}
@@ -122,6 +133,7 @@ export const COMMANDS: CommandDef[] = [
 				workspace: values.workspace,
 				transform: values.transform,
 				prefer,
+				extensions,
 			});
 		},
 	},
@@ -330,6 +342,7 @@ export const COMMANDS: CommandDef[] = [
 		helpText: cliHelp("alias"),
 		options: [
 			"prefer",
+			"extensions",
 			"rename-specifier",
 			"dry-run",
 			"force",
@@ -356,9 +369,18 @@ export const COMMANDS: CommandDef[] = [
 				);
 				process.exit(1);
 			}
+			const extensions = values.extensions;
+			if (
+				extensions !== undefined &&
+				!isInDomain(EXTENSION_POLICIES, extensions)
+			) {
+				logger.error("Error: --extensions must be 'preserve' or 'explicit'");
+				process.exit(1);
+			}
 			await aliasCommand({
 				target,
 				prefer,
+				extensions,
 				dryRun: values["dry-run"],
 				force: values.force,
 				journal: values.journal,

@@ -52,7 +52,11 @@ import { getRuntime } from "../runtime/index.ts";
 import type { ModuleReference } from "../types/graph.ts";
 import type { UpdatedReference } from "../types/move.ts";
 import type { MutatingCommandOptions, ProjectConfig } from "../types.ts";
-import { setupCommandContext } from "./command-context.ts";
+import {
+	setupCommandContext,
+	warnIfExplicitExtensionsUnsupported,
+} from "./command-context.ts";
+import type { ExtensionPolicy } from "./option-domains.ts";
 
 export interface AliasOptions extends MutatingCommandOptions {
 	target: string;
@@ -60,6 +64,15 @@ export interface AliasOptions extends MutatingCommandOptions {
 	renameSpecifiers?: string[];
 	json?: boolean;
 	verify?: boolean;
+	/**
+	 * File-extension policy for rewritten specifiers (issue #175). Orthogonal to
+	 * `prefer`: that chooses the specifier style, this chooses whether a
+	 * synthesised relative path carries the target's real extension. Omitted or
+	 * `preserve` mirrors each importer's existing convention; `explicit` always
+	 * emits the extension, which `node --experimental-strip-types` requires
+	 * because it cannot resolve an extensionless specifier.
+	 */
+	extensions?: ExtensionPolicy;
 }
 
 export interface AliasResult {
@@ -112,6 +125,7 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 	const {
 		target,
 		prefer,
+		extensions,
 		renameSpecifiers,
 		dryRun = false,
 		force = false,
@@ -186,7 +200,12 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 			async (pkg) => {
 				const pkgProject = loadProject(pkg.tsconfigPath as string);
 				const pkgDir = pkg.srcDir ? path.join(pkg.path, pkg.srcDir) : pkg.path;
-				const pkgResult = normalizeImports(pkgDir, prefer, pkgProject);
+				const pkgResult = normalizeImports(
+					pkgDir,
+					prefer,
+					pkgProject,
+					extensions
+				);
 				const bounded = pkgResult.changes.filter(
 					(c) => filterToWorkspaceBoundary([c.file], wsInfo.root).length > 0
 				);
@@ -260,6 +279,7 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 		process.exit(1);
 	}
 	const { project } = context;
+	warnIfExplicitExtensionsUnsupported(project, extensions);
 	const journalContext = await prepareOperationJournal(
 		project.rootDir,
 		journal && !dryRun
@@ -275,7 +295,7 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 		logger.empty();
 	}
 
-	const result = normalizeImports(absoluteTarget, prefer, project);
+	const result = normalizeImports(absoluteTarget, prefer, project, extensions);
 
 	if (result.changes.length === 0) {
 		if (json) {
@@ -541,7 +561,8 @@ export function parseSpecifierRenames(
 export function normalizeImports(
 	target: string,
 	prefer: "alias" | "relative" | "shortest",
-	project: ProjectConfig
+	project: ProjectConfig,
+	extensions?: ExtensionPolicy
 ): AliasResult {
 	const changes: AliasChange[] = [];
 	const skipped: AliasChange[] = [];
@@ -568,7 +589,8 @@ export function normalizeImports(
 				ref.resolvedPath,
 				prefer,
 				project,
-				ref.specifier
+				ref.specifier,
+				extensions
 			);
 
 			if (newSpecifier && newSpecifier !== ref.specifier) {
@@ -1103,12 +1125,14 @@ function calculatePreferredSpecifier(
 	toFile: string,
 	prefer: "alias" | "relative" | "shortest",
 	project: ProjectConfig,
-	oldSpecifier?: string
+	oldSpecifier?: string,
+	extensions?: ExtensionPolicy
 ): string | null {
 	const relativeSpecifier = calculateRelativeSpecifier(
 		fromFile,
 		toFile,
-		oldSpecifier
+		oldSpecifier,
+		extensions
 	);
 	const aliasSpecifier = findAliasForPath(toFile, project);
 

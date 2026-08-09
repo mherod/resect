@@ -60,6 +60,7 @@ export const OPTION_FLAGS = {
 	"entrypoint-globs": { type: "string", multiple: true },
 	transform: { type: "string" },
 	batch: { type: "string" },
+	extensions: { type: "string" },
 } as const satisfies Record<string, FlagSpec>;
 
 /** A canonical long-form option name accepted by the CLI parser. */

@@ -32,7 +32,10 @@ import {
 	moveBatchWithDependencies,
 	serializeMoveBatchResult,
 } from "../commands/move-batch.ts";
-import type { PreferStrategy } from "../commands/option-domains.ts";
+import type {
+	ExtensionPolicy,
+	PreferStrategy,
+} from "../commands/option-domains.ts";
 import { renameSymbol } from "../commands/rename.ts";
 import { isWorktreeDirty } from "../core/git.ts";
 import {
@@ -67,6 +70,7 @@ export async function moveBatchTool(args: {
 	verbose: boolean;
 	transform?: string;
 	prefer?: PreferStrategy;
+	extensions?: ExtensionPolicy;
 }): Promise<CallToolResult> {
 	const result = await moveBatchWithDependencies(
 		{
@@ -79,6 +83,7 @@ export async function moveBatchTool(args: {
 			verbose: args.verbose,
 			transform: args.transform,
 			prefer: args.prefer,
+			extensions: args.extensions,
 		},
 		{
 			ensureCleanWorktree: async (directory, _force, dryRun) => {
@@ -105,6 +110,7 @@ export async function moveTool(args: {
 	verbose: boolean;
 	transform?: string;
 	prefer?: PreferStrategy;
+	extensions?: ExtensionPolicy;
 }): Promise<CallToolResult> {
 	const absoluteSource = path.resolve(args.source);
 	const absoluteTarget = path.resolve(args.target);
@@ -152,10 +158,12 @@ export async function moveTool(args: {
 			workspace,
 			// MCP gates force at the worktree layer above; moveModule's conflict
 			// force stays at its default (unchanged behaviour). The 8th arg threads
-			// the loaded transform rules (#123), the 9th the specifier style (#173).
+			// the loaded transform rules (#123), the 9th the specifier style (#173),
+			// the 10th the extension policy (#175).
 			false,
 			transformRules,
-			args.prefer
+			args.prefer,
+			args.extensions
 		);
 
 	const shouldVerify = args.verify && !args.dryRun;
@@ -334,6 +342,7 @@ export async function renameTool(args: {
 export async function aliasTool(args: {
 	target: string;
 	prefer?: "alias" | "relative" | "shortest";
+	extensions?: ExtensionPolicy;
 	renameSpecifiers?: string[];
 	project?: string;
 	dryRun: boolean;
@@ -364,7 +373,12 @@ export async function aliasTool(args: {
 	const result: AliasResult =
 		renames.length > 0
 			? renameImportSpecifiers(absoluteTarget, renames, project)
-			: normalizeImports(absoluteTarget, args.prefer ?? "alias", project);
+			: normalizeImports(
+					absoluteTarget,
+					args.prefer ?? "alias",
+					project,
+					args.extensions
+				);
 	result.edits =
 		result.conflicts.length === 0 ? await planAliasEdits(result.changes) : [];
 

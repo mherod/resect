@@ -16,13 +16,16 @@ import {
 import { filterToWorkspaceBoundary } from "../core/workspace.ts";
 import type { TransformRule } from "../types/transform.ts";
 import type { MutatingCommandOptions } from "../types.ts";
-import { setupCommandContext } from "./command-context.ts";
+import {
+	setupCommandContext,
+	warnIfExplicitExtensionsUnsupported,
+} from "./command-context.ts";
 import {
 	moveModule as executeMoveModule,
 	rollbackTransformMove as rollbackFailedMove,
 } from "./move-apply.ts";
 import { runPackageBuilds as rebuildMovedPackages } from "./move-cross-package.ts";
-import type { PreferStrategy } from "./option-domains.ts";
+import type { ExtensionPolicy, PreferStrategy } from "./option-domains.ts";
 
 export interface MoveOptions extends MutatingCommandOptions {
 	source: string;
@@ -44,6 +47,15 @@ export interface MoveOptions extends MutatingCommandOptions {
 	 * specifier is shorter.
 	 */
 	prefer?: PreferStrategy;
+	/**
+	 * File-extension policy for rewritten specifiers (issue #175). Orthogonal to
+	 * `prefer`: that chooses the specifier style, this chooses whether a
+	 * synthesised relative path carries the target's real extension. Omitted or
+	 * `preserve` mirrors each importer's existing convention; `explicit` always
+	 * emits the extension, which `node --experimental-strip-types` requires
+	 * because it cannot resolve an extensionless specifier.
+	 */
+	extensions?: ExtensionPolicy;
 }
 
 export async function moveCommand(options: MoveOptions): Promise<void> {
@@ -57,6 +69,7 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 		verify = true,
 		project: projectArg,
 		prefer,
+		extensions,
 		journal = false,
 	} = options;
 
@@ -78,6 +91,7 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 		process.exit(1);
 	}
 	const { project, workspace } = context;
+	warnIfExplicitExtensionsUnsupported(project, extensions);
 	if (!json && verbose && workspace) {
 		logger.info(
 			`Found workspace: ${workspace.type} with ${workspace.packages.length} packages`
@@ -149,7 +163,8 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 			workspace ?? undefined,
 			force,
 			transformRules,
-			prefer
+			prefer,
+			extensions
 		);
 
 		// For cross-package moves, run build scripts to update dist/. Keep this

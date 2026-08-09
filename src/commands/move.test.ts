@@ -109,7 +109,12 @@ async function makeCommonJsMoveProject(): Promise<{
  * Fixture for issue #173: a project with a tsconfig `paths` alias, one importer
  * that reaches the moved file relatively and one that reaches it via the alias.
  */
-async function makeAliasedMoveProject(): Promise<{
+async function makeAliasedMoveProject(
+	// #175: a project that opts into `.ts` specifiers. Without it, tsc rejects
+	// them with TS5097 and the move's verify gate reports new type errors — the
+	// exact interaction the extension-policy tests need to exercise on both sides.
+	options: { allowImportingTsExtensions?: boolean } = {}
+): Promise<{
 	aliasConsumerPath: string;
 	relativeConsumerPath: string;
 	sourcePath: string;
@@ -129,6 +134,8 @@ async function makeAliasedMoveProject(): Promise<{
 		JSON.stringify(
 			{
 				compilerOptions: {
+					allowImportingTsExtensions:
+						options.allowImportingTsExtensions ?? false,
 					baseUrl: ".",
 					module: "ESNext",
 					moduleResolution: "Bundler",
@@ -646,6 +653,140 @@ describe("move specifier style (#173)", () => {
 
 		expect(result.exitCode).toBe(0);
 		expect(result.stderr).not.toContain("Unknown option");
+		expect(await Bun.file(sourcePath).exists()).toBe(true);
+		expect(await Bun.file(targetPath).exists()).toBe(false);
+	});
+});
+
+describe("move extension policy (#175)", () => {
+	test("--extensions=explicit emits resolvable strip-types specifiers", async () => {
+		// The #175 repro: --prefer=relative alone turns `@/lib/i18n/locale` into
+		// `../lib/i18n/locale`, which `node --experimental-strip-types` cannot
+		// resolve. Pairing it with --extensions=explicit is what makes the output
+		// actually runnable under that loader.
+		const { aliasConsumerPath, sourcePath, targetPath, tsconfigPath } =
+			await makeAliasedMoveProject({ allowImportingTsExtensions: true });
+
+		const result = await runCli([
+			"move",
+			sourcePath,
+			targetPath,
+			"--prefer=relative",
+			"--extensions=explicit",
+			"--force",
+			"-p",
+			tsconfigPath,
+		]);
+
+		if (result.exitCode !== 0) {
+			throw new Error(
+				`move exited ${result.exitCode}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`
+			);
+		}
+		expect(await Bun.file(targetPath).exists()).toBe(true);
+
+		const aliasConsumer = await Bun.file(aliasConsumerPath).text();
+		expect(aliasConsumer).toContain('from "../lib/i18n/locale.ts"');
+		expect(aliasConsumer).not.toContain("@/lib");
+
+		// The moved file's own imports must be resolvable too, or the module
+		// still fails to load under strip-types.
+		expect(await Bun.file(targetPath).text()).toContain('from "../util.ts"');
+	});
+
+	test("--extensions=preserve reproduces the default output exactly", async () => {
+		const withFlag = await makeAliasedMoveProject();
+		const withoutFlag = await makeAliasedMoveProject();
+
+		const flagged = await runCli([
+			"move",
+			withFlag.sourcePath,
+			withFlag.targetPath,
+			"--prefer=relative",
+			"--extensions=preserve",
+			"--force",
+			"-p",
+			withFlag.tsconfigPath,
+		]);
+		const unflagged = await runCli([
+			"move",
+			withoutFlag.sourcePath,
+			withoutFlag.targetPath,
+			"--prefer=relative",
+			"--force",
+			"-p",
+			withoutFlag.tsconfigPath,
+		]);
+
+		expect(flagged.exitCode).toBe(0);
+		expect(unflagged.exitCode).toBe(0);
+		expect(await Bun.file(withFlag.aliasConsumerPath).text()).toBe(
+			await Bun.file(withoutFlag.aliasConsumerPath).text()
+		);
+		expect(await Bun.file(withFlag.targetPath).text()).toBe(
+			await Bun.file(withoutFlag.targetPath).text()
+		);
+	});
+
+	test("warns up front when the project cannot compile .ts specifiers", async () => {
+		// The issue's own objection to folding this into --prefer: emitting `.ts`
+		// breaks projects without allowImportingTsExtensions. The verify gate
+		// already catches it as TS5097 afterwards; the warning makes the cause
+		// legible before any file is written.
+		const { sourcePath, targetPath, tsconfigPath } =
+			await makeAliasedMoveProject();
+
+		const result = await runCli([
+			"move",
+			sourcePath,
+			targetPath,
+			"--prefer=relative",
+			"--extensions=explicit",
+			"--dry-run",
+			"-p",
+			tsconfigPath,
+		]);
+
+		expect(result.stderr).toContain("allowImportingTsExtensions");
+		expect(result.stderr).toContain("TS5097");
+	});
+
+	test("stays silent when the project does allow .ts specifiers", async () => {
+		const { sourcePath, targetPath, tsconfigPath } =
+			await makeAliasedMoveProject({ allowImportingTsExtensions: true });
+
+		const result = await runCli([
+			"move",
+			sourcePath,
+			targetPath,
+			"--prefer=relative",
+			"--extensions=explicit",
+			"--dry-run",
+			"-p",
+			tsconfigPath,
+		]);
+
+		expect(result.stderr).not.toContain("allowImportingTsExtensions");
+	});
+
+	test("rejects an unknown extension policy without touching the tree", async () => {
+		const { sourcePath, targetPath, tsconfigPath } =
+			await makeAliasedMoveProject();
+
+		const result = await runCli([
+			"move",
+			sourcePath,
+			targetPath,
+			"--extensions=bogus",
+			"--force",
+			"-p",
+			tsconfigPath,
+		]);
+
+		expect(result.exitCode).toBe(1);
+		expect(result.stderr).toContain(
+			"--extensions must be 'preserve' or 'explicit'"
+		);
 		expect(await Bun.file(sourcePath).exists()).toBe(true);
 		expect(await Bun.file(targetPath).exists()).toBe(false);
 	});

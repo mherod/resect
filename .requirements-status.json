@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "projectId": "mherod/resect",
   "requirementsFile": "REQUIREMENTS.md",
-  "requirementsSha256": "8c48f42bc79912c251f62e2b6a62d874f2f56788fb4e9056bdac582c23879930",
-  "sourceCommit": "c9359f6373f280ad9007f756a403fd7e0e3d2a5c",
+  "requirementsSha256": "f2f23e09ce4587352425f42a9bdec82f53746eadd48bc90ac41de4b016dc8304",
+  "sourceCommit": "36172578000c8eba61e2e85fba56f5a9ff87409d",
   "generatedAt": "2026-08-09T01:29:47Z",
   "validator": {
     "name": "generate-requirements",
@@ -13,15 +13,15 @@
   "validation": {
     "structure": {
       "status": "PASS",
-      "receiptId": "STRUCT-20260809-012",
+      "receiptId": "STRUCT-20260809-013",
       "validator": "validate-bdd",
       "validatorVersion": "2.0.0",
       "command": "bun /Users/matthewherod/.claude/skills/generate-requirements/scripts/validate-bdd.js /Users/matthewherod/Development/resect/REQUIREMENTS.md --status-log /Users/matthewherod/Development/resect/.requirements-status.json",
-      "requirementsSha256": "8c48f42bc79912c251f62e2b6a62d874f2f56788fb4e9056bdac582c23879930",
-      "sourceCommit": "c9359f6373f280ad9007f756a403fd7e0e3d2a5c",
+      "requirementsSha256": "f2f23e09ce4587352425f42a9bdec82f53746eadd48bc90ac41de4b016dc8304",
+      "sourceCommit": "36172578000c8eba61e2e85fba56f5a9ff87409d",
       "generatedAt": "2026-08-09T01:29:47Z",
       "counts": {
-        "checked": 63,
+        "checked": 68,
         "errors": 0,
         "warnings": 0
       },
@@ -31,15 +31,15 @@
     },
     "documentQuality": {
       "status": "PASS",
-      "receiptId": "QUALITY-20260809-012",
+      "receiptId": "QUALITY-20260809-013",
       "validator": "generate-requirements-manual-review",
       "validatorVersion": "2.0.0",
       "command": "bun /Users/matthewherod/.claude/skills/generate-requirements/scripts/validate-bdd.js /Users/matthewherod/Development/resect/REQUIREMENTS.md --status-log /Users/matthewherod/Development/resect/.requirements-status.json",
-      "requirementsSha256": "8c48f42bc79912c251f62e2b6a62d874f2f56788fb4e9056bdac582c23879930",
-      "sourceCommit": "c9359f6373f280ad9007f756a403fd7e0e3d2a5c",
+      "requirementsSha256": "f2f23e09ce4587352425f42a9bdec82f53746eadd48bc90ac41de4b016dc8304",
+      "sourceCommit": "36172578000c8eba61e2e85fba56f5a9ff87409d",
       "generatedAt": "2026-08-09T01:29:47Z",
       "counts": {
-        "checked": 63,
+        "checked": 68,
         "errors": 0,
         "warnings": 0
       },
@@ -51,20 +51,21 @@
         "Framework-dispatched entrypoint safety is explicit across built-in valid App Router locations, ordinary same-stem controls, caller-configured globs, human-readable advice, and structured CLI, MCP, and library results.",
         "Package public API safety distinguishes confirmed root and subpath entrypoint reachability from private sibling exports, and separates unresolved entrypoint traces into an explicit unknown-usage outcome without destructive advice.",
         "CLI stream lifecycle behavior separates the expected closed-stdout alternative exit from unexpected stdout and stderr failures, while remaining outside MCP and library surfaces.",
-        "The 33 source-backed V1/P1 scenarios now represent 60.0% of the V1 slice, below the priority-skew warning threshold, while the four launch-critical scenarios remain P0."
+        "The 33 source-backed V1/P1 scenarios now represent 60.0% of the V1 slice, below the priority-skew warning threshold, while the four launch-critical scenarios remain P0.",
+        "Reviewed the five EXTN scenarios for issue #175: extension policy is stated as a product outcome independent of specifier style, each scenario carries one trigger, and the alias-unaffected clause records the composition decision rather than leaving it implicit."
       ]
     },
     "implementation": {
       "status": "PASS",
-      "receiptId": "IMPL-20260809-012",
+      "receiptId": "IMPL-20260809-013",
       "validator": "bun-test-plus-clause-audit",
       "validatorVersion": "1.3.14+generate-requirements-2.0.0",
       "command": "bun /Users/matthewherod/.claude/skills/generate-requirements/scripts/validate-bdd.js /Users/matthewherod/Development/resect/REQUIREMENTS.md --status-log /Users/matthewherod/Development/resect/.requirements-status.json",
-      "requirementsSha256": "8c48f42bc79912c251f62e2b6a62d874f2f56788fb4e9056bdac582c23879930",
-      "sourceCommit": "c9359f6373f280ad9007f756a403fd7e0e3d2a5c",
+      "requirementsSha256": "f2f23e09ce4587352425f42a9bdec82f53746eadd48bc90ac41de4b016dc8304",
+      "sourceCommit": "36172578000c8eba61e2e85fba56f5a9ff87409d",
       "generatedAt": "2026-08-09T01:29:47Z",
       "counts": {
-        "checked": 63,
+        "checked": 68,
         "errors": 0,
         "warnings": 0
       },
@@ -92,33 +93,34 @@
         "ANLY-005 and ANLY-006 map to src/core/package-entrypoints.ts, src/commands/analyze.ts, src/commands/analyze.test.ts, src/commands/unused.ts, src/commands/unused.test.ts, src/mcp-entrypoints.test.ts, src/mcp-server.ts, src/types/analysis.ts, and src/index.ts at source commit d55022a.",
         "BARL-001 and BARL-002 map to src/core/framework-conventions.ts, src/commands/barrel.ts, src/commands/barrel.test.ts, src/mcp-server.ts, and src/index.test.ts at source commit dc4c1d4.",
         "CLI-001 and CLI-002 map to src/cli-stream-errors.ts, src/cli-stream-errors.test.ts, src/cli.ts, and src/cli.test.ts at source commit bd18769.",
-        "CLI-003 through CLI-005 map to src/core/concurrency.ts, src/core/graph.ts, src/cli-logger.ts, src/commands/audit.ts, src/commands/unused.ts, src/commands/tidy.ts, their focused tests, and the public option types at source commit cbf6587."
+        "CLI-003 through CLI-005 map to src/core/concurrency.ts, src/core/graph.ts, src/cli-logger.ts, src/commands/audit.ts, src/commands/unused.ts, src/commands/tidy.ts, their focused tests, and the public option types at source commit cbf6587.",
+        "EXTN-001..005 verified against src/core/resolver.ts calculateRelativeSpecifier/calculateNewSpecifier, src/commands/command-context.ts warnIfExplicitExtensionsUnsupported, and src/commands/registry.ts domain validation; covered by src/core/resolver.test.ts and src/commands/move.test.ts."
       ]
     }
   },
   "metrics": {
-    "totalScenarios": 63,
+    "totalScenarios": 68,
     "byDelivery": {
-      "V1": 63,
+      "V1": 68,
       "V2": 0,
       "LATER": 0,
       "UNSLICED": 0
     },
     "byDecision": {
-      "DECIDED": 63,
+      "DECIDED": 68,
       "OPEN": 0
     },
     "byPriority": {
       "P0": 4,
       "P1": 33,
-      "P2": 26,
+      "P2": 31,
       "P3": 0
     },
     "priorityByDelivery": {
       "V1": {
         "P0": 4,
         "P1": 33,
-        "P2": 26,
+        "P2": 31,
         "P3": 0
       },
       "V2": {
@@ -141,15 +143,15 @@
       }
     },
     "byFidelity": {
-      "VERIFIED": 63,
+      "VERIFIED": 68,
       "DRIFTED": 0,
       "MISSING": 0,
       "UNTESTABLE": 0
     },
     "coverage": {
       "v1Decided": {
-        "eligible": 63,
-        "verified": 63,
+        "eligible": 68,
+        "verified": 68,
         "percentage": 100
       },
       "v1LaunchCritical": {
@@ -191,8 +193,8 @@
     "fidelityNoteMismatchIds": [],
     "orphanAnchorIds": [],
     "preamble": {
-      "linesBeforeFirstScenario": 116,
-      "percentageBeforeFirstScenario": 16.7,
+      "linesBeforeFirstScenario": 117,
+      "percentageBeforeFirstScenario": 15.9,
       "warning": false,
       "disposition": null
     },

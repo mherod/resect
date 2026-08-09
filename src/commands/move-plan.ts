@@ -16,7 +16,7 @@ import { applyTextChanges } from "../core/text-changes.ts";
 import { findSpecifierLocation } from "../core/updater.ts";
 import type { UpdatedReference } from "../types/move.ts";
 import type { ProjectConfig } from "../types.ts";
-import type { PreferStrategy } from "./option-domains.ts";
+import type { ExtensionPolicy, PreferStrategy } from "./option-domains.ts";
 
 export function updateInternalImports(
 	sourceFile: ts.SourceFile,
@@ -26,7 +26,8 @@ export function updateInternalImports(
 	project: ProjectConfig,
 	program: ts.Program,
 	preferRelative = false,
-	prefer?: PreferStrategy
+	prefer?: PreferStrategy,
+	extensions?: ExtensionPolicy
 ): { newContent: string; updates: UpdatedReference[] } {
 	const changes: { start: number; end: number; newText: string }[] = [];
 	const updates: UpdatedReference[] = [];
@@ -38,14 +39,20 @@ export function updateInternalImports(
 		// `prefer` is the user's explicit `--prefer` strategy (#173), which must
 		// override that default for the moved file's own imports too (#148).
 		let newSpecifier = useTransformRelativeDefault
-			? calculateRelativeSpecifier(newPath, ref.resolvedPath, ref.specifier)
+			? calculateRelativeSpecifier(
+					newPath,
+					ref.resolvedPath,
+					ref.specifier,
+					extensions
+				)
 			: calculateNewSpecifier(
 					ref.specifier,
 					newPath, // Calculate from new location
 					ref.resolvedPath,
 					ref.resolvedPath, // Target hasn't moved
 					project,
-					prefer
+					prefer,
+					extensions
 				);
 
 		// #121: an alias/bare import that the move turned into a relative
@@ -67,7 +74,8 @@ export function updateInternalImports(
 				newSpecifier = calculateRelativeSpecifier(
 					newPath,
 					sibling,
-					ref.specifier
+					ref.specifier,
+					extensions
 				);
 			}
 		}

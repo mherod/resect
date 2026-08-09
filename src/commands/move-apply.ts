@@ -62,7 +62,7 @@ import {
 	planCrossPackageDependencies,
 } from "./move-cross-package.ts";
 import { updateInternalImports } from "./move-plan.ts";
-import type { PreferStrategy } from "./option-domains.ts";
+import type { ExtensionPolicy, PreferStrategy } from "./option-domains.ts";
 
 class MoveWriteFailure extends Error {
 	constructor(cause: unknown) {
@@ -108,6 +108,7 @@ export async function moveModule(
 	force = false,
 	transformRules: TransformRule[] = [],
 	prefer?: PreferStrategy,
+	extensions?: ExtensionPolicy,
 	context?: MoveModuleContext
 ): Promise<MoveResult> {
 	const errors: MoveError[] = [];
@@ -394,7 +395,8 @@ export async function moveModule(
 				project,
 				program,
 				shouldNormalizeMovedImports,
-				prefer
+				prefer,
+				extensions
 			);
 
 			if (updates.length > 0) {
@@ -449,7 +451,8 @@ export async function moveModule(
 				project,
 				workspace,
 				movedFileExports,
-				prefer
+				prefer,
+				extensions
 			);
 
 			if (updates.length > 0) {
@@ -495,7 +498,8 @@ export async function moveModule(
 				targetPath,
 				project,
 				workspace,
-				prefer
+				prefer,
+				extensions
 			);
 
 			if (updates.length > 0) {

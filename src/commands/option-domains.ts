@@ -16,6 +16,19 @@
 export const PREFER_STRATEGIES = ["alias", "relative", "shortest"] as const;
 export type PreferStrategy = (typeof PREFER_STRATEGIES)[number];
 
+/**
+ * `move --extensions` and `alias --extensions` file-extension policy (#175).
+ *
+ * Orthogonal to `PREFER_STRATEGIES`: `prefer` chooses the specifier *style*
+ * (alias vs relative), this chooses whether a synthesised relative path carries
+ * the target's real extension. `explicit` exists for consumers whose loader
+ * resolves fully-specified ESM paths — notably
+ * `node --experimental-strip-types`, which cannot resolve `../lib/locale` and
+ * needs `../lib/locale.ts`.
+ */
+export const EXTENSION_POLICIES = ["preserve", "explicit"] as const;
+export type ExtensionPolicy = (typeof EXTENSION_POLICIES)[number];
+
 /** `find --type` result filter. */
 export const FIND_TYPES = ["file", "export", "all"] as const;
 export type FindType = (typeof FIND_TYPES)[number];

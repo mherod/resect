@@ -1,6 +1,9 @@
 import path from "node:path";
 import ts from "typescript";
-import type { PreferStrategy } from "../commands/option-domains.ts";
+import type {
+	ExtensionPolicy,
+	PreferStrategy,
+} from "../commands/option-domains.ts";
 import type { ProjectConfig } from "../types.ts";
 import {
 	removeExtension,
@@ -139,10 +142,16 @@ export function calculateNewSpecifier(
 	oldTargetPath: string,
 	newTargetPath: string,
 	project: ProjectConfig,
-	prefer?: PreferStrategy
+	prefer?: PreferStrategy,
+	extensions: ExtensionPolicy = "preserve"
 ): string {
 	if (prefer === "relative") {
-		return calculateRelativeSpecifier(fromFile, newTargetPath, oldSpecifier);
+		return calculateRelativeSpecifier(
+			fromFile,
+			newTargetPath,
+			oldSpecifier,
+			extensions
+		);
 	}
 
 	const aliasMatch = matchPathAlias(oldSpecifier, project);
@@ -169,7 +178,12 @@ export function calculateNewSpecifier(
 		if (alias) {
 			return alias;
 		}
-		return calculateRelativeSpecifier(fromFile, newTargetPath, oldSpecifier);
+		return calculateRelativeSpecifier(
+			fromFile,
+			newTargetPath,
+			oldSpecifier,
+			extensions
+		);
 	}
 
 	if (prefer === "shortest") {
@@ -190,7 +204,8 @@ export function calculateNewSpecifier(
 		const relativeSpecifier = calculateRelativeSpecifier(
 			fromFile,
 			newTargetPath,
-			oldSpecifier
+			oldSpecifier,
+			extensions
 		);
 		if (
 			aliasedSpecifier &&
@@ -225,7 +240,12 @@ export function calculateNewSpecifier(
 
 	// For relative imports: preserve relative import style
 	if (isRelativeImport(oldSpecifier)) {
-		return calculateRelativeSpecifier(fromFile, newTargetPath, oldSpecifier);
+		return calculateRelativeSpecifier(
+			fromFile,
+			newTargetPath,
+			oldSpecifier,
+			extensions
+		);
 	}
 
 	// For bare specifiers (packages), return unchanged
@@ -422,7 +442,8 @@ function updateAliasedSpecifier(
 export function calculateRelativeSpecifier(
 	fromFile: string,
 	toFile: string,
-	oldSpecifier?: string
+	oldSpecifier?: string,
+	extensions: ExtensionPolicy = "preserve"
 ): string {
 	const absFromFile = path.isAbsolute(fromFile)
 		? fromFile
@@ -438,18 +459,24 @@ export function calculateRelativeSpecifier(
 		.split(path.sep)
 		.join("/");
 
-	// Preserve the original specifier's extension style:
-	// if the old specifier had a .ts/.tsx/etc extension, keep it;
-	// otherwise strip extensions as before.
-	const oldHasExtension = oldSpecifier
-		? TS_JS_VUE_EXTENSIONS.test(oldSpecifier)
-		: false;
+	// Extension policy (#175). `preserve` (the default) mirrors the original
+	// specifier's style: if the old specifier carried a .ts/.tsx/etc extension,
+	// keep it; otherwise strip. `explicit` keeps the target file's real
+	// extension regardless of what the old specifier looked like, for consumers
+	// whose loader needs fully-specified ESM paths — `node
+	// --experimental-strip-types` cannot resolve an extensionless `../lib/locale`.
+	const keepExtension =
+		extensions === "explicit" ||
+		(oldSpecifier ? TS_JS_VUE_EXTENSIONS.test(oldSpecifier) : false);
 
-	if (!oldHasExtension) {
+	if (!keepExtension) {
 		relativePath = removeExtension(relativePath);
 	}
 
-	// Handle index files
+	// Handle index files. A specifier that still carries its extension never
+	// matches here, so `./dir/index.ts` is left intact under both an
+	// extension-preserving source specifier and `explicit` — collapsing it to
+	// `./dir` would drop the extension the policy exists to emit.
 	if (relativePath.endsWith("/index") || relativePath === "index") {
 		relativePath = relativePath.replace(/\/?index$/, "") || ".";
 	}

@@ -62,6 +62,7 @@ const EXPECTED_FLAGS = [
 	"entrypoint-globs",
 	"transform",
 	"batch",
+	"extensions",
 ] as const;
 
 describe("option-flags", () => {

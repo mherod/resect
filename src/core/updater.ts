@@ -1,7 +1,10 @@
 import path from "node:path";
 import ts from "typescript";
 import { logger } from "../cli-logger.ts";
-import type { PreferStrategy } from "../commands/option-domains.ts";
+import type {
+	ExtensionPolicy,
+	PreferStrategy,
+} from "../commands/option-domains.ts";
 import type { ExportInfo } from "../types/analysis.ts";
 import type { ImportBinding, ModuleReference } from "../types/graph.ts";
 import type { UpdatedReference } from "../types/move.ts";
@@ -54,7 +57,8 @@ export function updateFileReferences(
 	project: ProjectConfig,
 	workspace?: WorkspaceInfo,
 	movedFileExports?: ExportInfo[],
-	prefer?: PreferStrategy
+	prefer?: PreferStrategy,
+	extensions?: ExtensionPolicy
 ): { newContent: string; updates: UpdatedReference[] } {
 	const changes: TextChange[] = [];
 	const updates: UpdatedReference[] = [];
@@ -211,7 +215,8 @@ export function updateFileReferences(
 					oldPath,
 					newPath,
 					project,
-					prefer
+					prefer,
+					extensions
 				);
 		} else {
 			newSpecifier = calculateNewSpecifier(
@@ -220,7 +225,8 @@ export function updateFileReferences(
 				oldPath,
 				newPath,
 				project,
-				prefer
+				prefer,
+				extensions
 			);
 		}
 
@@ -542,7 +548,8 @@ export function updateBarrelExports(
 	newPath: string,
 	project: ProjectConfig,
 	workspace?: WorkspaceInfo,
-	prefer?: PreferStrategy
+	prefer?: PreferStrategy,
+	extensions?: ExtensionPolicy
 ): { newContent: string; updates: UpdatedReference[] } {
 	const changes: TextChange[] = [];
 	const removals: { start: number; end: number }[] = [];
@@ -614,7 +621,8 @@ export function updateBarrelExports(
 				oldPath,
 				newPath,
 				project,
-				prefer
+				prefer,
+				extensions
 			);
 
 			if (newSpecifier !== specifier) {

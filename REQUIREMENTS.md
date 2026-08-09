@@ -38,6 +38,7 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 | SRC-021 | Repository owner issue | 2026-08-08 | https://github.com/mherod/resect/issues/188 | Existing stylesheet asset imports treated as resolvable assets rather than unresolvable modules |
 | SRC-022 | Repository owner issue | 2026-08-08 | https://github.com/mherod/resect/issues/193 | Transitive dead-export chains surfaced from module reachability in unused analysis |
 | SRC-023 | Repository owner issue | 2026-08-09 | https://github.com/mherod/resect/issues/141 | Machine-readable output for the find, analyze, analyze-impact, and discover commands |
+| SRC-024 | Repository owner issue | 2026-08-09 | https://github.com/mherod/resect/issues/175 | Optional explicit file extensions in rewritten specifiers for move and alias |
 
 ## Delivery and Decision Register
 
@@ -334,6 +335,49 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 **Given** a Transform Config Consumer selects an existing JavaScript transform config
 **When** resect loads the config for a transform move
 **Then** standard error identifies the resolved config path before the config is executed
+
+## Feature: Rewritten Specifier Extension Policy
+
+### EXTN-001 — Operator — Preserve each importer's extension convention by default
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P2 | **Fidelity:** VERIFIED | **Sources:** SRC-024
+
+**Given** an Operator moves or re-aliases a module without selecting an extension policy
+**When** resect rewrites an affected import specifier
+**Then** the rewritten specifier keeps the extension convention of the specifier it replaced
+
+### EXTN-002 — Operator — Emit the target's real extension on request
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P2 | **Fidelity:** VERIFIED | **Sources:** SRC-024
+
+**Given** an Operator moves or re-aliases a module with the explicit extension policy selected
+**When** resect rewrites an affected import specifier to a relative path
+**Then** the rewritten specifier carries the target file's real extension
+
+### EXTN-003 — Operator — Keep extension policy independent of specifier style
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P2 | **Fidelity:** VERIFIED | **Sources:** SRC-024
+
+**Given** an Operator selects both an import-specifier style and an extension policy
+**When** resect rewrites an affected import specifier
+**Then** the specifier style follows the selected preference and the extension follows the selected policy
+**And** a specifier emitted as a configured alias is unchanged by the extension policy
+
+### EXTN-004 — Operator — Warn when explicit extensions cannot compile
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P2 | **Fidelity:** VERIFIED | **Sources:** SRC-024
+
+**Given** an Operator selects the explicit extension policy for a project that does not permit TypeScript-extension imports
+**When** resect prepares the rewrite
+**Then** standard error reports the unsupported configuration before any file is written
+
+### EXTN-005 — Operator — Reject an unknown extension policy
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P2 | **Fidelity:** VERIFIED | **Sources:** SRC-024
+
+**Given** an Operator supplies an extension policy outside the accepted set
+**When** resect validates the requested command options
+**Then** the command fails without moving files or rewriting specifiers
 
 ## Feature: Shared-Context Batch Move
 
@@ -686,8 +730,8 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 
 | Layer | Status | Receipt | Current artifact |
 |---|---|---|---|
-| Structure | PASS | STRUCT-20260809-012 | [.requirements-status.json](.requirements-status.json) `validation.structure` |
-| Document quality | PASS | QUALITY-20260809-012 | [.requirements-status.json](.requirements-status.json) `validation.documentQuality` |
-| Implementation | PASS | IMPL-20260809-012 | [.requirements-status.json](.requirements-status.json) `validation.implementation` |
+| Structure | PASS | STRUCT-20260809-013 | [.requirements-status.json](.requirements-status.json) `validation.structure` |
+| Document quality | PASS | QUALITY-20260809-013 | [.requirements-status.json](.requirements-status.json) `validation.documentQuality` |
+| Implementation | PASS | IMPL-20260809-013 | [.requirements-status.json](.requirements-status.json) `validation.implementation` |
 
 The canonical validator, manual product-contract review, and focused implementation audit are independent. Counts, hashes, source commit, commands, timestamps, warning dispositions, and evidence summaries live only in the derived status artifact.
