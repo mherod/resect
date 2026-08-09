@@ -20,6 +20,7 @@ import {
 	type NonSourceFile,
 	nonSourceWarning,
 } from "../core/non-source-files.ts";
+import { isWithinPath } from "../core/path-utils.ts";
 import { normalizePath } from "../core/resolver.ts";
 import { scanExports } from "../core/scanner.ts";
 import type { ReadOnlyCommandOptions } from "../types/commands.ts";
@@ -110,16 +111,6 @@ interface AuditProjectBoundary {
 	sourceRoot: string;
 }
 
-const isWithinDirectory = (directory: string, file: string): boolean => {
-	const relative = path.relative(directory, file);
-	return (
-		relative === "" ||
-		(relative !== ".." &&
-			!relative.startsWith(`..${path.sep}`) &&
-			!path.isAbsolute(relative))
-	);
-};
-
 const moduleStem = (file: string): string =>
 	removeExtension(file.endsWith(".map") ? file.slice(0, -4) : file);
 
@@ -137,7 +128,7 @@ const projectBoundary = (project: ProjectConfig): AuditProjectBoundary => {
 	const sourceFiles = new Set(project.files.map(normalizePath));
 	const sourceFilesByStem = new Map<string, string[]>();
 	for (const file of sourceFiles) {
-		if (outDir && isWithinDirectory(outDir, file)) {
+		if (outDir && isWithinPath(outDir, file)) {
 			continue;
 		}
 		const stem = moduleStem(normalizePath(path.relative(sourceRoot, file)));
@@ -173,15 +164,14 @@ const generatedFileMetadata = (
 	const authoredOwner = boundaries.find(
 		(boundary) =>
 			boundary.sourceFiles.has(file) &&
-			!(boundary.outDir && isWithinDirectory(boundary.outDir, file))
+			!(boundary.outDir && isWithinPath(boundary.outDir, file))
 	);
 	if (authoredOwner) {
 		return undefined;
 	}
 	const boundary = boundaries
 		.filter(
-			(candidate) =>
-				candidate.outDir && isWithinDirectory(candidate.outDir, file)
+			(candidate) => candidate.outDir && isWithinPath(candidate.outDir, file)
 		)
 		.sort((a, b) => (b.outDir?.length ?? 0) - (a.outDir?.length ?? 0))
 		.at(0);

@@ -4,6 +4,7 @@ import type { ExportInfo } from "../types/analysis.ts";
 import type { ImportBinding, ReferenceType } from "../types/graph.ts";
 import type { DependencyGraph } from "./graph.ts";
 import { readPackageJson } from "./package-json.ts";
+import { isWithinPath } from "./path-utils.ts";
 import { normalizePath } from "./resolver.ts";
 import { discoverWorkspace } from "./workspace.ts";
 
@@ -126,7 +127,7 @@ export function isPackageEntrypointTraceIncomplete(
 ): boolean {
 	const normalizedFile = normalizePath(filePath);
 	const hasUnresolvedTarget = discovery.unresolved.some(({ packageRoot }) =>
-		isWithinDirectory(normalizedFile, packageRoot)
+		isWithinPath(packageRoot, normalizedFile)
 	);
 	if (hasUnresolvedTarget) {
 		return true;
@@ -135,7 +136,7 @@ export function isPackageEntrypointTraceIncomplete(
 	const skippedFiles = new Set(graph.skippedFiles.map(normalizePath));
 	return [...discovery.files].some(
 		(entrypointFile) =>
-			isWithinDirectory(normalizedFile, path.dirname(entrypointFile)) &&
+			isWithinPath(path.dirname(entrypointFile), normalizedFile) &&
 			skippedFiles.has(normalizePath(entrypointFile))
 	);
 }
@@ -338,14 +339,4 @@ function dedupeUnresolvedEntrypoints(
 		seen.add(key);
 		return true;
 	});
-}
-
-function isWithinDirectory(filePath: string, directory: string): boolean {
-	const relative = path.relative(
-		path.resolve(directory),
-		path.resolve(filePath)
-	);
-	return (
-		relative === "" || !(relative.startsWith("..") || path.isAbsolute(relative))
-	);
 }

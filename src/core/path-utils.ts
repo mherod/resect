@@ -5,10 +5,27 @@ interface TsconfigPathResult {
 	tsconfigPath: string;
 }
 
+/**
+ * Whether `filePath` is `baseDir` itself or sits underneath it.
+ *
+ * The single path-containment predicate for the codebase (#204). `path.relative`
+ * resolves both arguments against the cwd, so mixed relative/absolute inputs are
+ * handled without explicit resolution here.
+ *
+ * The escape check is separator-aware on purpose: a bare `startsWith("..")`
+ * rejects a genuine descendant whose first segment merely begins with two dots
+ * (`<base>/..cache/x.ts` relativises to `..cache/x.ts`). Only `..` exactly, or
+ * `..` followed by a separator, means the path climbed out.
+ */
 export function isWithinPath(baseDir: string, filePath: string): boolean {
 	const relative = path.relative(baseDir, filePath);
-	return (
-		relative === "" || !(relative.startsWith("..") || path.isAbsolute(relative))
+	if (relative === "") {
+		return true;
+	}
+	return !(
+		relative === ".." ||
+		relative.startsWith(`..${path.sep}`) ||
+		path.isAbsolute(relative)
 	);
 }
 
