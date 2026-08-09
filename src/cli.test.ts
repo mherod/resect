@@ -39,6 +39,22 @@ async function runWithClosedStdout(args: string[], pipeline: string) {
 	};
 }
 
+/** Run the CLI with stdout and stderr captured separately. */
+async function runCli(
+	args: string[]
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+	const proc = Bun.spawn([...CLI, ...args], {
+		stdout: "pipe",
+		stderr: "pipe",
+	});
+	const [stdout, stderr, exitCode] = await Promise.all([
+		new Response(proc.stdout).text(),
+		new Response(proc.stderr).text(),
+		proc.exited,
+	]);
+	return { stdout, stderr, exitCode };
+}
+
 describe("cli", () => {
 	test("--version returns version", async () => {
 		const proc = Bun.spawn(["bun", "src/cli.ts", "--version"]);
@@ -198,21 +214,6 @@ describe("--json on find, analyze, analyze-impact and discover", () => {
 		return dir;
 	}
 
-	async function runCli(
-		args: string[]
-	): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-		const proc = Bun.spawn([...CLI, ...args], {
-			stdout: "pipe",
-			stderr: "pipe",
-		});
-		const [stdout, stderr, exitCode] = await Promise.all([
-			new Response(proc.stdout).text(),
-			new Response(proc.stderr).text(),
-			proc.exited,
-		]);
-		return { stdout, stderr, exitCode };
-	}
-
 	test("each command emits exactly one parseable JSON document on stdout", async () => {
 		const dir = await makeJsonFixture();
 		try {
@@ -297,5 +298,123 @@ describe("--json on find, analyze, analyze-impact and discover", () => {
 		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}
+	});
+});
+
+// ─── JSON stdout stays parseable while diagnostics are emitted (#149) ──────
+
+describe("--json stdout purity while diagnostics are emitted", () => {
+	// The marker the resolver prints to stderr for an import it cannot resolve.
+	const DIAGNOSTIC_MARKER = "Cannot resolve";
+
+	/**
+	 * A project that forces the resolver to emit diagnostics: one module imports
+	 * both a missing relative path and a missing bare specifier. The clean
+	 * `makeJsonFixture` above cannot cover #149 — its whole point is that the
+	 * report survives *alongside* warnings.
+	 */
+	async function makeDiagnosticJsonFixture(): Promise<string> {
+		const dir = await mkdtemp(path.join(tmpdir(), "resect-cli-json-warn-"));
+		await Bun.write(
+			path.join(dir, "tsconfig.json"),
+			JSON.stringify({
+				compilerOptions: {
+					strict: true,
+					moduleResolution: "bundler",
+					module: "esnext",
+					target: "esnext",
+				},
+				include: ["src/**/*.ts"],
+			})
+		);
+		await Bun.write(
+			path.join(dir, "src/broken.ts"),
+			'import { missing } from "./does-not-exist.ts";\n' +
+				'import { alsoMissing } from "@nope/absent";\n\n' +
+				"export const value = 1;\n\n" +
+				"export function useBoth() {\n  return missing ?? alsoMissing;\n}\n"
+		);
+		await Bun.write(
+			path.join(dir, "src/index.ts"),
+			'export { value } from "./broken.ts";\n'
+		);
+		return dir;
+	}
+
+	// Commands whose analysis walks the import graph, so unresolved specifiers
+	// surface as diagnostics during the same run that produces the report.
+	const DIAGNOSTIC_COMMANDS = ["audit", "unused", "barrel", "naming"];
+
+	test("stdout stays one parseable JSON document while the resolver warns", async () => {
+		const dir = await makeDiagnosticJsonFixture();
+		try {
+			for (const command of DIAGNOSTIC_COMMANDS) {
+				const { stdout, stderr, exitCode } = await runCli([
+					command,
+					dir,
+					"--json",
+				]);
+
+				expect(exitCode).toBe(0);
+				// The fixture must actually provoke a diagnostic, or this test would
+				// silently degrade into a duplicate of the clean-fixture case above.
+				expect(stderr).toContain(DIAGNOSTIC_MARKER);
+
+				const parsed = JSON.parse(stdout) as unknown;
+				expect(typeof parsed).toBe("object");
+				expect(parsed).not.toBeNull();
+			}
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("diagnostics go to stderr and never leak into the JSON stdout", async () => {
+		const dir = await makeDiagnosticJsonFixture();
+		try {
+			for (const command of DIAGNOSTIC_COMMANDS) {
+				const { stdout, stderr } = await runCli([command, dir, "--json"]);
+
+				expect(stderr).toContain(DIAGNOSTIC_MARKER);
+				expect(stdout).not.toContain(DIAGNOSTIC_MARKER);
+			}
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("an unsupported option is rejected non-zero before the command runs", async () => {
+		// `audit` advertises json but not batch. The same command-boundary check
+		// is what would reject --json for a command without a serializer (#149),
+		// so this exercises the live rejection path that guard depends on.
+		const dir = await makeDiagnosticJsonFixture();
+		try {
+			const { stdout, stderr, exitCode } = await runCli([
+				"audit",
+				dir,
+				"--batch",
+				"moves.json",
+			]);
+
+			expect(exitCode).toBe(1);
+			expect(stdout).toBe("");
+			expect(stderr).toContain("--batch is not supported by 'audit'");
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("a usage error keeps stdout empty rather than emitting partial JSON", async () => {
+		// `find` requires -p; the failure must not leave half a document behind
+		// for a downstream `jq` to choke on.
+		const { stdout, stderr, exitCode } = await runCli([
+			"find",
+			"loadRecords",
+			"--json",
+		]);
+
+		expect(exitCode).toBe(1);
+		expect(stdout).toBe("");
+		expect(stderr).toContain("requires -p <project> option");
 	});
 });

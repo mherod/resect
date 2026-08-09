@@ -379,4 +379,22 @@ describe("command option validation (#191)", () => {
 			findUnsupportedOptions({ force: true, out: "report.json" }, ["verbose"])
 		).toEqual(["force", "out"]);
 	});
+
+	// #149: `json` is declared globally in OPTION_FLAGS, so parseArgs accepts it
+	// before the command is known. The capability check at the command boundary
+	// is what stops a command without a serializer from printing a human report
+	// under --json. Every command currently advertises `json`, so this guard is
+	// dormant — assert it directly, or a future command that omits `json` would
+	// silently reintroduce the defect.
+	test("flags --json for a command that does not advertise it", () => {
+		expect(
+			findUnsupportedOptions({ json: true }, ["project", "verbose"])
+		).toEqual(["json"]);
+	});
+
+	test("accepts --json for a command that advertises it", () => {
+		expect(findUnsupportedOptions({ json: true }, ["project", "json"])).toEqual(
+			[]
+		);
+	});
 });
