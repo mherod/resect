@@ -86,6 +86,8 @@ interface Majority {
 	casing: FilenameCasing;
 	count: number;
 	percent: number;
+	/** Size of the discriminating sample `percent` was computed over (#203). */
+	sampleSize: number;
 }
 
 function stripSourceExtension(filePath: string): {
@@ -104,6 +106,24 @@ function stripSourceExtension(filePath: string): {
 		stem: basename.slice(0, -extension.length),
 		extension,
 	};
+}
+
+/**
+ * A stem with no word boundary — `graph`, `deps`, `tidy` — is simultaneously
+ * valid kebab-case, camelCase and snake_case. It expresses no convention, so it
+ * is evidence for none.
+ *
+ * `CAMEL_CASE_PATTERN` matches such a stem, which used to make every one count
+ * as camelCase (#203). In `src/types/` that manufactured an "88% camelCase"
+ * majority out of 14 single-word files and indicted the directory's only two
+ * multi-word files — both kebab-case, matching the 58 kebab / 0 camelCase
+ * convention of `src/` as a whole.
+ */
+const NON_DISCRIMINATING_STEM_PATTERN = /^[a-z0-9]+$/;
+
+/** Whether a file's stem can distinguish one casing convention from another. */
+function discriminatesCasing(file: FileNamingInfo): boolean {
+	return !NON_DISCRIMINATING_STEM_PATTERN.test(file.stem);
 }
 
 function detectFilenameCasing(name: string): DetectedFilenameCasing {
@@ -471,11 +491,27 @@ function findMajority(files: FileNamingInfo[]): Majority | null {
 		casing: top.casing,
 		count: top.count,
 		percent: top.count / files.length,
+		sampleSize: files.length,
 	};
 }
 
 function isNextAppRouterConvention(file: FileNamingInfo): boolean {
 	return isFrameworkConventionFile(file.file, file.stem);
+}
+
+/**
+ * A leading underscore is a deliberate marker, not a casing choice — the
+ * `__test-helpers` / `__fixtures__` / `__tests__` convention marks test-support
+ * files that tooling matches by prefix. This repository's own
+ * `package.json#files` excludes them by exactly that prefix, so renaming one to
+ * satisfy a casing majority would break the pattern that keeps it unpublished.
+ *
+ * Surfaced while fixing #203: narrowing the convention sample to discriminating
+ * stems promoted `__test-helpers.ts` into a 96%-kebab majority and advised
+ * renaming it to `test-helpers.ts`.
+ */
+function isDeliberatelyPrefixed(file: FileNamingInfo): boolean {
+	return file.stem.startsWith("_");
 }
 
 function round2(value: number): number {
@@ -501,7 +537,12 @@ function toViolation(
 		siblingMajorityCount: majority.count,
 		siblingCount: 0,
 		confidence,
-		reason: `${Math.round(majority.percent * 100)}% of sibling files use ${
+		// The denominator is load bearing: "100% of 2" is far weaker evidence
+		// than "100% of 30", and stating only a percentage hid that the sample
+		// could be composed of names expressing no convention at all (#203).
+		reason: `${Math.round(majority.percent * 100)}% of ${
+			majority.sampleSize
+		} sibling files with a distinguishable convention use ${
 			majority.casing
 		}; ${file.currentCasing} is not justified by a ${
 			file.primaryExport.kind
@@ -547,7 +588,8 @@ function analyzeNaming(
 
 	for (const group of groups.values()) {
 		const namingCandidates = group.filter(
-			(file) => !isNextAppRouterConvention(file)
+			(file) =>
+				!(isNextAppRouterConvention(file) || isDeliberatelyPrefixed(file))
 		);
 		if (options.case) {
 			for (const file of namingCandidates) {
@@ -560,14 +602,18 @@ function analyzeNaming(
 			}
 			continue;
 		}
-		if (namingCandidates.length < minSiblings) {
+		// Infer the convention only from stems that can express one (#203). A
+		// single-word stem conforms to every convention, so it neither votes for
+		// a majority nor can be indicted by one.
+		const discriminating = namingCandidates.filter(discriminatesCasing);
+		if (discriminating.length < minSiblings) {
 			continue;
 		}
-		const majority = findMajority(namingCandidates);
+		const majority = findMajority(discriminating);
 		if (!majority || majority.percent < majorityThreshold) {
 			continue;
 		}
-		for (const file of namingCandidates) {
+		for (const file of discriminating) {
 			if (
 				file.currentCasing === majority.casing ||
 				isCasingJustified(file.currentCasing, file.primaryExport.kind)
@@ -580,7 +626,7 @@ function analyzeNaming(
 			}
 			violations.push({
 				...violation,
-				siblingCount: namingCandidates.length,
+				siblingCount: discriminating.length,
 			});
 		}
 	}

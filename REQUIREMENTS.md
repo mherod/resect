@@ -39,6 +39,7 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 | SRC-022 | Repository owner issue | 2026-08-08 | https://github.com/mherod/resect/issues/193 | Transitive dead-export chains surfaced from module reachability in unused analysis |
 | SRC-023 | Repository owner issue | 2026-08-09 | https://github.com/mherod/resect/issues/141 | Machine-readable output for the find, analyze, analyze-impact, and discover commands |
 | SRC-024 | Repository owner issue | 2026-08-09 | https://github.com/mherod/resect/issues/175 | Optional explicit file extensions in rewritten specifiers for move and alias |
+| SRC-025 | Repository owner issue | 2026-08-09 | https://github.com/mherod/resect/issues/203 | Filename-convention inference restricted to names that express a convention |
 
 ## Delivery and Decision Register
 
@@ -498,6 +499,32 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 **Then** no no-op or framework-convention rename is attempted
 **And** the actionable mismatch remains available to plan or apply
 
+### NAM-006 — Naming Consumer — Infer a directory convention only from filenames that express one
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P1 | **Fidelity:** VERIFIED | **Sources:** SRC-025
+
+**Given** a directory whose filenames are mostly single words that satisfy several casing conventions at once
+**When** a Naming Consumer audits naming without an explicit target casing
+**Then** no casing finding is reported for that directory
+**And** a filename that satisfies several conventions at once is never reported as violating one
+
+### NAM-007 — Naming Consumer — Report the sample a directory convention was inferred from
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P2 | **Fidelity:** VERIFIED | **Sources:** SRC-025
+
+**Given** a Naming Consumer audits a directory with a genuine filename convention
+**When** a casing finding is reported
+**Then** the finding states how many sibling filenames the convention was inferred from
+**And** that count excludes filenames that express no convention
+
+### NAM-008 — Operator — Exclude deliberately prefixed filenames from casing findings
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P2 | **Fidelity:** VERIFIED | **Sources:** SRC-025
+
+**Given** a directory contains a filename whose leading underscore marks it for tooling rather than expressing a casing choice
+**When** a Naming Consumer audits naming without an explicit target casing
+**Then** that filename is excluded from casing findings
+
 ## Feature: Source-Focused Audit Metrics
 
 ### AUDIT-001 — Operator — Exclude configured build output from source metrics
@@ -730,8 +757,8 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 
 | Layer | Status | Receipt | Current artifact |
 |---|---|---|---|
-| Structure | PASS | STRUCT-20260809-013 | [.requirements-status.json](.requirements-status.json) `validation.structure` |
-| Document quality | PASS | QUALITY-20260809-013 | [.requirements-status.json](.requirements-status.json) `validation.documentQuality` |
-| Implementation | PASS | IMPL-20260809-013 | [.requirements-status.json](.requirements-status.json) `validation.implementation` |
+| Structure | PASS | STRUCT-20260809-014 | [.requirements-status.json](.requirements-status.json) `validation.structure` |
+| Document quality | PASS | QUALITY-20260809-014 | [.requirements-status.json](.requirements-status.json) `validation.documentQuality` |
+| Implementation | PASS | IMPL-20260809-014 | [.requirements-status.json](.requirements-status.json) `validation.implementation` |
 
 The canonical validator, manual product-contract review, and focused implementation audit are independent. Counts, hashes, source commit, commands, timestamps, warning dispositions, and evidence summaries live only in the derived status artifact.

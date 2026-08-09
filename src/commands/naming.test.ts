@@ -814,6 +814,144 @@ describe("naming command", () => {
 		await cleanup(dir);
 	});
 
+	// ─── convention sampling (#203) ──────────────────────────────────────────
+	//
+	// A single-word all-lowercase stem matches CAMEL_CASE_PATTERN, so before the
+	// fix every such file counted as camelCase evidence. Dogfooding resect on
+	// resect surfaced it: src/types/ has 14 single-word files and exactly two
+	// multi-word ones, both kebab-case, yet naming reported "88% of sibling
+	// files use camelCase" and advised renaming both toward camelCase — a
+	// convention with zero instances anywhere in src/.
+
+	/** Stems with no word boundary: valid kebab, camel and snake simultaneously. */
+	const SINGLE_WORD_NAMES = [
+		"graph",
+		"deps",
+		"analysis",
+		"barrel",
+		"commands",
+		"impact",
+		"inline",
+		"move",
+		"progress",
+		"similar",
+		"tidy",
+		"transform",
+	];
+
+	test("single-word filenames do not create a camelCase majority", async () => {
+		// Mirrors src/types/: many ambiguous stems, two multi-word kebab files.
+		const dir = await makeFixture("single-word-sample", {
+			...withFiles(SINGLE_WORD_NAMES, functionFile),
+			"src/group/mock-cleanup.ts": functionFile("mockCleanup"),
+			"src/group/test-relocation.ts": functionFile("testRelocation"),
+		});
+
+		const result = await captureOutput(async () =>
+			namingCommand({ directory: path.join(dir, "src"), json: true })
+		);
+		const report = JSON.parse(result.stdout);
+
+		expect(report.findings).toHaveLength(0);
+		await cleanup(dir);
+	});
+
+	test("a single-word filename is never itself a violation", async () => {
+		// It conforms to every convention, so no majority can indict it.
+		const dir = await makeFixture("single-word-innocent", {
+			...withFiles(PASCAL_FUNCTION_NAMES, functionFile),
+			"src/group/graph.ts": functionFile("graph"),
+		});
+
+		const result = await captureOutput(async () =>
+			namingCommand({ directory: path.join(dir, "src"), json: true })
+		);
+		const report = JSON.parse(result.stdout);
+		const flagged = (report.findings as Array<{ file: string }>).map((f) =>
+			path.basename(f.file)
+		);
+
+		expect(flagged).not.toContain("graph.ts");
+		await cleanup(dir);
+	});
+
+	test("a real multi-word majority still indicts an outlier", async () => {
+		// The fix must not blunt the feature: with genuine camelCase evidence,
+		// a kebab-case outlier is still reported.
+		const dir = await makeFixture("real-camel-majority", {
+			...withFiles(CAMEL_NAMES, functionFile),
+			"src/group/mock-cleanup.ts": functionFile("mockCleanup"),
+		});
+
+		const result = await captureOutput(async () =>
+			namingCommand({ directory: path.join(dir, "src"), json: true })
+		);
+		const report = JSON.parse(result.stdout);
+		const findings = report.findings as Array<{
+			file: string;
+			siblingCasingMajority: string;
+			siblingCount: number;
+		}>;
+
+		expect(findings).toHaveLength(1);
+		expect(path.basename(findings[0]?.file ?? "")).toBe("mock-cleanup.ts");
+		expect(findings[0]?.siblingCasingMajority).toBe("camelCase");
+		await cleanup(dir);
+	});
+
+	test("the reported denominator counts only discriminating siblings", async () => {
+		// "88% of 16" was misleading because 14 of those 16 carried no signal.
+		// The percentage and its denominator must both come from the sample the
+		// majority was actually inferred from.
+		const dir = await makeFixture("discriminating-denominator", {
+			...withFiles(CAMEL_NAMES, functionFile),
+			...withFiles(SINGLE_WORD_NAMES, functionFile),
+			"src/group/mock-cleanup.ts": functionFile("mockCleanup"),
+		});
+
+		const result = await captureOutput(async () =>
+			namingCommand({ directory: path.join(dir, "src"), json: true })
+		);
+		const report = JSON.parse(result.stdout);
+		const findings = report.findings as Array<{
+			siblingCount: number;
+			siblingMajorityCount: number;
+			siblingMajorityPercent: number;
+		}>;
+
+		expect(findings).toHaveLength(1);
+		const finding = findings[0];
+		if (!finding) {
+			throw new Error("expected one finding");
+		}
+		// CAMEL_NAMES + the kebab outlier discriminate; the single-word stems
+		// must not inflate the denominator.
+		expect(finding.siblingCount).toBe(CAMEL_NAMES.length + 1);
+		expect(finding.siblingMajorityCount).toBe(CAMEL_NAMES.length);
+		expect(finding.siblingMajorityPercent).toBeGreaterThan(0.9);
+		await cleanup(dir);
+	});
+
+	test("an underscore-prefixed file is not renamed to fit a casing majority", async () => {
+		// `__test-helpers` marks a test-support file; package.json#files excludes
+		// it by that exact prefix, so renaming it would break the exclusion.
+		const dir = await makeFixture("underscore-prefixed", {
+			...withFiles(CAMEL_NAMES, functionFile),
+			"src/group/__test-helpers.ts": functionFile("testHelpers"),
+		});
+
+		const result = await captureOutput(async () =>
+			namingCommand({ directory: path.join(dir, "src"), json: true })
+		);
+		const report = JSON.parse(result.stdout);
+		const flagged = (report.findings as Array<{ file: string }>).map((f) =>
+			path.basename(f.file)
+		);
+
+		expect(flagged).not.toContain("__test-helpers.ts");
+		await cleanup(dir);
+	});
+
 	test("registers the MCP naming tool with fix parameter", async () => {
 		// Registrations moved to per-domain modules in #187; they sit inside
 		// `register<Domain>Tools(server)`, hence the extra tab.
