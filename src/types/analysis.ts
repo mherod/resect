@@ -19,6 +19,13 @@ export interface AnalysisResult {
 	noExternalUsage: boolean;
 	/** True when framework/configuration dispatch makes static imports incomplete. */
 	externalUsageAssumed: boolean;
+	/**
+	 * True when the file is reached from a `package.json#bin` target (#207). A
+	 * binary is executed, not imported, so having no referencing file is expected
+	 * rather than evidence that the module is dead. This does not imply the
+	 * file's exports are externally consumable — a bin tree publishes no API.
+	 */
+	packageBinEntrypoint: boolean;
 	/** Project files omitted from graph-backed verdicts because they could not be parsed. */
 	skippedFiles: string[];
 }

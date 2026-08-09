@@ -26,6 +26,7 @@ import {
 	discoverPackageEntrypoints,
 	findPackagePublicApiExports,
 	isPackageEntrypointTraceIncomplete,
+	resolveBinReachabilityRoots,
 } from "../core/package-entrypoints.ts";
 import { resolveTsConfig } from "../core/project.ts";
 import { normalizePath } from "../core/resolver.ts";
@@ -470,8 +471,14 @@ export async function findUnusedExportsFromGraphs(
 	// consumer outside the directory under analysis. Modules never reached are
 	// dead, so an export whose only importers are unreachable is transitively
 	// dead rather than used.
+	//
+	// `binRoots` enters here and NOT in `entrypointFiles` (#207). A binary keeps
+	// its tree alive, but it publishes no importable surface, so its modules must
+	// not gain the public API protection that `main`/`module`/`exports` confer.
+	const binRoots = resolveBinReachabilityRoots(packageEntrypoints, graph);
 	const liveRoots = new Set<string>([
 		...entrypointFiles,
+		...binRoots,
 		...publicApiFiles,
 		...excludedEntrypointFiles,
 	]);
@@ -502,7 +509,11 @@ export async function findUnusedExportsFromGraphs(
 			(a, b) => a.file.localeCompare(b.file) || a.name.localeCompare(b.name)
 		);
 	const orphanFiles = computeOrphanFiles(graph, exportedFiles, {
-		entrypointFiles: new Set([...entrypointFiles, ...publicApiFiles]),
+		entrypointFiles: new Set([
+			...entrypointFiles,
+			...binRoots,
+			...publicApiFiles,
+		]),
 		entrypointGlobs: entrypointGlobPatterns,
 	});
 

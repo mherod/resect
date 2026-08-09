@@ -1,11 +1,15 @@
 import path from "node:path";
+import type ts from "typescript";
 import { getRuntime } from "../runtime/index.ts";
 import type { ExportInfo } from "../types/analysis.ts";
 import type { ImportBinding, ReferenceType } from "../types/graph.ts";
+import type { ProjectConfig } from "../types.ts";
 import type { DependencyGraph } from "./graph.ts";
 import { readPackageJson } from "./package-json.ts";
 import { isWithinPath } from "./path-utils.ts";
 import { normalizePath } from "./resolver.ts";
+import { scanModuleReferences } from "./scanner.ts";
+import { parseSourceFile } from "./source-file.ts";
 import { discoverWorkspace } from "./workspace.ts";
 
 const SOURCE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"];
@@ -19,6 +23,7 @@ interface PackageJsonEntrypoints {
 	main?: unknown;
 	module?: unknown;
 	exports?: unknown;
+	bin?: unknown;
 }
 
 export interface UnresolvedPackageEntrypoint {
@@ -27,7 +32,19 @@ export interface UnresolvedPackageEntrypoint {
 }
 
 export interface PackageEntrypointDiscovery {
+	/**
+	 * Targets of `main`, `module`, and `exports`. These carry public API
+	 * reachability: an export re-exported to one of these files is externally
+	 * consumable and must not attract delete advice.
+	 */
 	files: Set<string>;
+	/**
+	 * Targets of `bin` (#207). Deliberately separate from `files`: a binary roots
+	 * module reachability — its tree is not dead — but its internals are not an
+	 * exported API surface, so an unimported export inside a bin-only tree stays
+	 * eligible for an ordinary unused verdict.
+	 */
+	binFiles: Set<string>;
 	unresolved: UnresolvedPackageEntrypoint[];
 }
 
@@ -61,6 +78,7 @@ export async function discoverPackageEntrypoints(
 	}
 
 	const files = new Set<string>();
+	const binFiles = new Set<string>();
 	const unresolved: UnresolvedPackageEntrypoint[] = [];
 	for (const packageJsonPath of packageJsonPaths) {
 		const packageJson =
@@ -70,29 +88,103 @@ export async function discoverPackageEntrypoints(
 		}
 		const packageRoot = path.dirname(packageJsonPath);
 		const sourceDir = await detectSourceDir(packageRoot);
-		for (const specifier of collectEntrypointSpecifiers(packageJson)) {
-			const candidates = expandEntrypointCandidates(
-				packageRoot,
-				specifier,
-				sourceDir
-			);
-			let resolved = false;
-			for (const candidate of candidates) {
-				if (await getRuntime().fs.exists(candidate)) {
-					files.add(normalizePath(candidate));
-					resolved = true;
+		const specifierGroups: [Set<string>, string[]][] = [
+			[files, collectEntrypointSpecifiers(packageJson)],
+			[binFiles, collectBinSpecifiers(packageJson)],
+		];
+		for (const [target, specifiers] of specifierGroups) {
+			for (const specifier of specifiers) {
+				const candidates = expandEntrypointCandidates(
+					packageRoot,
+					specifier,
+					sourceDir
+				);
+				let resolved = false;
+				for (const candidate of candidates) {
+					if (await getRuntime().fs.exists(candidate)) {
+						target.add(normalizePath(candidate));
+						resolved = true;
+					}
 				}
-			}
-			if (!resolved && isSourceEntrypointSpecifier(specifier)) {
-				unresolved.push({ packageRoot, specifier });
+				if (!resolved && isSourceEntrypointSpecifier(specifier)) {
+					unresolved.push({ packageRoot, specifier });
+				}
 			}
 		}
 	}
 
 	return {
 		files,
+		binFiles,
 		unresolved: dedupeUnresolvedEntrypoints(unresolved),
 	};
+}
+
+/**
+ * Reachability roots contributed by `package.json#bin` (#207).
+ *
+ * A bin target is frequently a shim outside the analysed program — resect's own
+ * `bin/resect.js` is `import "../src/cli.ts";` — so the target itself has no
+ * graph node and cannot root anything. Where that happens, the shim is parsed
+ * and its own imports are resolved, promoting the first in-graph module it
+ * reaches to a root. A bin target that is already in the graph is used directly.
+ */
+export function resolveBinReachabilityRoots(
+	discovery: PackageEntrypointDiscovery,
+	graph: DependencyGraph
+): Set<string> {
+	const roots = new Set<string>();
+	const compilerOptions = graph.program?.getCompilerOptions() ?? {};
+
+	for (const binFile of discovery.binFiles) {
+		if (graph.imports.has(binFile)) {
+			roots.add(binFile);
+			continue;
+		}
+		for (const reference of scanShimReferences(binFile, compilerOptions)) {
+			const resolved = normalizePath(reference);
+			if (graph.imports.has(resolved)) {
+				roots.add(resolved);
+			}
+		}
+	}
+
+	return roots;
+}
+
+/**
+ * Resolved import targets of a single out-of-graph bin shim.
+ *
+ * The shim is scanned with the ordinary scanner rather than a bespoke walk so
+ * side-effect imports, `require()`, and re-exports are all covered. Compiler
+ * options come from the real program, so a shim importing `../src/cli.ts`
+ * resolves under the same `allowImportingTsExtensions` and `moduleResolution`
+ * settings the project itself uses.
+ */
+function scanShimReferences(
+	shimFile: string,
+	compilerOptions: ts.CompilerOptions
+): string[] {
+	const sourceFile = parseSourceFile(shimFile);
+	if (!sourceFile) {
+		return [];
+	}
+	const shimProject: ProjectConfig = {
+		rootDir: path.dirname(shimFile),
+		tsconfigPath: "",
+		compilerOptions,
+		pathAliases: new Map(),
+		include: [],
+		exclude: [],
+		files: [],
+	};
+	const resolvedPaths: string[] = [];
+	for (const reference of scanModuleReferences(sourceFile, shimProject)) {
+		if (reference.resolvedPath) {
+			resolvedPaths.push(reference.resolvedPath);
+		}
+	}
+	return resolvedPaths;
 }
 
 /**
@@ -242,6 +334,24 @@ function collectEntrypointSpecifiers(
 	}
 	collectExportSpecifiers(packageJson.exports, specifiers);
 	return [...new Set(specifiers)];
+}
+
+/**
+ * Specifiers declared by `package.json#bin`, in both manifest forms:
+ * `"bin": "./cli.js"` (name defaults to the package name) and
+ * `"bin": { "resect": "./bin/resect.js" }`.
+ */
+function collectBinSpecifiers(packageJson: PackageJsonEntrypoints): string[] {
+	const { bin } = packageJson;
+	if (typeof bin === "string") {
+		return [bin];
+	}
+	if (!bin || typeof bin !== "object" || Array.isArray(bin)) {
+		return [];
+	}
+	return [
+		...new Set(Object.values(bin).filter((value) => typeof value === "string")),
+	];
 }
 
 function collectExportSpecifiers(value: unknown, specifiers: string[]): void {

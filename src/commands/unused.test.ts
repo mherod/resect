@@ -740,6 +740,131 @@ describe("unused command", () => {
 		await cleanup(dir);
 	});
 
+	// @BDD: ANLY-013-Verified
+	test("roots a bin tree through an out-of-program shim without granting it public API", async () => {
+		const dir = await makeFixture("bin-entrypoint-shim", {
+			// bin is the ONLY entrypoint: no main, no module, no exports. The shim
+			// is plain .js outside `include`, so it has no graph node of its own.
+			"package.json": JSON.stringify({
+				name: "@scope/tool",
+				bin: { tool: "./bin/tool.js" },
+			}),
+			"bin/tool.js": 'import "../src/cli";\n',
+			"src/cli.ts": ['import { runTool } from "./tool";', "runTool();"].join(
+				"\n"
+			),
+			"src/tool.ts": [
+				"export function runTool(): number {",
+				"	return 1;",
+				"}",
+				"export const privateHelper = 2;",
+			].join("\n"),
+		});
+
+		const proc = Bun.spawn(
+			[...CLI, "unused", path.join(dir, "src"), "--json"],
+			{
+				stdout: "pipe",
+				stderr: "pipe",
+			}
+		);
+		const [stdout, stderr] = await Promise.all([
+			new Response(proc.stdout).text(),
+			new Response(proc.stderr).text(),
+		]);
+		await proc.exited;
+		expect(proc.exitCode, stderr).toBe(0);
+		const report = JSON.parse(stdout);
+
+		// The bin tree is alive: runTool is reached from the shim, not dead.
+		expect(report.transitivelyDeadExports).toEqual([]);
+		expect(report.transitivelyDeadCount).toBe(0);
+
+		// Rooting is not public-API protection. A binary publishes no importable
+		// surface, so an unimported export inside its tree stays a delete
+		// candidate and nothing is withheld as public API.
+		expect(report.publicApiExportCount).toBe(0);
+		expect(
+			report.unused.map((item: { file: string; name: string }) => ({
+				file: path.relative(dir, item.file),
+				name: item.name,
+			}))
+		).toEqual([{ file: path.join("src", "tool.ts"), name: "privateHelper" }]);
+
+		await cleanup(dir);
+	});
+
+	// @BDD: ANLY-013-Verified
+	test("accepts the string form of bin", async () => {
+		const dir = await makeFixture("bin-entrypoint-string", {
+			"package.json": JSON.stringify({
+				name: "@scope/tool",
+				bin: "./bin/tool.js",
+			}),
+			"bin/tool.js": 'import "../src/cli";\n',
+			"src/cli.ts": ['import { runTool } from "./tool";', "runTool();"].join(
+				"\n"
+			),
+			"src/tool.ts": [
+				"export function runTool(): number {",
+				"	return 1;",
+				"}",
+			].join("\n"),
+		});
+
+		const proc = Bun.spawn(
+			[...CLI, "unused", path.join(dir, "src"), "--json"],
+			{
+				stdout: "pipe",
+				stderr: "pipe",
+			}
+		);
+		const [stdout, stderr] = await Promise.all([
+			new Response(proc.stdout).text(),
+			new Response(proc.stderr).text(),
+		]);
+		await proc.exited;
+		expect(proc.exitCode, stderr).toBe(0);
+		const report = JSON.parse(stdout);
+
+		expect(report.transitivelyDeadCount).toBe(0);
+		expect(report.unused).toEqual([]);
+
+		await cleanup(dir);
+	});
+
+	// @BDD: ANLY-014-Verified
+	test("withholds destructive verdicts when a bin target cannot be resolved", async () => {
+		const dir = await makeFixture("bin-entrypoint-unresolved", {
+			"package.json": JSON.stringify({
+				name: "@scope/tool",
+				bin: { tool: "./bin/missing.js" },
+			}),
+			"src/tool.ts": "export const helper = 1;\n",
+		});
+
+		const proc = Bun.spawn(
+			[...CLI, "unused", path.join(dir, "src"), "--json"],
+			{
+				stdout: "pipe",
+				stderr: "pipe",
+			}
+		);
+		const [stdout, stderr] = await Promise.all([
+			new Response(proc.stdout).text(),
+			new Response(proc.stderr).text(),
+		]);
+		await proc.exited;
+		expect(proc.exitCode, stderr).toBe(0);
+		const report = JSON.parse(stdout);
+
+		// An unresolvable bin target is missing evidence, not proof of death.
+		expect(report.unused).toEqual([]);
+		expect(report.unknownExternalUsageExportCount).toBeGreaterThan(0);
+
+		await cleanup(dir);
+	});
+
 	// @BDD: ANLY-006-Verified
 	test("withholds destructive verdicts for unresolved package export patterns", async () => {
 		const dir = await makeFixture("ambiguous-public-api", {

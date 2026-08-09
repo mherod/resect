@@ -15,8 +15,10 @@ import {
 	discoverPackageEntrypoints,
 	findPackagePublicApiExports,
 	isPackageEntrypointTraceIncomplete,
+	resolveBinReachabilityRoots,
 } from "../core/package-entrypoints.ts";
 import { createProgram } from "../core/project.ts";
+import { normalizePath } from "../core/resolver.ts";
 import {
 	scanBarrelExports,
 	scanExports,
@@ -96,6 +98,7 @@ export function analysisReportToJson(
 		publicApiTraceIncomplete: result.publicApiTraceIncomplete,
 		noExternalUsage: result.noExternalUsage,
 		externalUsageAssumed: result.externalUsageAssumed,
+		packageBinEntrypoint: result.packageBinEntrypoint,
 		skippedFileCount: result.skippedFiles.length,
 		skippedFiles: result.skippedFiles.map((file) =>
 			path.relative(rootDir, file)
@@ -269,6 +272,12 @@ export async function analyze(
 		graph
 	);
 	const externalUsageAssumed = conventionEntrypoint || publicApiTraceIncomplete;
+	// A bin target roots reachability but confers no public API (#207), so it
+	// is reported without suppressing this file's own unused-export verdicts.
+	const packageBinEntrypoint = resolveBinReachabilityRoots(
+		packageEntrypoints,
+		graph
+	).has(normalizePath(filePath));
 	const unusedExports = externalUsageAssumed
 		? []
 		: exports
@@ -308,6 +317,7 @@ export async function analyze(
 		publicApiTraceIncomplete,
 		noExternalUsage,
 		externalUsageAssumed,
+		packageBinEntrypoint,
 		skippedFiles: graph.skippedFiles,
 	};
 }
@@ -363,6 +373,12 @@ function printAnalysis(
 	logger.info(`🔗 Referenced by (${result.referencedBy.length} files):`);
 	if (result.referencedBy.length === 0) {
 		logger.info("   (none)");
+		if (result.packageBinEntrypoint) {
+			// Without this, a package binary reads as an orphan module (#207).
+			logger.info(
+				"   Package bin entrypoint: executed as a binary, not imported."
+			);
+		}
 	} else {
 		const grouped = new Map<string, typeof result.referencedBy>();
 		for (const ref of result.referencedBy) {

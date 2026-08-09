@@ -2,9 +2,9 @@
   "schemaVersion": 2,
   "projectId": "mherod/resect",
   "requirementsFile": "REQUIREMENTS.md",
-  "requirementsSha256": "5bf9713e92b2a3d5f0ab4bad12b360c2da20a1f477476dcca54d76019401c13f",
-  "sourceCommit": "b4ab752166769dc8b93c5d50131be940b900a438",
-  "generatedAt": "2026-08-09T01:29:47Z",
+  "requirementsSha256": "0b14a51f0f63c8600f5093438dbc002fbdedcfef706003dad46aa64aaaca9564",
+  "sourceCommit": "1f364b8783c62df776390fa83e1e25e476a62b77",
+  "generatedAt": "2026-08-09T23:09:26Z",
   "validator": {
     "name": "generate-requirements",
     "version": "2.0.0",
@@ -13,15 +13,15 @@
   "validation": {
     "structure": {
       "status": "PASS",
-      "receiptId": "STRUCT-20260809-016",
+      "receiptId": "STRUCT-20260810-017",
       "validator": "validate-bdd",
       "validatorVersion": "2.0.0",
       "command": "bun /Users/matthewherod/.claude/skills/generate-requirements/scripts/validate-bdd.js /Users/matthewherod/Development/resect/REQUIREMENTS.md --status-log /Users/matthewherod/Development/resect/.requirements-status.json",
-      "requirementsSha256": "5bf9713e92b2a3d5f0ab4bad12b360c2da20a1f477476dcca54d76019401c13f",
-      "sourceCommit": "b4ab752166769dc8b93c5d50131be940b900a438",
-      "generatedAt": "2026-08-09T01:29:47Z",
+      "requirementsSha256": "0b14a51f0f63c8600f5093438dbc002fbdedcfef706003dad46aa64aaaca9564",
+      "sourceCommit": "1f364b8783c62df776390fa83e1e25e476a62b77",
+      "generatedAt": "2026-08-09T23:09:26Z",
       "counts": {
-        "checked": 77,
+        "checked": 79,
         "errors": 0,
         "warnings": 0
       },
@@ -31,15 +31,15 @@
     },
     "documentQuality": {
       "status": "PASS",
-      "receiptId": "QUALITY-20260809-016",
+      "receiptId": "QUALITY-20260810-017",
       "validator": "generate-requirements-manual-review",
       "validatorVersion": "2.0.0",
       "command": "bun /Users/matthewherod/.claude/skills/generate-requirements/scripts/validate-bdd.js /Users/matthewherod/Development/resect/REQUIREMENTS.md --status-log /Users/matthewherod/Development/resect/.requirements-status.json",
-      "requirementsSha256": "5bf9713e92b2a3d5f0ab4bad12b360c2da20a1f477476dcca54d76019401c13f",
-      "sourceCommit": "b4ab752166769dc8b93c5d50131be940b900a438",
-      "generatedAt": "2026-08-09T01:29:47Z",
+      "requirementsSha256": "0b14a51f0f63c8600f5093438dbc002fbdedcfef706003dad46aa64aaaca9564",
+      "sourceCommit": "1f364b8783c62df776390fa83e1e25e476a62b77",
+      "generatedAt": "2026-08-09T23:09:26Z",
       "counts": {
-        "checked": 77,
+        "checked": 79,
         "errors": 0,
         "warnings": 0
       },
@@ -55,20 +55,21 @@
         "Reviewed the five EXTN scenarios for issue #175: extension policy is stated as a product outcome independent of specifier style, each scenario carries one trigger, and the alias-unaffected clause records the composition decision rather than leaving it implicit.",
         "Reviewed NAM-006..008 for issue #203: each states a product outcome about which filenames may be inferred from or indicted, carries one trigger, and keeps explicit-target-casing behaviour (NAM-001, NAM-003) untouched.",
         "Reviewed AUDIT-005..008 for issue #202: each states a product outcome about which files analysis reports on, carries one trigger, and AUDIT-008 records the fail-open decision so an inconclusive version-control probe can never silently drop files.",
-        "Reviewed AUDIT-009..010 for issue #202: AUDIT-009 generalises the exclusion across every architecture report, and AUDIT-010 states the consequence that motivated pruning the graph rather than filtering the report."
+        "Reviewed AUDIT-009..010 for issue #202: AUDIT-009 generalises the exclusion across every architecture report, and AUDIT-010 states the consequence that motivated pruning the graph rather than filtering the report.",
+        "Reviewed ANLY-013..014 for issue #207: ANLY-013 states the product outcome that a package binary's tree stays live while explicitly denying it public API, and ANLY-014 keeps an unresolvable bin target non-destructive in line with ANLY-006. ANLY-005 gained one clause recording that a bin-only target confers no public API, so the two entrypoint kinds cannot be conflated."
       ]
     },
     "implementation": {
       "status": "PASS",
-      "receiptId": "IMPL-20260809-016",
+      "receiptId": "IMPL-20260810-017",
       "validator": "bun-test-plus-clause-audit",
       "validatorVersion": "1.3.14+generate-requirements-2.0.0",
       "command": "bun /Users/matthewherod/.claude/skills/generate-requirements/scripts/validate-bdd.js /Users/matthewherod/Development/resect/REQUIREMENTS.md --status-log /Users/matthewherod/Development/resect/.requirements-status.json",
-      "requirementsSha256": "5bf9713e92b2a3d5f0ab4bad12b360c2da20a1f477476dcca54d76019401c13f",
-      "sourceCommit": "b4ab752166769dc8b93c5d50131be940b900a438",
-      "generatedAt": "2026-08-09T01:29:47Z",
+      "requirementsSha256": "0b14a51f0f63c8600f5093438dbc002fbdedcfef706003dad46aa64aaaca9564",
+      "sourceCommit": "1f364b8783c62df776390fa83e1e25e476a62b77",
+      "generatedAt": "2026-08-09T23:09:26Z",
       "counts": {
-        "checked": 77,
+        "checked": 79,
         "errors": 0,
         "warnings": 0
       },
@@ -100,32 +101,33 @@
         "EXTN-001..005 verified against src/core/resolver.ts calculateRelativeSpecifier/calculateNewSpecifier, src/commands/command-context.ts warnIfExplicitExtensionsUnsupported, and src/commands/registry.ts domain validation; covered by src/core/resolver.test.ts and src/commands/move.test.ts.",
         "NAM-006..008 verified against src/commands/naming.ts discriminatesCasing, isDeliberatelyPrefixed, and the Majority.sampleSize denominator; covered by src/commands/naming.test.ts.",
         "AUDIT-005..008 verified against src/core/non-source-files.ts, src/core/git.ts partitionGitignored, and src/commands/audit.ts prepareAuditGraph; covered by src/commands/audit.test.ts.",
-        "AUDIT-009..010 verified against unused, barrel, similar and naming wiring; the ignored-consumer case is covered by src/commands/unused.test.ts."
+        "AUDIT-009..010 verified against unused, barrel, similar and naming wiring; the ignored-consumer case is covered by src/commands/unused.test.ts.",
+        "ANLY-013..014 verified against src/core/package-entrypoints.ts collectBinSpecifiers and resolveBinReachabilityRoots, src/commands/unused.ts binRoots wiring, and src/commands/analyze.ts packageBinEntrypoint; covered by src/commands/unused.test.ts and src/commands/analyze.test.ts. Red-green confirmed: removing binRoots from liveRoots fails the two rooting tests."
       ]
     }
   },
   "metrics": {
-    "totalScenarios": 77,
+    "totalScenarios": 79,
     "byDelivery": {
-      "V1": 77,
+      "V1": 79,
       "V2": 0,
       "LATER": 0,
       "UNSLICED": 0
     },
     "byDecision": {
-      "DECIDED": 77,
+      "DECIDED": 79,
       "OPEN": 0
     },
     "byPriority": {
       "P0": 4,
-      "P1": 38,
+      "P1": 40,
       "P2": 35,
       "P3": 0
     },
     "priorityByDelivery": {
       "V1": {
         "P0": 4,
-        "P1": 38,
+        "P1": 40,
         "P2": 35,
         "P3": 0
       },
@@ -149,15 +151,15 @@
       }
     },
     "byFidelity": {
-      "VERIFIED": 77,
+      "VERIFIED": 79,
       "DRIFTED": 0,
       "MISSING": 0,
       "UNTESTABLE": 0
     },
     "coverage": {
       "v1Decided": {
-        "eligible": 77,
-        "verified": 77,
+        "eligible": 79,
+        "verified": 79,
         "percentage": 100
       },
       "v1LaunchCritical": {
@@ -199,8 +201,8 @@
     "fidelityNoteMismatchIds": [],
     "orphanAnchorIds": [],
     "preamble": {
-      "linesBeforeFirstScenario": 119,
-      "percentageBeforeFirstScenario": 14.6,
+      "linesBeforeFirstScenario": 120,
+      "percentageBeforeFirstScenario": 14.4,
       "warning": false,
       "disposition": null
     },

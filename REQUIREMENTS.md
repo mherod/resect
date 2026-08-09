@@ -41,6 +41,7 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 | SRC-024 | Repository owner issue | 2026-08-09 | https://github.com/mherod/resect/issues/175 | Optional explicit file extensions in rewritten specifiers for move and alias |
 | SRC-025 | Repository owner issue | 2026-08-09 | https://github.com/mherod/resect/issues/203 | Filename-convention inference restricted to names that express a convention |
 | SRC-026 | Repository owner issue | 2026-08-09 | https://github.com/mherod/resect/issues/202 | Git-ignored files treated as non-source and excluded from architecture analysis |
+| SRC-027 | Repository owner issue | 2026-08-10 | https://github.com/mherod/resect/issues/207 | Package `bin` targets rooting module reachability without conferring public API |
 
 ## Delivery and Decision Register
 
@@ -658,6 +659,7 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 **When** an Analysis Consumer runs analyze or unused source analysis without a visible external importer
 **Then** exports reachable from those entrypoints are identified as package public API and absent from delete and orphan-file verdicts
 **And** a private sibling that is not reachable from an entrypoint remains eligible for an unused verdict
+**And** a `bin`-only target confers no package public API
 
 ### ANLY-006 — Analysis Consumer — Withhold destructive advice when package entrypoint tracing is incomplete
 
@@ -717,6 +719,24 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 **Given** two modules import each other and neither is reachable from a live entrypoint
 **When** an Analysis Consumer runs unused source analysis
 **Then** the analysis completes and both modules' exports are identified as transitively dead
+
+### ANLY-013 — Analysis Consumer — Keep a package binary's module tree live without publishing it
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P1 | **Fidelity:** VERIFIED | **Sources:** SRC-027
+
+**Given** a package manifest declares a `bin` target, in string or object form, whose executable is a shim outside the analysed program
+**When** an Analysis Consumer runs analyze or unused source analysis
+**Then** modules reached from that target are absent from dead and transitively dead findings
+**And** the target is identified as a package binary rather than a module referenced by nothing
+**And** an unimported export inside that tree remains eligible for an unused verdict
+
+### ANLY-014 — Analysis Consumer — Withhold destructive advice when a bin target cannot be resolved
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P1 | **Fidelity:** VERIFIED | **Sources:** SRC-027
+
+**Given** a package manifest declares a `bin` target that analysis cannot resolve to a file
+**When** an Analysis Consumer runs analyze or unused source analysis
+**Then** external usage is identified as unknown instead of unused or deletable
 
 ## Feature: Framework-Aware Barrel Analysis
 

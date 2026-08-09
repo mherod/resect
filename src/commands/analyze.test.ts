@@ -119,6 +119,52 @@ describe("analyze command", () => {
 		}
 	});
 
+	// @BDD: ANLY-013-Verified
+	test("marks a bin entrypoint rather than reporting it as referenced by nothing", async () => {
+		const dir = await makeFixtureBase("analyze-bin-entrypoint", {
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: { strict: true },
+				include: ["src/**/*.ts"],
+			}),
+			"package.json": JSON.stringify({
+				name: "@scope/tool",
+				bin: { tool: "./bin/tool.js" },
+			}),
+			"bin/tool.js": 'import "../src/cli";\n',
+			"src/cli.ts": 'import "./tool";\n',
+			"src/tool.ts": "export const helper = 1;\n",
+		});
+
+		try {
+			const cliFile = path.join(dir, "src", "cli.ts");
+			const project = loadProject(path.join(dir, "tsconfig.json"), cliFile);
+			const result = await analyze(cliFile, project);
+
+			// Nothing imports a binary — that is the point of a binary.
+			expect(result.referencedBy).toHaveLength(0);
+			expect(result.packageBinEntrypoint).toBeTrue();
+			// A bin tree publishes no API, so this must not be conflated with the
+			// framework-entrypoint assumption that suppresses export verdicts.
+			expect(result.externalUsageAssumed).toBeFalse();
+			expect(result.publicApiExports).toHaveLength(0);
+
+			const proc = Bun.spawn([...CLI, "analyze", cliFile], {
+				cwd: dir,
+				stdout: "pipe",
+				stderr: "pipe",
+			});
+			const [stdout, stderr] = await Promise.all([
+				new Response(proc.stdout).text(),
+				new Response(proc.stderr).text(),
+			]);
+			await proc.exited;
+			expect(proc.exitCode, stderr).toBe(0);
+			expect(stdout).toContain("Package bin entrypoint");
+		} finally {
+			await cleanup(dir);
+		}
+	});
+
 	// @BDD: ANLY-006-Verified
 	test("withholds destructive verdicts when package entrypoint tracing is incomplete", async () => {
 		const dir = await makeFixtureBase("analyze-ambiguous-entrypoint", {
