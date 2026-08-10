@@ -45,9 +45,23 @@ function isTypeOrInterface(kind: FunctionInfo["kind"]): boolean {
 const DIRECTIVE_PATTERN =
 	/["']use (cache|cache:\s*\w+|server|client|strict)["']\s*;?/;
 
-function scoreToBucket(score: number): SimilarityBucket | null {
+/**
+ * `structurallyIdentical` is whether every accepted pair in the group reached
+ * its score through normalized-body equality.
+ *
+ * Without it the `exact` bucket lies about its own evidence (#208). Set Jaccard
+ * over token bigrams saturates on small structural vocabularies — every
+ * interface with a plain, an array, and an optional member yields the same nine
+ * distinct bigrams — so unrelated declarations can score a perfect 1.0 through
+ * the bigram branch. Reporting that as "exact duplicate (after normalization)"
+ * names evidence that does not exist, so a coincidental 1.0 is capped at `high`.
+ */
+function scoreToBucket(
+	score: number,
+	structurallyIdentical: boolean
+): SimilarityBucket | null {
 	if (score >= 0.999) {
-		return "exact";
+		return structurallyIdentical ? "exact" : "high";
 	}
 	if (score >= 0.85) {
 		return "high";
@@ -405,6 +419,9 @@ export function findSimilarGroups(
 		const bigramsI = preBigrams[i];
 		const group: FunctionInfo[] = [fnI];
 		let minScore = 1.0;
+		// A group is only an `exact` duplicate when every accepted pair matched
+		// through normalized-body equality rather than a saturated bigram set.
+		let allStructurallyIdentical = true;
 
 		for (let j = i + 1; j < candidates.length; j++) {
 			if (assigned.has(j)) {
@@ -480,8 +497,9 @@ export function findSimilarGroups(
 				continue;
 			}
 
+			const structurallyIdentical = fnI.normalizedBody === fnJ.normalizedBody;
 			let score: number;
-			if (fnI.normalizedBody === fnJ.normalizedBody) {
+			if (structurallyIdentical) {
 				// Exact structural match — blend with content token similarity to detect
 				// semantic false positives. Content tokens now include uppercase
 				// identifiers, string literals, AND camelCase function call targets,
@@ -546,17 +564,23 @@ export function findSimilarGroups(
 				score *= 0.85;
 			}
 
-			// Penalise small interface pairs with low member name overlap.
-			// Interfaces with ≤5 members that share generic field names (file, line,
-			// name, etc.) produce inflated Jaccard scores from coincidental shape.
-			// Blend in the member name similarity to reduce these false positives.
+			// Penalise interface pairs with low member name overlap. Interfaces that
+			// share generic field names (file, line, name, etc.) produce inflated
+			// Jaccard scores from coincidental shape; blending in the member name
+			// similarity reduces those false positives.
+			//
+			// Deliberately unbounded in member count (#208). This was gated to ≤5
+			// members on the premise that small interfaces are the vulnerable ones,
+			// but the opposite holds: a longer body has more chances to contain every
+			// distinct bigram at least once, so set Jaccard saturates more easily as
+			// an interface grows. The gate withheld the penalty from exactly the
+			// pairs that needed it — three result interfaces of 7, 8, and 9 members
+			// with different field names scored a perfect 1.0.
 			if (
 				fnI.kind === "interface" &&
 				fnJ.kind === "interface" &&
 				fnI.memberNames.length > 0 &&
-				fnJ.memberNames.length > 0 &&
-				fnI.memberNames.length <= 5 &&
-				fnJ.memberNames.length <= 5
+				fnJ.memberNames.length > 0
 			) {
 				const memberSim = jaccardSimilarity(fnI.memberNames, fnJ.memberNames);
 				if (memberSim < 0.5) {
@@ -568,12 +592,13 @@ export function findSimilarGroups(
 				group.push(fnJ);
 				assigned.add(j);
 				minScore = Math.min(minScore, score);
+				allStructurallyIdentical &&= structurallyIdentical;
 			}
 		}
 
 		if (group.length > 1) {
 			assigned.add(i);
-			const bucket = scoreToBucket(minScore);
+			const bucket = scoreToBucket(minScore, allStructurallyIdentical);
 			if (bucket) {
 				groups.push({ bucket, score: minScore, functions: group });
 			}

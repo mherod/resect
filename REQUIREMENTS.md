@@ -42,6 +42,7 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 | SRC-025 | Repository owner issue | 2026-08-09 | https://github.com/mherod/resect/issues/203 | Filename-convention inference restricted to names that express a convention |
 | SRC-026 | Repository owner issue | 2026-08-09 | https://github.com/mherod/resect/issues/202 | Git-ignored files treated as non-source and excluded from architecture analysis |
 | SRC-027 | Repository owner issue | 2026-08-10 | https://github.com/mherod/resect/issues/207 | Package `bin` targets rooting module reachability without conferring public API |
+| SRC-028 | Repository owner issue | 2026-08-10 | https://github.com/mherod/resect/issues/208 | Duplicate-declaration verdicts distinguishing shared structure from shared identity |
 
 ## Delivery and Decision Register
 
@@ -823,12 +824,38 @@ Resect is a local TypeScript and JavaScript refactoring tool exposed through a C
 **When** the command completes
 **Then** the human report is unchanged
 
+## Feature: Duplicate Declaration Detection
+
+### SIM-001 — Analysis Consumer — Report genuinely duplicated declarations
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P2 | **Fidelity:** VERIFIED | **Sources:** SRC-028
+
+**Given** two declarations of any size share both their structure and their member names
+**When** an Analysis Consumer runs similarity analysis
+**Then** they are reported together as an exact duplicate
+
+### SIM-002 — Analysis Consumer — Withhold a duplicate verdict from a shared shape alone
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P2 | **Fidelity:** VERIFIED | **Sources:** SRC-028
+
+**Given** two declarations share a structural shape but differ in member count and in most member names
+**When** an Analysis Consumer runs similarity analysis at the default threshold
+**Then** they are absent from the reported groups
+
+### SIM-003 — Analysis Consumer — Describe a verdict by the evidence that produced it
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P2 | **Fidelity:** VERIFIED | **Sources:** SRC-028
+
+**Given** a group scores perfectly through structural resemblance rather than identical normalized bodies
+**When** an Analysis Consumer runs similarity analysis
+**Then** the group is reported as a high similarity rather than an exact duplicate
+
 ## Validation Receipts
 
 | Layer | Status | Receipt | Current artifact |
 |---|---|---|---|
-| Structure | PASS | STRUCT-20260809-016 | [.requirements-status.json](.requirements-status.json) `validation.structure` |
-| Document quality | PASS | QUALITY-20260809-016 | [.requirements-status.json](.requirements-status.json) `validation.documentQuality` |
-| Implementation | PASS | IMPL-20260809-016 | [.requirements-status.json](.requirements-status.json) `validation.implementation` |
+| Structure | PASS | STRUCT-20260810-018 | [.requirements-status.json](.requirements-status.json) `validation.structure` |
+| Document quality | PASS | QUALITY-20260810-018 | [.requirements-status.json](.requirements-status.json) `validation.documentQuality` |
+| Implementation | PASS | IMPL-20260810-018 | [.requirements-status.json](.requirements-status.json) `validation.implementation` |
 
 The canonical validator, manual product-contract review, and focused implementation audit are independent. Counts, hashes, source commit, commands, timestamps, warning dispositions, and evidence summaries live only in the derived status artifact.

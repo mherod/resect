@@ -2,9 +2,9 @@
   "schemaVersion": 2,
   "projectId": "mherod/resect",
   "requirementsFile": "REQUIREMENTS.md",
-  "requirementsSha256": "0b14a51f0f63c8600f5093438dbc002fbdedcfef706003dad46aa64aaaca9564",
-  "sourceCommit": "1f364b8783c62df776390fa83e1e25e476a62b77",
-  "generatedAt": "2026-08-09T23:09:26Z",
+  "requirementsSha256": "ff6b237c5995a523819e395f4ce23d7300ebb506a791084cf052c021943f86bc",
+  "sourceCommit": "4a0c8d2",
+  "generatedAt": "2026-08-10T00:40:47Z",
   "validator": {
     "name": "generate-requirements",
     "version": "2.0.0",
@@ -13,15 +13,15 @@
   "validation": {
     "structure": {
       "status": "PASS",
-      "receiptId": "STRUCT-20260810-017",
+      "receiptId": "STRUCT-20260810-018",
       "validator": "validate-bdd",
       "validatorVersion": "2.0.0",
       "command": "bun /Users/matthewherod/.claude/skills/generate-requirements/scripts/validate-bdd.js /Users/matthewherod/Development/resect/REQUIREMENTS.md --status-log /Users/matthewherod/Development/resect/.requirements-status.json",
-      "requirementsSha256": "0b14a51f0f63c8600f5093438dbc002fbdedcfef706003dad46aa64aaaca9564",
-      "sourceCommit": "1f364b8783c62df776390fa83e1e25e476a62b77",
-      "generatedAt": "2026-08-09T23:09:26Z",
+      "requirementsSha256": "ff6b237c5995a523819e395f4ce23d7300ebb506a791084cf052c021943f86bc",
+      "sourceCommit": "4a0c8d2",
+      "generatedAt": "2026-08-10T00:40:47Z",
       "counts": {
-        "checked": 79,
+        "checked": 82,
         "errors": 0,
         "warnings": 0
       },
@@ -31,15 +31,15 @@
     },
     "documentQuality": {
       "status": "PASS",
-      "receiptId": "QUALITY-20260810-017",
+      "receiptId": "QUALITY-20260810-018",
       "validator": "generate-requirements-manual-review",
       "validatorVersion": "2.0.0",
       "command": "bun /Users/matthewherod/.claude/skills/generate-requirements/scripts/validate-bdd.js /Users/matthewherod/Development/resect/REQUIREMENTS.md --status-log /Users/matthewherod/Development/resect/.requirements-status.json",
-      "requirementsSha256": "0b14a51f0f63c8600f5093438dbc002fbdedcfef706003dad46aa64aaaca9564",
-      "sourceCommit": "1f364b8783c62df776390fa83e1e25e476a62b77",
-      "generatedAt": "2026-08-09T23:09:26Z",
+      "requirementsSha256": "ff6b237c5995a523819e395f4ce23d7300ebb506a791084cf052c021943f86bc",
+      "sourceCommit": "4a0c8d2",
+      "generatedAt": "2026-08-10T00:40:47Z",
       "counts": {
-        "checked": 79,
+        "checked": 82,
         "errors": 0,
         "warnings": 0
       },
@@ -56,20 +56,21 @@
         "Reviewed NAM-006..008 for issue #203: each states a product outcome about which filenames may be inferred from or indicted, carries one trigger, and keeps explicit-target-casing behaviour (NAM-001, NAM-003) untouched.",
         "Reviewed AUDIT-005..008 for issue #202: each states a product outcome about which files analysis reports on, carries one trigger, and AUDIT-008 records the fail-open decision so an inconclusive version-control probe can never silently drop files.",
         "Reviewed AUDIT-009..010 for issue #202: AUDIT-009 generalises the exclusion across every architecture report, and AUDIT-010 states the consequence that motivated pruning the graph rather than filtering the report.",
-        "Reviewed ANLY-013..014 for issue #207: ANLY-013 states the product outcome that a package binary's tree stays live while explicitly denying it public API, and ANLY-014 keeps an unresolvable bin target non-destructive in line with ANLY-006. ANLY-005 gained one clause recording that a bin-only target confers no public API, so the two entrypoint kinds cannot be conflated."
+        "Reviewed ANLY-013..014 for issue #207: ANLY-013 states the product outcome that a package binary's tree stays live while explicitly denying it public API, and ANLY-014 keeps an unresolvable bin target non-destructive in line with ANLY-006. ANLY-005 gained one clause recording that a bin-only target confers no public API, so the two entrypoint kinds cannot be conflated.",
+        "Reviewed SIM-001..003 for issue #208: similar shipped on all three surfaces with no scenario governing its verdicts, which is why a wrong-verdict defect had nothing to fail against. SIM-001 pins that real duplication is still reported at any declaration size, so the two suppression changes cannot be satisfied by silencing the command; SIM-002 states the withholding outcome; SIM-003 requires the reported verdict to match the evidence that produced it."
       ]
     },
     "implementation": {
       "status": "PASS",
-      "receiptId": "IMPL-20260810-017",
+      "receiptId": "IMPL-20260810-018",
       "validator": "bun-test-plus-clause-audit",
       "validatorVersion": "1.3.14+generate-requirements-2.0.0",
       "command": "bun /Users/matthewherod/.claude/skills/generate-requirements/scripts/validate-bdd.js /Users/matthewherod/Development/resect/REQUIREMENTS.md --status-log /Users/matthewherod/Development/resect/.requirements-status.json",
-      "requirementsSha256": "0b14a51f0f63c8600f5093438dbc002fbdedcfef706003dad46aa64aaaca9564",
-      "sourceCommit": "1f364b8783c62df776390fa83e1e25e476a62b77",
-      "generatedAt": "2026-08-09T23:09:26Z",
+      "requirementsSha256": "ff6b237c5995a523819e395f4ce23d7300ebb506a791084cf052c021943f86bc",
+      "sourceCommit": "4a0c8d2",
+      "generatedAt": "2026-08-10T00:40:47Z",
       "counts": {
-        "checked": 79,
+        "checked": 82,
         "errors": 0,
         "warnings": 0
       },
@@ -102,33 +103,34 @@
         "NAM-006..008 verified against src/commands/naming.ts discriminatesCasing, isDeliberatelyPrefixed, and the Majority.sampleSize denominator; covered by src/commands/naming.test.ts.",
         "AUDIT-005..008 verified against src/core/non-source-files.ts, src/core/git.ts partitionGitignored, and src/commands/audit.ts prepareAuditGraph; covered by src/commands/audit.test.ts.",
         "AUDIT-009..010 verified against unused, barrel, similar and naming wiring; the ignored-consumer case is covered by src/commands/unused.test.ts.",
-        "ANLY-013..014 verified against src/core/package-entrypoints.ts collectBinSpecifiers and resolveBinReachabilityRoots, src/commands/unused.ts binRoots wiring, and src/commands/analyze.ts packageBinEntrypoint; covered by src/commands/unused.test.ts and src/commands/analyze.test.ts. Red-green confirmed: removing binRoots from liveRoots fails the two rooting tests."
+        "ANLY-013..014 verified against src/core/package-entrypoints.ts collectBinSpecifiers and resolveBinReachabilityRoots, src/commands/unused.ts binRoots wiring, and src/commands/analyze.ts packageBinEntrypoint; covered by src/commands/unused.test.ts and src/commands/analyze.test.ts. Red-green confirmed: removing binRoots from liveRoots fails the two rooting tests.",
+        "SIM-001..003 verified against src/core/similarity.ts scoreToBucket structural-identity capping and the now-unbounded member-name penalty; covered by src/core/similarity.test.ts. Red-green confirmed per change: restoring the <=5 member gate fails the large-interface test, and removing the exact-bucket cap fails the coincidental-score test. Corpus effect on this repository: 33 groups to 29, exact 1 to 0; the reported false positive fell from 1.0 exact to 0.756 medium."
       ]
     }
   },
   "metrics": {
-    "totalScenarios": 79,
+    "totalScenarios": 82,
     "byDelivery": {
-      "V1": 79,
+      "V1": 82,
       "V2": 0,
       "LATER": 0,
       "UNSLICED": 0
     },
     "byDecision": {
-      "DECIDED": 79,
+      "DECIDED": 82,
       "OPEN": 0
     },
     "byPriority": {
       "P0": 4,
       "P1": 40,
-      "P2": 35,
+      "P2": 38,
       "P3": 0
     },
     "priorityByDelivery": {
       "V1": {
         "P0": 4,
         "P1": 40,
-        "P2": 35,
+        "P2": 38,
         "P3": 0
       },
       "V2": {
@@ -151,15 +153,15 @@
       }
     },
     "byFidelity": {
-      "VERIFIED": 79,
+      "VERIFIED": 82,
       "DRIFTED": 0,
       "MISSING": 0,
       "UNTESTABLE": 0
     },
     "coverage": {
       "v1Decided": {
-        "eligible": 79,
-        "verified": 79,
+        "eligible": 82,
+        "verified": 82,
         "percentage": 100
       },
       "v1LaunchCritical": {
@@ -201,8 +203,8 @@
     "fidelityNoteMismatchIds": [],
     "orphanAnchorIds": [],
     "preamble": {
-      "linesBeforeFirstScenario": 120,
-      "percentageBeforeFirstScenario": 14.4,
+      "linesBeforeFirstScenario": 121,
+      "percentageBeforeFirstScenario": 14,
       "warning": false,
       "disposition": null
     },

@@ -1815,6 +1815,106 @@ interface FetchOptions {
 		});
 		expect(groups.length).toBeGreaterThanOrEqual(1);
 	});
+
+	// #208: the member-name penalty used to be gated to <=5 members, which
+	// withheld it from exactly the pairs that need it. These are the three
+	// interfaces the tool reported as an "exact duplicate" at score 1.0.
+	test("does not group large interfaces whose member names mostly differ", () => {
+		const code = `
+interface MoveBatchResult {
+  success: boolean;
+  dryRun: boolean;
+  items: MoveBatchItemResult[];
+  applied: MoveBatchItemResult[];
+  failed: MoveBatchItemResult[];
+  typecheck?: VerificationResult;
+  projectRoot: string;
+  journalEntryId?: string;
+}
+interface DepsApplyResult {
+  success: boolean;
+  dryRun: boolean;
+  applied: boolean;
+  report: DependencyContractReport;
+  edits: SerializedEdit[];
+  modifiedFiles: string[];
+  lockfileUpdated: boolean;
+  lockfileCommand?: string[];
+  verificationReport?: DependencyContractReport;
+}
+`;
+		const fns = collectFunctions(makeSourceFile(code), "test.ts");
+		const groups = findSimilarGroups(fns, { threshold: 0.8 });
+		expect(groups).toHaveLength(0);
+	});
+
+	// #208: a group reaching 1.0 through bigram Jaccard must not claim to be an
+	// exact duplicate "after normalization" — its normalized bodies differ.
+	test("reports a coincidental perfect score as high rather than exact", () => {
+		const normalizedA = "{ $I : $I ; $I : $I [ ] ; $I ? : $I ; }";
+		const normalizedB = "{ $I : $I ; $I : $I [ ] ; $I ? : $I ; $I : $I ; }";
+		expect(normalizedA).not.toBe(normalizedB);
+		const shapeA: ReturnType<typeof collectFunctions>[number] = {
+			file: "a.ts",
+			name: "ScanReport",
+			kind: "interface" as const,
+			line: 1,
+			column: 0,
+			normalizedBody: normalizedA,
+			tokenCount: tokenize(normalizedA).length,
+			bodyLength: 90,
+			bodyLines: 5,
+			hasDirective: false,
+			isWrapper: false,
+			isTypeGuard: false,
+			extendsNames: [],
+			// High member overlap, so the member-name penalty does not apply and the
+			// bucket label is the only thing under test.
+			memberNames: ["directory", "findings", "summary"],
+			contentTokens: ["directory", "findings", "summary"],
+		};
+		const shapeB: ReturnType<typeof collectFunctions>[number] = {
+			...shapeA,
+			file: "b.ts",
+			name: "ScanReportExtended",
+			normalizedBody: normalizedB,
+			tokenCount: tokenize(normalizedB).length,
+			bodyLength: 108,
+			bodyLines: 6,
+			memberNames: ["directory", "findings", "summary", "generatedAt"],
+			contentTokens: ["directory", "findings", "summary", "generatedAt"],
+		};
+
+		const groups = findSimilarGroups([shapeA, shapeB], { threshold: 0.8 });
+		expect(groups).toHaveLength(1);
+		expect(groups[0]?.score).toBeGreaterThanOrEqual(0.999);
+		expect(groups[0]?.bucket).toBe("high");
+	});
+
+	// The penalty must not silence real duplication at any size.
+	test("still reports large interfaces that genuinely duplicate each other", () => {
+		const members = [
+			"  success: boolean;",
+			"  dryRun: boolean;",
+			"  modifiedFiles: string[];",
+			"  errors: string[];",
+			"  rolledBack: boolean;",
+			"  typecheck?: VerificationResult;",
+			"  projectRoot: string;",
+		].join("\n");
+		const code = `
+interface FirstApplyResult {
+${members}
+}
+interface SecondApplyResult {
+${members}
+}
+`;
+		const fns = collectFunctions(makeSourceFile(code), "test.ts");
+		const groups = findSimilarGroups(fns, { threshold: 0.8 });
+		expect(groups).toHaveLength(1);
+		expect(groups[0]?.bucket).toBe("exact");
+	});
 });
 
 describe("size ratio and token ratio guards", () => {
