@@ -46,11 +46,14 @@ Options:
   -v, --version     Show version
   -n, --dry-run     Preview changes without modifying files
   --force           Allow mutating commands when the git worktree has uncommitted changes
+  --journal         Record the applied operation for a later resect undo
   -p, --project     Path to project directory or tsconfig.json
   -t, --type        Filter type for find command (file, export, all)
   --prefer          Strategy for alias command (alias, relative, shortest)
   --rename-specifier  Rewrite exact import specifier pairs: <from>=<to> (repeatable)
   --batch           Move pairs from a JSON manifest using one shared project context
+  --transform       Apply declarative AST rewrites from a config file (move command)
+  --extensions      File-extension policy for rewritten specifiers: preserve, explicit
   --verify          Enable type checking verification, overriding project config
   --no-verify       Disable type checking verification (enabled by default)
   --verbose         Enable verbose output
@@ -68,10 +71,14 @@ Options:
   --kinds           Comma-separated kinds for similar command: function,type,interface
   --bucket          Filter by similarity bucket: exact, high, medium (similar command)
   --format          Output format: compact (similar command)
+  --group           Target a specific group number from similar output (extract-common)
+  -o, --output      Write extracted functions to this file (extract-common)
   --workspace       Scan across all workspace packages (discover, similar, and other commands)
   --experimental    Opt into experimental commands and schemas
   --scope           Limit report findings to a source subtree
   --out             Write command output to a file
+  --entrypoint-globs   Glob pattern(s) for externally dispatched entrypoints (repeatable)
+  --include-ignored    Analyse git-ignored files too (skipped by default)
   --fan-out-threshold  Flag files with more than N imports (default: 10, audit command)
   --fan-in-threshold   Flag files with more than N consumers (default: 10, audit command)
   --export-threshold   Flag files with more than N exports (default: 8, audit command)
@@ -82,6 +89,8 @@ Options:
   --convention-threshold Required __tests__ majority for test relocation (default: 0.7)
   --fix                Attempt command fix mode where supported
   --fix=<categories>  Comma-separated tidy fix categories
+  --fix-category       Apply one tidy fix category (repeatable)
+  --alias-prefer       Alias-normalisation strategy for tidy fixes (alias, relative, shortest)
   --max-changes       Abort tidy --fix above this planned change count
   --ignore          Glob pattern to exclude files (unused command, e.g. "*.test.ts")
 
