@@ -8,6 +8,7 @@ const CLI = ["bun", path.resolve(import.meta.dir, "cli.ts")];
 // Same extraction as command-spec.test.ts uses for per-command help: a help
 // line documents a flag when it starts with optional `-x, ` then `--name`.
 const HELP_FLAG_PATTERN = /^\s+(?:-[a-z],\s+)?--([a-z][a-z-]*)/gm;
+const HELP_FLAG_VARIANT_COUNTS = new Map<string, number>([["fix", 2]]);
 const JSON_PIPE_FIXTURE_FILE_COUNT = 800;
 const JSON_PIPE_EXPORTS_PER_FILE = 12;
 const HUMAN_PIPELINE = 'bun "$@" | head -n 1';
@@ -79,15 +80,22 @@ describe("cli", () => {
 		const { stdout, exitCode } = await runCli(["--help"]);
 		expect(exitCode).toBe(0);
 
-		const documented = new Set<string>();
+		const documented: string[] = [];
 		for (const match of stdout.matchAll(HELP_FLAG_PATTERN)) {
 			const option = match[1];
 			if (option) {
-				documented.add(option);
+				documented.push(option);
 			}
 		}
 
-		expect(documented).toEqual(new Set(Object.keys(OPTION_FLAGS)));
+		const expected = Object.keys(OPTION_FLAGS);
+		expect(new Set(documented)).toEqual(new Set(expected));
+		for (const option of expected) {
+			const occurrences = documented.filter((item) => item === option);
+			expect(occurrences).toHaveLength(
+				HELP_FLAG_VARIANT_COUNTS.get(option) ?? 1
+			);
+		}
 	});
 
 	test("--help documents every short alias beside its long flag", async () => {
