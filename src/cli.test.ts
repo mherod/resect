@@ -2,8 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { OPTION_FLAGS } from "./commands/option-flags.ts";
 
 const CLI = ["bun", path.resolve(import.meta.dir, "cli.ts")];
+// Same extraction as command-spec.test.ts uses for per-command help: a help
+// line documents a flag when it starts with optional `-x, ` then `--name`.
+const HELP_FLAG_PATTERN = /^\s+(?:-[a-z],\s+)?--([a-z][a-z-]*)/gm;
 const JSON_PIPE_FIXTURE_FILE_COUNT = 800;
 const JSON_PIPE_EXPORTS_PER_FILE = 12;
 const HUMAN_PIPELINE = 'bun "$@" | head -n 1';
@@ -67,6 +71,33 @@ describe("cli", () => {
 		const output = await new Response(proc.stdout).text();
 		expect(output).toContain("Usage:");
 		expect(output).toContain("Commands:");
+	});
+
+	test("--help documents exactly the OPTION_FLAGS flag set", async () => {
+		// Per-command help is guarded by command-spec.test.ts; this derives the
+		// global list from OPTION_FLAGS so cli.ts's help text cannot go stale.
+		const { stdout, exitCode } = await runCli(["--help"]);
+		expect(exitCode).toBe(0);
+
+		const documented = new Set<string>();
+		for (const match of stdout.matchAll(HELP_FLAG_PATTERN)) {
+			const option = match[1];
+			if (option) {
+				documented.add(option);
+			}
+		}
+
+		expect(documented).toEqual(new Set(Object.keys(OPTION_FLAGS)));
+	});
+
+	test("--help documents every short alias beside its long flag", async () => {
+		const { stdout } = await runCli(["--help"]);
+		for (const [name, spec] of Object.entries(OPTION_FLAGS)) {
+			const short = (spec as { short?: string }).short;
+			if (short) {
+				expect(stdout).toContain(`-${short}, --${name}`);
+			}
+		}
 	});
 
 	test("unknown command exits with error", async () => {
