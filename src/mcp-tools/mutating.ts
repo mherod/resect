@@ -43,6 +43,7 @@ import {
 	prepareOperationJournal,
 } from "../core/journal.ts";
 import { loadProject, resolveTsConfig } from "../core/project.ts";
+import { normalizePath } from "../core/resolver.ts";
 import { serializeStructuredEdits } from "../core/text-changes.ts";
 import { loadTransformConfig } from "../core/transform-config.ts";
 import {
@@ -168,7 +169,15 @@ export async function moveTool(args: {
 
 	const shouldVerify = args.verify && !args.dryRun;
 	const { result, delta } = shouldVerify
-		? await runWithTypecheckGuard(project, runMove)
+		? await runWithTypecheckGuard(project, runMove, {
+				// Errors pre-existing on the source file re-report at the
+				// destination path after the move; match the CLI's translation so
+				// MCP verification compares the same diagnostic identity (#210).
+				translateBeforeFile: (file) =>
+					normalizePath(file) === normalizePath(absoluteSource)
+						? normalizePath(absoluteTarget)
+						: file,
+			})
 		: { result: await runMove(), delta: undefined };
 
 	// #103 C: a transform move whose post-move verify introduced new type errors
