@@ -141,15 +141,13 @@ export async function initializeGitRepository(
 		? ["init", "-b", options.branch]
 		: ["init", "--template="];
 	await runGitCommand(dir, initArgs);
+	await runGitCommand(dir, ["config", "user.name", "Resect Test"]);
+	await runGitCommand(dir, ["config", "user.email", "resect@example.invalid"]);
 	if (options.commit === false) {
 		return;
 	}
 	await runGitCommand(dir, ["add", "."]);
 	await runGitCommand(dir, [
-		"-c",
-		"user.name=Resect Test",
-		"-c",
-		"user.email=resect@example.invalid",
 		"commit",
 		"-m",
 		options.commitMessage ?? "initial",

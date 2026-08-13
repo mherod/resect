@@ -59,6 +59,18 @@ describe("declarative project fixtures", () => {
 		expect(
 			(await runGitCommand(project.dir, ["status", "--porcelain"])).trim()
 		).toBe("");
+		expect(
+			await runGitCommand(project.dir, ["config", "--local", "user.name"])
+		).toBe("Resect Test\n");
+		expect(
+			await runGitCommand(project.dir, ["config", "--local", "user.email"])
+		).toBe("resect@example.invalid\n");
+		await Bun.write(project.path("src/next.ts"), "export const next = 2;\n");
+		await runGitCommand(project.dir, ["add", "."]);
+		await runGitCommand(project.dir, ["commit", "-m", "next"]);
+		expect(await runGitCommand(project.dir, ["log", "-1", "--format=%s"])).toBe(
+			"next\n"
+		);
 		const result = await project.run(["--version"]);
 		expect(result.exitCode).toBe(0);
 		expect(result.stdout).toContain("resect v");
