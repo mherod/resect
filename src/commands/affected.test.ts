@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
+import path from "node:path";
 import { cleanup, makeFixture } from "./__test-helpers.ts";
 import { affected } from "./affected.ts";
 
@@ -70,7 +71,7 @@ describe("affected engine", () => {
 		}
 	});
 
-	test("workspace option traces cross-package transitive imports", async () => {
+	test("workspace option normalizes project files and includes the base graph once", async () => {
 		const dir = await fixture("workspace-transitive", {
 			"pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n',
 			"tsconfig.json": JSON.stringify({
@@ -81,7 +82,7 @@ describe("affected engine", () => {
 						"@scope/pkg-a": ["packages/pkg-a/src"],
 					},
 				},
-				include: ["packages/**/*.ts"],
+				include: ["packages/**/*.ts", "root-consumer.ts"],
 			}),
 			"packages/pkg-a/package.json": JSON.stringify({
 				name: "@scope/pkg-a",
@@ -118,6 +119,8 @@ describe("affected engine", () => {
 			}),
 			"packages/pkg-b/src/app.ts":
 				"import { helper } from '@scope/pkg-a';\nconsole.log(helper);",
+			"root-consumer.ts":
+				"import { helper } from '@scope/pkg-a';\nconsole.log(helper);",
 		});
 
 		// Build path aliases / resolve specifier mappings for packages
@@ -126,7 +129,7 @@ describe("affected engine", () => {
 		try {
 			const result = await affected({
 				files: ["packages/pkg-a/src/helper.ts"],
-				project: dir,
+				project: path.join(dir, "tsconfig.json"),
 				workspace: true,
 			});
 
@@ -134,6 +137,8 @@ describe("affected engine", () => {
 			expect(result).toContain("packages/pkg-a/src/index.ts");
 			// Check if it also traced the cross-package import in pkg-b/src/app.ts
 			expect(result).toContain("packages/pkg-b/src/app.ts");
+			expect(result).toContain("root-consumer.ts");
+			expect(result).toHaveLength(new Set(result).size);
 		} finally {
 			process.chdir(originalCwd);
 		}

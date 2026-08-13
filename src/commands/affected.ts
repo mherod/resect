@@ -1,16 +1,13 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
-import { mapConcurrent } from "../core/concurrency.ts";
 import {
-	buildDependencyGraph,
-	buildProjectGraphs,
 	type DependencyGraph,
 	findAllReferences,
 	mergeDependencyGraphs,
 } from "../core/graph.ts";
-import { loadProject, resolveTsConfig } from "../core/project.ts";
+import { resolveTsConfig } from "../core/project.ts";
 import { normalizePath } from "../core/resolver.ts";
-import { discoverWorkspace } from "../core/workspace.ts";
+import { buildWorkspaceGraphs } from "../core/workspace-graphs.ts";
 import type { ReadOnlyCommandOptions } from "../types.ts";
 
 export interface AffectedOptions extends ReadOnlyCommandOptions {
@@ -35,19 +32,16 @@ export async function affected(options: AffectedOptions): Promise<string[]> {
 	}
 	const firstFileDir = path.dirname(firstFile);
 
-	let tsconfigPath: string | undefined;
-	if (!workspaceArg) {
-		tsconfigPath = resolveTsConfig(projectArg, firstFileDir) ?? undefined;
-		if (!tsconfigPath) {
-			throw new Error(`Could not find tsconfig.json for ${files[0]}`);
-		}
+	const tsconfigPath = resolveTsConfig(projectArg, firstFileDir) ?? undefined;
+	if (!tsconfigPath) {
+		throw new Error(`Could not find tsconfig.json for ${files[0]}`);
 	}
 
 	const graph = await buildGraphSet(
 		firstFileDir,
+		tsconfigPath,
 		projectArg,
-		workspaceArg,
-		tsconfigPath
+		workspaceArg
 	);
 
 	const affectedSet = new Set<string>();
@@ -85,39 +79,23 @@ export async function affected(options: AffectedOptions): Promise<string[]> {
  */
 async function buildGraphSet(
 	firstFileDir: string,
+	tsconfigPath: string,
 	projectArg?: string,
-	workspaceArg?: boolean,
-	tsconfigPath?: string
+	workspaceArg?: boolean
 ): Promise<DependencyGraph> {
-	if (workspaceArg) {
-		const workspaceDir = projectArg ? path.resolve(projectArg) : firstFileDir;
-		const workspace = await discoverWorkspace(workspaceDir);
-		if (workspace && workspace.packages.length > 0) {
-			const packageGraphs = await mapConcurrent(
-				workspace.packages.filter((pkg) => pkg.tsconfigPath),
-				async (pkg) => buildProjectGraphs(pkg.tsconfigPath as string),
-				{ onError: () => [] }
-			);
-			const allGraphs = packageGraphs.flat().map(({ graph }) => graph);
-			if (allGraphs.length > 0) {
-				return mergeDependencyGraphs(allGraphs);
-			}
-		}
+	const { graphs } = await buildWorkspaceGraphs({
+		project: projectArg,
+		reportDirectory: firstFileDir,
+		tsconfigPath,
+		workspace: workspaceArg,
+	});
+	const firstGraph = graphs[0]?.graph;
+	if (!firstGraph) {
+		throw new Error("Could not build dependency graph");
 	}
-
-	let resolvedTsConfigPath = tsconfigPath;
-	if (!resolvedTsConfigPath) {
-		resolvedTsConfigPath =
-			resolveTsConfig(projectArg, firstFileDir) ?? undefined;
-		if (!resolvedTsConfigPath) {
-			throw new Error("Could not find tsconfig.json");
-		}
-	}
-
-	const projectGraphs = await buildProjectGraphs(resolvedTsConfigPath);
-	return projectGraphs.length > 1
-		? mergeDependencyGraphs(projectGraphs.map((g) => g.graph))
-		: buildDependencyGraph(loadProject(resolvedTsConfigPath));
+	return graphs.length > 1
+		? mergeDependencyGraphs(graphs.map(({ graph }) => graph))
+		: firstGraph;
 }
 
 export async function affectedCommand(options: AffectedOptions): Promise<void> {
