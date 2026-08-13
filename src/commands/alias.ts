@@ -47,6 +47,7 @@ import {
 import {
 	discoverWorkspace,
 	filterToWorkspaceBoundary,
+	type WorkspacePackage,
 } from "../core/workspace.ts";
 import { getRuntime } from "../runtime/index.ts";
 import type { ModuleReference } from "../types/graph.ts";
@@ -90,6 +91,12 @@ export interface AliasResult {
 	 * never silently incomplete (issue #113).
 	 */
 	missedEquivalents?: MissedEquivalent[];
+}
+
+interface WorkspaceAliasPackageResult {
+	changes: AliasChange[];
+	filesProcessed: number;
+	project: ProjectConfig | null;
 }
 
 export interface AliasChange extends UpdatedReference {
@@ -193,9 +200,11 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 			logger.info(`   Strategy: ${prefer}\n`);
 		}
 
-		const { mapConcurrent } = await import("../core/concurrency.ts");
 		const eligiblePkgs = wsInfo.packages.filter((pkg) => pkg.tsconfigPath);
-		const pkgResults = await mapConcurrent(
+		const pkgResults = await mapConcurrent<
+			WorkspacePackage,
+			WorkspaceAliasPackageResult
+		>(
 			eligiblePkgs,
 			async (pkg) => {
 				const pkgProject = loadProject(pkg.tsconfigPath as string);
@@ -209,14 +218,22 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 				const bounded = pkgResult.changes.filter(
 					(c) => filterToWorkspaceBoundary([c.file], wsInfo.root).length > 0
 				);
-				return { changes: bounded, filesProcessed: pkgResult.filesProcessed };
+				return {
+					changes: bounded,
+					filesProcessed: pkgResult.filesProcessed,
+					project: pkgProject,
+				};
 			},
 			{
 				onError: (pkg) => {
 					if (verbose) {
 						logger.warn(`   Skipping ${pkg.name}: failed to load project`);
 					}
-					return { changes: [] as AliasChange[], filesProcessed: 0 };
+					return {
+						changes: [] as AliasChange[],
+						filesProcessed: 0,
+						project: null,
+					};
 				},
 			}
 		);
@@ -249,22 +266,52 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 				printResults(result, dryRun, verbose, wsInfo.root);
 			}
 		} else {
-			await applyChanges(result.changes);
-			const journalEntry = await completeOperationJournal(journalContext, {
-				args: {
-					prefer,
-					target: path.relative(wsInfo.root, absoluteTarget),
-					workspace: true,
-				},
-				command: "alias",
-			});
+			const projects = pkgResults.flatMap(({ project }) =>
+				project ? [project] : []
+			);
+			const verifyResult = verify
+				? await applyChangesWithWorkspaceVerification(
+						result.changes,
+						projects,
+						wsInfo.root
+					)
+				: undefined;
+			if (!verify) {
+				await applyChanges(result.changes);
+			}
+			const journalEntry =
+				(verifyResult?.success ?? true)
+					? await completeOperationJournal(journalContext, {
+							args: {
+								prefer,
+								target: path.relative(wsInfo.root, absoluteTarget),
+								workspace: true,
+							},
+							command: "alias",
+						})
+					: null;
 			if (json) {
-				printAliasResultJson(result, wsInfo.root, undefined, journalEntry?.id);
+				printAliasResultJson(
+					result,
+					wsInfo.root,
+					verifyResult,
+					journalEntry?.id
+				);
 			} else {
 				printResults(result, dryRun, verbose, wsInfo.root);
+				if (verifyResult) {
+					logger.empty();
+					printVerificationResults(verifyResult);
+				}
 				if (journalEntry) {
 					logger.info(`Journaled operation ${journalEntry.id}`);
 				}
+			}
+			if (verifyResult && !verifyResult.success) {
+				logger.error(
+					"\nType checking failed. Workspace alias changes were rolled back."
+				);
+				process.exit(1);
 			}
 		}
 		return;
@@ -781,21 +828,58 @@ export async function applyChangesWithVerification(
 	changes: AliasChange[],
 	project: ProjectConfig
 ): Promise<VerificationResult> {
+	return applyChangesWithWorkspaceVerification(
+		changes,
+		[project],
+		project.rootDir
+	);
+}
+
+async function applyChangesWithWorkspaceVerification(
+	changes: AliasChange[],
+	projects: ProjectConfig[],
+	rollbackRoot: string
+): Promise<VerificationResult> {
+	const uniqueProjects = [
+		...new Map(
+			projects.map((project) => [normalizePath(project.tsconfigPath), project])
+		).values(),
+	];
 	const rollback = await createRollbackCheckpoint(
 		createGitFilesRollbackStrategy(
-			project.rootDir,
+			rollbackRoot,
 			changes.map((change) => change.file)
 		)
 	);
-	const before = await runTypeCheckDetailed(project);
+	const before = await mapConcurrent(uniqueProjects, runTypeCheckDetailed);
 	await applyChanges(changes);
-	const after = await runTypeCheckDetailed(project);
-	const errorsBefore = before.errors;
-	const errorsAfter = after.errors;
-	// Compare by normalized diagnostic identity, not raw string equality, so a
-	// pre-existing error whose line/col shifted isn't misreported as new (#128).
-	const { newErrors, fixedErrors } = diffDiagnostics(errorsBefore, errorsAfter);
-	const verificationIncomplete = before.incomplete || after.incomplete;
+	const after = await mapConcurrent(uniqueProjects, runTypeCheckDetailed);
+	const deltas = before.map((beforeResult, index) => {
+		const afterResult = after[index];
+		if (!afterResult) {
+			throw new Error(
+				"Workspace verification result count changed after apply"
+			);
+		}
+		const { newErrors, fixedErrors } = diffDiagnostics(
+			beforeResult.errors,
+			afterResult.errors
+		);
+		return {
+			errorsBefore: beforeResult.errors,
+			errorsAfter: afterResult.errors,
+			newErrors,
+			fixedErrors,
+			verificationIncomplete: beforeResult.incomplete || afterResult.incomplete,
+		};
+	});
+	const errorsBefore = deltas.flatMap((delta) => delta.errorsBefore);
+	const errorsAfter = deltas.flatMap((delta) => delta.errorsAfter);
+	const newErrors = deltas.flatMap((delta) => delta.newErrors);
+	const fixedErrors = deltas.flatMap((delta) => delta.fixedErrors);
+	const verificationIncomplete = deltas.some(
+		(delta) => delta.verificationIncomplete
+	);
 	const result: VerificationResult = {
 		success: newErrors.length === 0 && !verificationIncomplete,
 		errorsBefore,
