@@ -1,85 +1,13 @@
-import { afterAll, describe, expect, test } from "bun:test";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import ts from "typescript";
-import { makeTempDir, runCli, runGitCommand } from "./__test-helpers.ts";
+import {
+	initializeGitRepository,
+	runCli,
+	runGitCommand,
+} from "./__test-helpers.ts";
+import { makeMutationCliProject } from "./mutation-test-helpers.ts";
 import { renameInSourceFile } from "./rename";
-
-const tempDirs: string[] = [];
-
-afterAll(async () => {
-	for (const dir of tempDirs) {
-		await rm(dir, { recursive: true, force: true });
-	}
-});
-
-async function makeRenameCliProject(): Promise<{
-	apiPath: string;
-	consumerPath: string;
-	tsconfigPath: string;
-}> {
-	const dir = await makeTempDir("rename");
-	tempDirs.push(dir);
-	const srcDir = path.join(dir, "src");
-	await mkdir(srcDir, { recursive: true });
-	const tsconfigPath = path.join(dir, "tsconfig.json");
-	await writeFile(
-		tsconfigPath,
-		JSON.stringify({
-			compilerOptions: {
-				module: "ESNext",
-				moduleResolution: "Bundler",
-				noEmit: true,
-				strict: true,
-				target: "ESNext",
-				types: [],
-			},
-			include: ["src/**/*.ts"],
-		})
-	);
-	const apiPath = path.join(srcDir, "api.ts");
-	const consumerPath = path.join(srcDir, "consumer.ts");
-	await writeFile(apiPath, "export const foo = 1;\n");
-	await writeFile(
-		consumerPath,
-		'import * as api from "./api";\nexport const value: 1 = api.foo;\n'
-	);
-	return { apiPath, consumerPath, tsconfigPath };
-}
-
-async function makeCommonJsRenameProject(): Promise<{
-	apiPath: string;
-	consumerPath: string;
-	tsconfigPath: string;
-}> {
-	const dir = await makeTempDir("rename-commonjs");
-	tempDirs.push(dir);
-	const srcDir = path.join(dir, "src");
-	await mkdir(srcDir, { recursive: true });
-	const tsconfigPath = path.join(dir, "tsconfig.json");
-	await writeFile(
-		tsconfigPath,
-		JSON.stringify({
-			compilerOptions: {
-				module: "CommonJS",
-				moduleResolution: "Node",
-				noEmit: true,
-				strict: true,
-				target: "ESNext",
-				types: [],
-			},
-			include: ["src/**/*.ts"],
-		})
-	);
-	const apiPath = path.join(srcDir, "api.ts");
-	const consumerPath = path.join(srcDir, "consumer.ts");
-	await writeFile(apiPath, "function Thing() { return 1; }\nexport = Thing;\n");
-	await writeFile(
-		consumerPath,
-		'import Thing = require("./api");\nexport const value = Thing();\n'
-	);
-	return { apiPath, consumerPath, tsconfigPath };
-}
 
 function buildProgram(source: string): {
 	program: ts.Program;
@@ -248,7 +176,10 @@ describe("renameInSourceFile — shadowing", () => {
 describe("rename CLI verification", () => {
 	test("renames the identifier behind an export-equals assignment", async () => {
 		const { apiPath, consumerPath, tsconfigPath } =
-			await makeCommonJsRenameProject();
+			await makeMutationCliProject({
+				moduleStyle: "commonjs",
+				operation: "rename",
+			});
 
 		const result = await runCli([
 			"rename",
@@ -270,7 +201,9 @@ describe("rename CLI verification", () => {
 	});
 
 	test("dry-run edits reproduce the real rename without writing", async () => {
-		const { apiPath, tsconfigPath } = await makeRenameCliProject();
+		const { apiPath, tsconfigPath } = await makeMutationCliProject({
+			operation: "rename",
+		});
 		const before = await Bun.file(apiPath).text();
 
 		const human = await runCli([
@@ -339,19 +272,9 @@ describe("rename CLI verification", () => {
 
 	test("rolls back when the rename introduces a typecheck delta", async () => {
 		const { apiPath, consumerPath, tsconfigPath } =
-			await makeRenameCliProject();
+			await makeMutationCliProject({ operation: "rename" });
 		const projectRoot = path.dirname(tsconfigPath);
-		await runGitCommand(projectRoot, ["init", "--template="]);
-		await runGitCommand(projectRoot, ["add", "."]);
-		await runGitCommand(projectRoot, [
-			"-c",
-			"user.name=Resect Test",
-			"-c",
-			"user.email=resect@example.invalid",
-			"commit",
-			"-m",
-			"initial",
-		]);
+		await initializeGitRepository(projectRoot);
 
 		const result = await runCli([
 			"rename",
@@ -381,19 +304,9 @@ describe("rename CLI verification", () => {
 
 	test("forced dirty verification failure preserves user and rename edits", async () => {
 		const { apiPath, consumerPath, tsconfigPath } =
-			await makeRenameCliProject();
+			await makeMutationCliProject({ operation: "rename" });
 		const projectRoot = path.dirname(tsconfigPath);
-		await runGitCommand(projectRoot, ["init", "--template="]);
-		await runGitCommand(projectRoot, ["add", "."]);
-		await runGitCommand(projectRoot, [
-			"-c",
-			"user.name=Resect Test",
-			"-c",
-			"user.email=resect@example.invalid",
-			"commit",
-			"-m",
-			"initial",
-		]);
+		await initializeGitRepository(projectRoot);
 		await Bun.write(
 			apiPath,
 			`${await Bun.file(apiPath).text()}// dirty user edit\n`
@@ -428,7 +341,7 @@ describe("rename CLI verification", () => {
 
 	test("--no-verify preserves the legacy unchecked CLI path", async () => {
 		const { apiPath, consumerPath, tsconfigPath } =
-			await makeRenameCliProject();
+			await makeMutationCliProject({ operation: "rename" });
 
 		const result = await runCli([
 			"rename",

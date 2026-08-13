@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { renameSpecifierInputSchema } from "./mcp-server.ts";
 import {
 	REGISTRATION_MODULES,
 	readRegistrationSource,
-} from "./commands/__test-helpers.ts";
-import { renameSpecifierInputSchema } from "./mcp-server.ts";
+} from "./mcp-tools/registration-test-helpers.ts";
 
 /**
  * MCP inputSchema ↔ CLI options parity guard (#129).

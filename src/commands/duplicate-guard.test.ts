@@ -1,41 +1,20 @@
-import { afterAll, describe, expect, test } from "bun:test";
-import { rm, writeFile } from "node:fs/promises";
-import path from "node:path";
+import { describe, expect, test } from "bun:test";
 import { loadProject } from "../core/project.ts";
-import { makeTempDir } from "./__test-helpers.ts";
+import { makeProject } from "./__test-helpers.ts";
 import { renameSymbol } from "./rename.ts";
-
-const tempDirs: string[] = [];
-
-afterAll(async () => {
-	for (const dir of tempDirs) {
-		await rm(dir, { recursive: true, force: true });
-	}
-});
 
 async function setupProject(fileContent: string): Promise<{
 	filePath: string;
 	project: ReturnType<typeof loadProject>;
 }> {
-	const dir = await makeTempDir("dup-guard");
-	tempDirs.push(dir);
-	await writeFile(
-		path.join(dir, "tsconfig.json"),
-		JSON.stringify({
-			compilerOptions: {
-				module: "ESNext",
-				moduleResolution: "Bundler",
-				noEmit: true,
-				strict: true,
-				target: "ESNext",
-				types: [],
-			},
-			include: ["**/*.ts"],
-		})
-	);
-	const filePath = path.join(dir, "mod.ts");
-	await writeFile(filePath, fileContent);
-	const project = loadProject(path.join(dir, "tsconfig.json"), filePath);
+	const fixture = await makeProject({
+		name: "dup-guard",
+		files: { "mod.ts": fileContent },
+		outsideRepo: true,
+		tsconfig: "bundler",
+	});
+	const filePath = fixture.path("mod.ts");
+	const project = loadProject(fixture.path("tsconfig.json"), filePath);
 	return { filePath, project };
 }
 

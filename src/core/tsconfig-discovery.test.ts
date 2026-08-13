@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { initializeGitRepository } from "../commands/__test-helpers.ts";
 import {
 	discoverProject,
 	type ProjectDiscovery,
@@ -10,12 +11,7 @@ import {
 
 async function initGitRepo(dir: string): Promise<void> {
 	await mkdir(dir, { recursive: true });
-	const proc = Bun.spawn(["git", "init", "-b", "main"], {
-		cwd: dir,
-		stdout: "pipe",
-		stderr: "pipe",
-	});
-	await proc.exited;
+	await initializeGitRepository(dir, { branch: "main", commit: false });
 }
 
 /** Write a minimal compiling project (tsconfig + one source file) at `dir`. */

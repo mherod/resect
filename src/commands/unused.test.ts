@@ -1,18 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import { createSourceFileFromText } from "../core/source-file.ts";
-import { CLI, cleanup, makeFixture as makeFixtureBase } from "./__test-helpers";
+import {
+	CLI,
+	cleanup,
+	initializeGitRepository,
+	makeStrictFixture as makeFixture,
+	makeFixture as makeFixtureBase,
+} from "./__test-helpers";
 import { countInternalReferences, findUnusedExports } from "./unused.ts";
-
-async function makeFixture(name: string, files: Record<string, string>) {
-	return makeFixtureBase(`unused-${name}`, {
-		"tsconfig.json": JSON.stringify({
-			compilerOptions: { strict: true },
-			include: ["**/*.ts"],
-		}),
-		...files,
-	});
-}
 
 interface UnusedJsonReport {
 	excludedEntrypointFiles: string[];
@@ -1570,12 +1566,7 @@ describe("unused non-source exclusion", () => {
 			},
 			{ outsideRepo: true }
 		);
-		const init = Bun.spawn(["git", "init", "-b", "main"], {
-			cwd: dir,
-			stdout: "pipe",
-			stderr: "pipe",
-		});
-		await init.exited;
+		await initializeGitRepository(dir, { branch: "main", commit: false });
 		return dir;
 	}
 

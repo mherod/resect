@@ -2,60 +2,30 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { loadProject } from "../core/project.ts";
+import { makeProject } from "./__test-helpers.ts";
 import { applyChanges } from "./alias.ts";
 import { inlineBarrel, inlineCommand } from "./inline.ts";
-
-// Helpers used by dirty-worktree tests
-async function gitCmd(cwd: string, args: string[]): Promise<void> {
-	const proc = Bun.spawn(["git", ...args], {
-		cwd,
-		stdout: "pipe",
-		stderr: "pipe",
-	});
-	await proc.exited;
-}
 
 async function makeDirtyGitProject(
 	files: Record<string, string>
 ): Promise<{ dir: string }> {
-	const { tmpdir } = await import("node:os");
-	const { mkdtemp } = await import("node:fs/promises");
-	const dir = await mkdtemp(path.join(tmpdir(), "resect-inline-dirty-"));
-
-	// Write tsconfig
-	await writeFile(
-		path.join(dir, "tsconfig.json"),
-		JSON.stringify(
-			{
-				compilerOptions: {
-					module: "ESNext",
-					moduleResolution: "Bundler",
-					noEmit: true,
-					strict: true,
-					target: "ESNext",
-				},
-				include: ["**/*.ts"],
+	const fixture = await makeProject({
+		name: "inline-dirty",
+		files,
+		git: { commitMessage: "init" },
+		outsideRepo: true,
+		tsconfig: {
+			compilerOptions: {
+				module: "ESNext",
+				moduleResolution: "Bundler",
+				noEmit: true,
+				strict: true,
+				target: "ESNext",
 			},
-			null,
-			2
-		)
-	);
-
-	// Write fixture files
-	for (const [rel, content] of Object.entries(files)) {
-		const full = path.join(dir, rel);
-		await mkdir(path.dirname(full), { recursive: true });
-		await writeFile(full, content);
-	}
-
-	// Init a clean git repo and commit everything
-	await gitCmd(dir, ["init", "--template="]);
-	await gitCmd(dir, ["config", "user.email", "test@test.com"]);
-	await gitCmd(dir, ["config", "user.name", "Test"]);
-	await gitCmd(dir, ["add", "."]);
-	await gitCmd(dir, ["commit", "-m", "init"]);
-
-	return { dir };
+			include: ["**/*.ts"],
+		},
+	});
+	return { dir: fixture.dir };
 }
 
 // ── Fixture setup ──────────────────────────────────────────────────

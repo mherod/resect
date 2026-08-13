@@ -1,13 +1,109 @@
+import { afterAll } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { loadProject, resolveTsConfig } from "../core/project.ts";
-import { discoverWorkspace } from "../core/workspace.ts";
-import type { MoveResult } from "../types/move.ts";
-import { moveModule } from "./move.ts";
 
 export const CLI = ["bun", path.resolve(import.meta.dir, "../cli.ts")];
+
+const fixtureDirectories = new Set<string>();
+
+afterAll(async () => {
+	for (const dir of [...fixtureDirectories]) {
+		await cleanup(dir);
+	}
+});
+
+export interface CliResult {
+	stdout: string;
+	stderr: string;
+	exitCode: number | null;
+}
+
+export interface RunCliOptions {
+	cwd?: string;
+	env?: Record<string, string | undefined>;
+}
+
+export type TsconfigPreset = "strict" | "strict-base-url" | "bundler";
+
+export interface GitFixtureOptions {
+	branch?: string;
+	commit?: boolean;
+	commitMessage?: string;
+}
+
+export interface ProjectFixtureOptions {
+	name: string;
+	files: Record<string, string>;
+	tsconfig?: TsconfigPreset | Record<string, unknown>;
+	git?: boolean | GitFixtureOptions;
+	outsideRepo?: boolean;
+	root?: string;
+}
+
+export interface ProjectFixture {
+	dir: string;
+	path: (relativePath: string) => string;
+	run: (args: string[], options?: RunCliOptions) => Promise<CliResult>;
+	runJson: <T>(args: string[], options?: RunCliOptions) => Promise<T>;
+	captureOutput: (
+		fn: () => Promise<void> | void
+	) => Promise<{ stdout: string; stderr: string }>;
+	cleanup: () => Promise<void>;
+}
+
+interface FixtureOptions {
+	/** When true, writes the strict preset unless one is provided in files. */
+	tsconfig?: boolean | TsconfigPreset | Record<string, unknown>;
+	/** Put generated fixtures outside the repo when files use *.test.* names. */
+	outsideRepo?: boolean;
+	/** Override the directory under which the unique fixture is created. */
+	root?: string;
+}
+
+const TSCONFIG_PRESETS: Record<TsconfigPreset, Record<string, unknown>> = {
+	strict: {
+		compilerOptions: { strict: true },
+		include: ["**/*.ts"],
+	},
+	"strict-base-url": {
+		compilerOptions: { baseUrl: ".", strict: true },
+		include: ["**/*.ts"],
+	},
+	bundler: {
+		compilerOptions: {
+			module: "ESNext",
+			moduleResolution: "Bundler",
+			noEmit: true,
+			strict: true,
+			target: "ESNext",
+			types: [],
+		},
+		include: ["**/*.ts"],
+	},
+};
+
+function resolveTsconfig(
+	tsconfig: ProjectFixtureOptions["tsconfig"]
+): Record<string, unknown> | undefined {
+	if (!tsconfig) {
+		return undefined;
+	}
+	return typeof tsconfig === "string" ? TSCONFIG_PRESETS[tsconfig] : tsconfig;
+}
+
+function normalizeFixtureTsconfig(
+	tsconfig: FixtureOptions["tsconfig"]
+): ProjectFixtureOptions["tsconfig"] {
+	if (tsconfig === true) {
+		return "strict";
+	}
+	if (tsconfig === false) {
+		return undefined;
+	}
+	return tsconfig;
+}
 
 export function parseMcpTextPayload<T>(result: CallToolResult): T {
 	const content = result.content[0];
@@ -37,48 +133,77 @@ export async function runGitCommand(
 	return stdout;
 }
 
-/**
- * Run `moveModule` against a fixture directory, resolving its tsconfig and
- * (optional) workspace the way the cross-package move suites need. Shared by
- * the move test suites (#118 dependency sync, #121 self-import rewrite) so the
- * fixture-move plumbing lives in one place.
- */
-export async function moveInFixture(
+export async function initializeGitRepository(
 	dir: string,
-	source: string,
-	target: string,
-	dryRun = false,
-	force = false
-): Promise<MoveResult> {
-	const absSource = path.join(dir, source);
-	const tsconfigPath = resolveTsConfig(dir, path.dirname(absSource));
-	if (!tsconfigPath) {
-		throw new Error("tsconfig not found");
+	options: GitFixtureOptions = {}
+): Promise<void> {
+	const initArgs = options.branch
+		? ["init", "-b", options.branch]
+		: ["init", "--template="];
+	await runGitCommand(dir, initArgs);
+	if (options.commit === false) {
+		return;
 	}
-	const project = loadProject(tsconfigPath, absSource);
-	const workspace = (await discoverWorkspace(dir)) ?? undefined;
-	return moveModule(
-		absSource,
-		path.join(dir, target),
-		project,
-		dryRun,
-		false,
-		workspace,
-		force
-	);
+	await runGitCommand(dir, ["add", "."]);
+	await runGitCommand(dir, [
+		"-c",
+		"user.name=Resect Test",
+		"-c",
+		"user.email=resect@example.invalid",
+		"commit",
+		"-m",
+		options.commitMessage ?? "initial",
+	]);
 }
 
-interface CliResult {
-	stdout: string;
-	stderr: string;
-	exitCode: number | null;
-}
+export async function makeProject(
+	options: ProjectFixtureOptions
+): Promise<ProjectFixture> {
+	const fixtureRoot =
+		options.root ??
+		(options.outsideRepo
+			? path.join(tmpdir(), "resect-fixtures")
+			: path.join(import.meta.dir, "__fixtures__"));
+	await mkdir(fixtureRoot, { recursive: true });
+	const dir = await mkdtemp(path.join(fixtureRoot, `${options.name}-`));
+	fixtureDirectories.add(dir);
 
-interface FixtureOptions {
-	/** When true, writes a default tsconfig.json unless one is provided in files */
-	tsconfig?: boolean;
-	/** Put generated fixtures outside the repo when files use *.test.* names */
-	outsideRepo?: boolean;
+	const tsconfig = resolveTsconfig(options.tsconfig);
+	if (tsconfig && !options.files["tsconfig.json"]) {
+		await writeFile(path.join(dir, "tsconfig.json"), JSON.stringify(tsconfig));
+	}
+	for (const [relativePath, content] of Object.entries(options.files)) {
+		const fullPath = path.join(dir, relativePath);
+		await mkdir(path.dirname(fullPath), { recursive: true });
+		await writeFile(fullPath, content);
+	}
+	if (options.git) {
+		await initializeGitRepository(
+			dir,
+			typeof options.git === "boolean" ? undefined : options.git
+		);
+	}
+
+	const run = async (args: string[], runOptions?: RunCliOptions) =>
+		runCli(args, { cwd: runOptions?.cwd ?? dir, env: runOptions?.env });
+	return {
+		dir,
+		path: (relativePath: string) => path.join(dir, relativePath),
+		run,
+		runJson: async <T>(args: string[], runOptions?: RunCliOptions) => {
+			const result = await run(args, runOptions);
+			if (result.exitCode !== 0) {
+				throw new Error(
+					`CLI exited with ${result.exitCode}: ${result.stderr.length > 0 ? result.stderr : result.stdout}`
+				);
+			}
+			return JSON.parse(result.stdout) as T;
+		},
+		captureOutput,
+		cleanup: async () => {
+			await cleanup(dir);
+		},
+	};
 }
 
 export async function makeFixture(
@@ -86,50 +211,80 @@ export async function makeFixture(
 	files: Record<string, string>,
 	options?: FixtureOptions
 ): Promise<string> {
-	const fixtureRoot = options?.outsideRepo
-		? path.join(tmpdir(), "resect-fixtures")
-		: path.join(import.meta.dir, "__fixtures__");
-	const dir = path.join(fixtureRoot, `${prefix}-${Date.now()}`);
-	await mkdir(dir, { recursive: true });
-	if (options?.tsconfig && !files["tsconfig.json"]) {
-		await writeFile(
-			path.join(dir, "tsconfig.json"),
-			JSON.stringify({
-				compilerOptions: { strict: true },
-				include: ["**/*.ts"],
-			})
-		);
-	}
-	for (const [filePath, content] of Object.entries(files)) {
-		const full = path.join(dir, filePath);
-		await mkdir(path.dirname(full), { recursive: true });
-		await writeFile(full, content);
-	}
-	return dir;
+	const tsconfig = normalizeFixtureTsconfig(options?.tsconfig);
+	const project = await makeProject({
+		name: prefix,
+		files,
+		tsconfig,
+		outsideRepo: options?.outsideRepo,
+		root: options?.root,
+	});
+	return project.dir;
 }
 
-/**
- * Create a uniquely-named throwaway temp directory under the OS tmpdir,
- * named `resect-<prefix>-XXXXXX`. The caller owns cleanup (track the returned
- * path and `rm` it in an afterAll). Shared by tests needing a real on-disk
- * working directory outside the repo (e.g. move, filesystem-case).
- */
+export async function makeStrictFixture(
+	name: string,
+	files: Record<string, string>,
+	options?: Omit<FixtureOptions, "tsconfig">
+): Promise<string> {
+	return makeFixture(name, files, { ...options, tsconfig: "strict" });
+}
+
+export async function makeBaseUrlFixture(
+	name: string,
+	files: Record<string, string>,
+	options?: Omit<FixtureOptions, "tsconfig">
+): Promise<string> {
+	return makeFixture(name, files, {
+		...options,
+		tsconfig: "strict-base-url",
+	});
+}
+
+export async function makeExternalStrictFixture(
+	name: string,
+	files: Record<string, string>
+): Promise<string> {
+	return makeFixture(name, files, {
+		outsideRepo: true,
+		tsconfig: "strict",
+	});
+}
+
+export async function makeGitFixture(
+	name: string,
+	files: Record<string, string>,
+	options?: Omit<FixtureOptions, "tsconfig"> & {
+		git?: GitFixtureOptions;
+		tsconfig?: TsconfigPreset | Record<string, unknown>;
+	}
+): Promise<string> {
+	const project = await makeProject({
+		name,
+		files,
+		tsconfig: options?.tsconfig ?? "strict",
+		outsideRepo: options?.outsideRepo ?? true,
+		root: options?.root,
+		git: options?.git ?? true,
+	});
+	return project.dir;
+}
+
+/** Create an automatically-cleaned throwaway directory under the OS tmpdir. */
 export async function makeTempDir(prefix: string): Promise<string> {
 	const dir = await mkdtemp(path.join(tmpdir(), `resect-${prefix}-`));
+	fixtureDirectories.add(dir);
 	return dir;
 }
 
-export async function cleanup(dir: string) {
+export async function cleanup(dir: string): Promise<void> {
 	await rm(dir, { recursive: true, force: true });
+	fixtureDirectories.delete(dir);
 }
 
 /**
  * Run a command function in-process while capturing everything it writes to
- * stdout/stderr (the CLI logger and command output both go through
- * `process.stdout/stderr.write`). Use this instead of `runCli` whenever the
- * command can run in-process — it avoids a `bun cli.ts` subprocess cold-start
- * (~300-500ms each), keeping the unit suite fast. Reserve `runCli` for tests
- * that must exercise the real CLI entry point (arg parsing, process exit).
+ * stdout/stderr. Reserve `runCli` for tests that need the real CLI entry point.
  */
 export async function captureOutput(
 	fn: () => Promise<void> | void
@@ -155,8 +310,13 @@ export async function captureOutput(
 	return { stdout, stderr };
 }
 
-export async function runCli(args: string[]): Promise<CliResult> {
+export async function runCli(
+	args: string[],
+	options: RunCliOptions = {}
+): Promise<CliResult> {
 	const proc = Bun.spawn([...CLI, ...args], {
+		cwd: options.cwd,
+		env: options.env ? { ...process.env, ...options.env } : undefined,
 		stdout: "pipe",
 		stderr: "pipe",
 	});
@@ -166,33 +326,4 @@ export async function runCli(args: string[]): Promise<CliResult> {
 	]);
 	await proc.exited;
 	return { stdout, stderr, exitCode: proc.exitCode };
-}
-
-/**
- * The modules that own every `server.registerTool(...)` call and its Zod
- * `inputSchema`. Split out of `src/mcp-server.ts` per domain in #187.
- */
-export const REGISTRATION_MODULES = [
-	"register-analysis.ts",
-	"register-hygiene.ts",
-	"register-mutation.ts",
-] as const;
-
-/**
- * Concatenated source text of every MCP registration module.
- *
- * Several structural guards assert against registration *source text* rather
- * than the imported modules, so that registering a tool cannot be faked by a
- * runtime shim and so the assertions stay free of registration side effects.
- * Before #187 each read `src/mcp-server.ts` directly; the file list now lives
- * here so adding a fourth domain module means updating one constant rather
- * than hunting every scraper.
- */
-export async function readRegistrationSource(): Promise<string> {
-	const sources = await Promise.all(
-		REGISTRATION_MODULES.map(async (module) =>
-			Bun.file(path.resolve(import.meta.dir, "../mcp-tools", module)).text()
-		)
-	);
-	return sources.join("\n");
 }

@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { CLI, cleanup, makeFixture as makeFixtureBase } from "./__test-helpers";
-
-async function makeFixture(name: string, files: Record<string, string>) {
-	return makeFixtureBase(`similar-${name}`, files, { tsconfig: true });
-}
+import {
+	CLI,
+	cleanup,
+	makeStrictFixture as makeFixture,
+} from "./__test-helpers";
 
 // Two files with identical functions (different variable names) to guarantee a group
 const DUPLICATE_A = `

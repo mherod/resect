@@ -3,7 +3,11 @@ import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { loadProject } from "../core/project.ts";
 import { aliasTool } from "../mcp-tools/mutating.ts";
-import { captureOutput, runCli, runGitCommand } from "./__test-helpers.ts";
+import {
+	captureOutput,
+	initializeGitRepository,
+	runCli,
+} from "./__test-helpers.ts";
 import {
 	aliasCommand,
 	applyChanges,
@@ -169,11 +173,10 @@ describe("applyChangesWithVerification", () => {
 			"src/utils/foo.ts": "export const foo = 1;\n",
 			"src/consumer.ts": 'import { foo } from "@utils/foo";\nexport { foo };\n',
 		});
-		await runGitCommand(dir, ["init", "-b", "main"]);
-		await runGitCommand(dir, ["config", "user.email", "resect-test"]);
-		await runGitCommand(dir, ["config", "user.name", "Resect Test"]);
-		await runGitCommand(dir, ["add", "."]);
-		await runGitCommand(dir, ["commit", "-m", "fixture"]);
+		await initializeGitRepository(dir, {
+			branch: "main",
+			commitMessage: "fixture",
+		});
 		const consumerPath = path.join(srcDir, "consumer.ts");
 		const before = await Bun.file(consumerPath).text();
 		const project = loadProject(projectPath);
@@ -201,11 +204,10 @@ describe("applyChangesWithVerification", () => {
 			"src/utils/foo.ts": "export const foo = 1;\n",
 			"src/consumer.ts": 'import { foo } from "@utils/foo";\nexport { foo };\n',
 		});
-		await runGitCommand(dir, ["init", "-b", "main"]);
-		await runGitCommand(dir, ["config", "user.email", "resect-test"]);
-		await runGitCommand(dir, ["config", "user.name", "Resect Test"]);
-		await runGitCommand(dir, ["add", "."]);
-		await runGitCommand(dir, ["commit", "-m", "fixture"]);
+		await initializeGitRepository(dir, {
+			branch: "main",
+			commitMessage: "fixture",
+		});
 		const consumerPath = path.join(srcDir, "consumer.ts");
 		await Bun.write(
 			consumerPath,
@@ -242,11 +244,10 @@ describe("applyChangesWithVerification", () => {
 			"src/utils/foo.ts": "export const foo = 1;\n",
 			"src/consumer.ts": 'import { foo } from "@utils/foo";\nexport { foo };\n',
 		});
-		await runGitCommand(dir, ["init", "-b", "main"]);
-		await runGitCommand(dir, ["config", "user.email", "resect-test"]);
-		await runGitCommand(dir, ["config", "user.name", "Resect Test"]);
-		await runGitCommand(dir, ["add", "."]);
-		await runGitCommand(dir, ["commit", "-m", "fixture"]);
+		await initializeGitRepository(dir, {
+			branch: "main",
+			commitMessage: "fixture",
+		});
 		const consumerPath = path.join(srcDir, "consumer.ts");
 		await Bun.write(
 			consumerPath,

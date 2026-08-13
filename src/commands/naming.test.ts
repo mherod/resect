@@ -1,52 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { readRegistrationSource } from "../mcp-tools/registration-test-helpers.ts";
 import {
 	captureOutput,
 	cleanup,
-	makeFixture as makeFixtureBase,
-	readRegistrationSource,
+	makeStrictFixture as makeFixture,
+	makeGitFixture,
 	runCli,
 } from "./__test-helpers";
 import { namingCommand } from "./naming.ts";
-
-async function makeGitFixture(name: string, files: Record<string, string>) {
-	const dir = await makeFixtureBase(`naming-${name}`, files, {
-		tsconfig: true,
-		outsideRepo: true,
-	});
-	const gitSetup = Bun.spawn(["git", "init", "-b", "main"], {
-		cwd: dir,
-		stdout: "pipe",
-		stderr: "pipe",
-	});
-	await gitSetup.exited;
-	const gitConfig1 = Bun.spawn(["git", "config", "user.email", "resect-test"], {
-		cwd: dir,
-		stdout: "pipe",
-		stderr: "pipe",
-	});
-	await gitConfig1.exited;
-	const gitConfig2 = Bun.spawn(["git", "config", "user.name", "Test User"], {
-		cwd: dir,
-		stdout: "pipe",
-		stderr: "pipe",
-	});
-	await gitConfig2.exited;
-	const gitAdd = Bun.spawn(["git", "add", "."], {
-		cwd: dir,
-		stdout: "pipe",
-		stderr: "pipe",
-	});
-	await gitAdd.exited;
-	const gitCommit = Bun.spawn(["git", "commit", "-m", "initial"], {
-		cwd: dir,
-		stdout: "pipe",
-		stderr: "pipe",
-	});
-	await gitCommit.exited;
-	return dir;
-}
 
 // Case-only renames are invisible to stat() on case-insensitive filesystems
 // (macOS APFS), so compare the exact on-disk basename via a directory listing.
@@ -85,10 +48,6 @@ const NEXT_METADATA_CODE_FILES = [
 	"manifest.ts",
 	"robots.ts",
 ] as const;
-
-async function makeFixture(name: string, files: Record<string, string>) {
-	return makeFixtureBase(`naming-${name}`, files, { tsconfig: true });
-}
 
 function functionFile(name: string): string {
 	return `export function ${name}() { return "${name}"; }\n`;

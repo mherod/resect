@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import path from "node:path";
-import { cleanup, makeFixture, moveInFixture } from "./__test-helpers.ts";
+import { cleanup, makeFixture } from "./__test-helpers.ts";
+import { moveInFixture } from "./move-test-helpers.ts";
 
 /**
  * End-to-end coverage for #118: a cross-package `move` must sync the moved

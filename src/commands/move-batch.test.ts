@@ -2,7 +2,13 @@ import { afterAll, describe, expect, test } from "bun:test";
 import path from "node:path";
 import { buildDependencyGraph } from "../core/graph.ts";
 import { moveBatchTool } from "../mcp-tools/mutating.ts";
-import { CLI, cleanup, makeFixture, runGitCommand } from "./__test-helpers.ts";
+import {
+	CLI,
+	cleanup,
+	initializeGitRepository,
+	makeFixture,
+	runGitCommand,
+} from "./__test-helpers.ts";
 import { setupCommandContext } from "./command-context.ts";
 import { moveModule, runPackageBuilds } from "./move.ts";
 import {
@@ -44,11 +50,7 @@ async function makeBatchFixture(name: string): Promise<string> {
 }
 
 async function commitBatchFixture(dir: string): Promise<void> {
-	await runGitCommand(dir, ["init", "--template="]);
-	await runGitCommand(dir, ["config", "user.name", "Resect Test"]);
-	await runGitCommand(dir, ["config", "user.email", "resect@example.invalid"]);
-	await runGitCommand(dir, ["add", "."]);
-	await runGitCommand(dir, ["commit", "-m", "initial"]);
+	await initializeGitRepository(dir);
 }
 
 async function writeIncompleteBatchTsconfig(dir: string): Promise<void> {

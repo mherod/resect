@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { CLI, runCli } from "./commands/__test-helpers.ts";
 import { OPTION_FLAGS } from "./commands/option-flags.ts";
 
-const CLI = ["bun", path.resolve(import.meta.dir, "cli.ts")];
 // Same extraction as command-spec.test.ts uses for per-command help: a help
 // line documents a flag when it starts with optional `-x, ` then `--name`.
 const HELP_FLAG_PATTERN = /^\s+(?:-[a-z],\s+)?--([a-z][a-z-]*)/gm;
@@ -42,22 +42,6 @@ async function runWithClosedStdout(args: string[], pipeline: string) {
 		stderr,
 		stdout,
 	};
-}
-
-/** Run the CLI with stdout and stderr captured separately. */
-async function runCli(
-	args: string[]
-): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-	const proc = Bun.spawn([...CLI, ...args], {
-		stdout: "pipe",
-		stderr: "pipe",
-	});
-	const [stdout, stderr, exitCode] = await Promise.all([
-		new Response(proc.stdout).text(),
-		new Response(proc.stderr).text(),
-		proc.exited,
-	]);
-	return { stdout, stderr, exitCode };
 }
 
 describe("cli", () => {

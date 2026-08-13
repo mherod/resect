@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
+import { readRegistrationSource } from "../mcp-tools/registration-test-helpers.ts";
 import {
 	CLI,
 	captureOutput,
 	cleanup,
+	initializeGitRepository,
 	makeFixture,
-	readRegistrationSource,
 	runCli,
-	runGitCommand,
 } from "./__test-helpers";
 import { mockCleanupCommand } from "./mock-cleanup.ts";
 
@@ -138,11 +138,10 @@ describe("mock-cleanup command", () => {
 		});
 
 		try {
-			await runGitCommand(dir, ["init", "-b", "main"]);
-			await runGitCommand(dir, ["config", "user.email", "resect-test"]);
-			await runGitCommand(dir, ["config", "user.name", "Resect Test"]);
-			await runGitCommand(dir, ["add", "."]);
-			await runGitCommand(dir, ["commit", "-m", "fixture"]);
+			await initializeGitRepository(dir, {
+				branch: "main",
+				commitMessage: "fixture",
+			});
 			const testPath = path.join(dir, "mod.test.ts");
 			await Bun.write(
 				testPath,

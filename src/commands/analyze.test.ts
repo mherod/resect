@@ -1,19 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import { loadProject } from "../core/project.ts";
-import { CLI, cleanup, makeFixture as makeFixtureBase } from "./__test-helpers";
+import {
+	CLI,
+	cleanup,
+	makeBaseUrlFixture as makeFixture,
+	makeFixture as makeFixtureBase,
+} from "./__test-helpers";
 import { analyze } from "./analyze.ts";
-
-async function makeFixture(name: string, files: Record<string, string>) {
-	const dir = await makeFixtureBase(`analyze-${name}`, {
-		"tsconfig.json": JSON.stringify({
-			compilerOptions: { strict: true, baseUrl: "." },
-			include: ["**/*.ts"],
-		}),
-		...files,
-	});
-	return dir;
-}
 
 describe("analyze command", () => {
 	// @BDD: ANLY-005-Verified

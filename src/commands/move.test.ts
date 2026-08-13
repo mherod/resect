@@ -1,108 +1,21 @@
-import { afterAll, describe, expect, test } from "bun:test";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { describe, expect, test } from "bun:test";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { buildDependencyGraph } from "../core/graph.ts";
 import { loadProject } from "../core/project.ts";
 import { bunRuntime, setRuntime } from "../runtime/index.ts";
 import {
 	captureOutput,
+	initializeGitRepository,
 	makeTempDir,
 	runCli,
 	runGitCommand,
 } from "./__test-helpers.ts";
 import { moveCommand, moveModule } from "./move.ts";
-
-const tempDirs: string[] = [];
+import { makeMutationCliProject } from "./mutation-test-helpers.ts";
 
 async function tempDir(): Promise<string> {
-	const dir = await makeTempDir("move");
-	tempDirs.push(dir);
-	return dir;
-}
-
-async function makeMoveCliProject(): Promise<{
-	consumerPath: string;
-	sourcePath: string;
-	targetPath: string;
-	tsconfigPath: string;
-}> {
-	const dir = await tempDir();
-	const srcDir = path.join(dir, "src");
-	await mkdir(srcDir, { recursive: true });
-	const tsconfigPath = path.join(dir, "tsconfig.json");
-	await writeFile(
-		tsconfigPath,
-		JSON.stringify(
-			{
-				compilerOptions: {
-					module: "ESNext",
-					moduleResolution: "Bundler",
-					noEmit: true,
-					strict: true,
-					target: "ESNext",
-					types: [],
-				},
-				include: ["src/**/*.ts"],
-			},
-			null,
-			2
-		)
-	);
-
-	const sourcePath = path.join(srcDir, "source.ts");
-	const targetPath = path.join(srcDir, "nested", "source.ts");
-	const consumerPath = path.join(srcDir, "consumer.ts");
-	await writeFile(
-		path.join(srcDir, "preexisting.ts"),
-		"export const existing: string = 1;\n"
-	);
-	await writeFile(sourcePath, "export const value = 1;\n");
-	await writeFile(
-		consumerPath,
-		'import { value } from "./source";\nexport const result = value;\n'
-	);
-
-	return { consumerPath, sourcePath, targetPath, tsconfigPath };
-}
-
-async function makeCommonJsMoveProject(): Promise<{
-	consumerPath: string;
-	sourcePath: string;
-	targetPath: string;
-	tsconfigPath: string;
-}> {
-	const dir = await tempDir();
-	const srcDir = path.join(dir, "src");
-	await mkdir(srcDir, { recursive: true });
-	const tsconfigPath = path.join(dir, "tsconfig.json");
-	await writeFile(
-		tsconfigPath,
-		JSON.stringify({
-			compilerOptions: {
-				module: "CommonJS",
-				moduleResolution: "Node",
-				noEmit: true,
-				strict: true,
-				target: "ESNext",
-				types: [],
-			},
-			include: ["src/**/*.ts"],
-		})
-	);
-
-	const sourcePath = path.join(srcDir, "thing.ts");
-	const targetPath = path.join(srcDir, "nested", "thing.ts");
-	const consumerPath = path.join(srcDir, "consumer.ts");
-	await writeFile(
-		sourcePath,
-		"function Thing() { return 1; }\nexport = Thing;\n"
-	);
-	await writeFile(
-		consumerPath,
-		'import Thing = require("./thing");\nexport const value = Thing();\n'
-	);
-
-	return { consumerPath, sourcePath, targetPath, tsconfigPath };
+	return makeTempDir("move");
 }
 
 /**
@@ -182,16 +95,10 @@ async function makeAliasedMoveProject(
 	};
 }
 
-afterAll(async () => {
-	for (const dir of tempDirs) {
-		await rm(dir, { recursive: true, force: true });
-	}
-});
-
 describe("moveModule", () => {
 	test("reports importer write failures as fatal", async () => {
 		const { consumerPath, sourcePath, targetPath, tsconfigPath } =
-			await makeMoveCliProject();
+			await makeMutationCliProject({ operation: "move" });
 		const project = loadProject(tsconfigPath);
 		const consumerBefore = await Bun.file(consumerPath).text();
 
@@ -232,7 +139,7 @@ describe("moveModule", () => {
 
 	test("keeps importer analysis warnings recoverable", async () => {
 		const { consumerPath, sourcePath, targetPath, tsconfigPath } =
-			await makeMoveCliProject();
+			await makeMutationCliProject({ operation: "move" });
 		const project = loadProject(tsconfigPath);
 		const graph = await buildDependencyGraph(project);
 		const program = graph.program;
@@ -266,17 +173,11 @@ describe("moveModule", () => {
 	});
 
 	test("stages an ordinary move as a git rename", async () => {
-		const { sourcePath, targetPath } = await makeMoveCliProject();
+		const { sourcePath, targetPath } = await makeMutationCliProject({
+			operation: "move",
+		});
 		const dir = path.dirname(path.dirname(sourcePath));
-		await runGitCommand(dir, ["init", "--template="]);
-		await runGitCommand(dir, ["config", "user.name", "Resect Test"]);
-		await runGitCommand(dir, [
-			"config",
-			"user.email",
-			"resect@example.invalid",
-		]);
-		await runGitCommand(dir, ["add", "."]);
-		await runGitCommand(dir, ["commit", "-m", "initial"]);
+		await initializeGitRepository(dir);
 
 		await captureOutput(async () =>
 			moveCommand({ source: sourcePath, target: targetPath, verify: false })
@@ -316,15 +217,7 @@ describe("moveModule", () => {
 			path.join(srcDir, "consumer.ts"),
 			'import { bar } from "./Foo";\nexport const value = bar();\n'
 		);
-		await runGitCommand(dir, ["init"]);
-		await runGitCommand(dir, ["config", "user.name", "Resect Test"]);
-		await runGitCommand(dir, [
-			"config",
-			"user.email",
-			"resect@example.invalid",
-		]);
-		await runGitCommand(dir, ["add", "."]);
-		await runGitCommand(dir, ["commit", "-m", "initial"]);
+		await initializeGitRepository(dir);
 
 		const source = path.join(srcDir, "Foo.ts");
 		const target = path.join(srcDir, "foo.ts");
@@ -356,7 +249,10 @@ describe("moveModule", () => {
 describe("move CLI verification", () => {
 	test("rewrites import-equals consumers of export-equals modules", async () => {
 		const { consumerPath, sourcePath, targetPath, tsconfigPath } =
-			await makeCommonJsMoveProject();
+			await makeMutationCliProject({
+				moduleStyle: "commonjs",
+				operation: "move",
+			});
 
 		const result = await runCli([
 			"move",
@@ -376,7 +272,7 @@ describe("move CLI verification", () => {
 
 	test("dry-run edits reproduce the real move without writing", async () => {
 		const { consumerPath, sourcePath, targetPath, tsconfigPath } =
-			await makeMoveCliProject();
+			await makeMutationCliProject({ operation: "move" });
 		const consumerBefore = await Bun.file(consumerPath).text();
 		const sourceBefore = await Bun.file(sourcePath).text();
 
@@ -446,7 +342,7 @@ describe("move CLI verification", () => {
 
 	test("allows pre-existing type errors when the move adds no new errors", async () => {
 		const { consumerPath, sourcePath, targetPath, tsconfigPath } =
-			await makeMoveCliProject();
+			await makeMutationCliProject({ operation: "move" });
 
 		const result = await runCli([
 			"move",

@@ -1,17 +1,8 @@
-import { afterAll, describe, expect, test } from "bun:test";
-import { rm, writeFile } from "node:fs/promises";
-import path from "node:path";
+import { describe, expect, test } from "bun:test";
+import { writeFile } from "node:fs/promises";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { makeTempDir, runGitCommand } from "./commands/__test-helpers.ts";
+import { makeProject } from "./commands/__test-helpers.ts";
 import { renameTool } from "./mcp-server.ts";
-
-const tempDirs: string[] = [];
-
-afterAll(async () => {
-	for (const dir of tempDirs) {
-		await rm(dir, { recursive: true, force: true });
-	}
-});
 
 const DUPLICATE_SOURCE = `
 export function formatUser(user: { first: string; last: string }) {
@@ -45,48 +36,27 @@ async function setupProject(options?: { verification?: boolean }): Promise<{
 	consumerPath?: string;
 }> {
 	const verification = options?.verification ?? false;
-	const dir = await makeTempDir(
-		verification ? "mcp-rename-verify" : "mcp-rename"
-	);
-	tempDirs.push(dir);
-	await writeFile(
-		path.join(dir, "tsconfig.json"),
-		JSON.stringify({
-			compilerOptions: {
-				module: "ESNext",
-				moduleResolution: "Bundler",
-				noEmit: true,
-				strict: true,
-				target: "ESNext",
-				types: [],
-			},
-			include: ["**/*.ts"],
-		})
-	);
-	const filePath = path.join(dir, verification ? "api.ts" : "mod.ts");
-	const consumerPath = verification ? path.join(dir, "consumer.ts") : undefined;
-	await writeFile(
-		filePath,
-		verification ? "export const foo = 1;\n" : DUPLICATE_SOURCE
-	);
-	if (consumerPath) {
-		await writeFile(
-			consumerPath,
-			'import * as api from "./api";\nexport const value: 1 = api.foo;\n'
-		);
-	}
-	await runGitCommand(dir, ["init", "--template="]);
-	await runGitCommand(dir, ["add", "."]);
-	await runGitCommand(dir, [
-		"-c",
-		"user.name=Resect Test",
-		"-c",
-		"user.email=resect@example.invalid",
-		"commit",
-		"-m",
-		"initial",
-	]);
-	return { dir, filePath, consumerPath };
+	const sourceName = verification ? "api.ts" : "mod.ts";
+	const fixture = await makeProject({
+		name: verification ? "mcp-rename-verify" : "mcp-rename",
+		files: {
+			[sourceName]: verification ? "export const foo = 1;\n" : DUPLICATE_SOURCE,
+			...(verification
+				? {
+						"consumer.ts":
+							'import * as api from "./api";\nexport const value: 1 = api.foo;\n',
+					}
+				: {}),
+		},
+		git: true,
+		outsideRepo: true,
+		tsconfig: "bundler",
+	});
+	return {
+		dir: fixture.dir,
+		filePath: fixture.path(sourceName),
+		consumerPath: verification ? fixture.path("consumer.ts") : undefined,
+	};
 }
 
 const runMcpRename = async (

@@ -1,11 +1,7 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
-import {
-	cleanup,
-	makeTempDir,
-	runGitCommand,
-} from "../commands/__test-helpers.ts";
+import { makeProject, runGitCommand } from "../commands/__test-helpers.ts";
 import {
 	completeOperationJournal,
 	journalPath,
@@ -15,24 +11,14 @@ import {
 	undoJournalOperation,
 } from "./journal.ts";
 
-const dirs: string[] = [];
-
-afterAll(async () => {
-	for (const dir of dirs) {
-		await cleanup(dir);
-	}
-});
-
 async function makeRepository(name: string): Promise<string> {
-	const dir = await makeTempDir(name);
-	dirs.push(dir);
-	await runGitCommand(dir, ["init", "--template="]);
-	await runGitCommand(dir, ["config", "user.email", "test@test.com"]);
-	await runGitCommand(dir, ["config", "user.name", "Test"]);
-	await Bun.write(path.join(dir, "a.ts"), "export const value = 1;\n");
-	await runGitCommand(dir, ["add", "a.ts"]);
-	await runGitCommand(dir, ["commit", "-m", "init"]);
-	return dir;
+	const fixture = await makeProject({
+		name,
+		files: { "a.ts": "export const value = 1;\n" },
+		git: { commitMessage: "init" },
+		outsideRepo: true,
+	});
+	return fixture.dir;
 }
 
 async function rejectionMessage(

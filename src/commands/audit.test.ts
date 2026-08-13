@@ -2,7 +2,13 @@ import { describe, expect, test } from "bun:test";
 import type { DependencyGraph } from "../core/graph.ts";
 import type { ModuleReference } from "../types/graph.ts";
 import type { ProjectConfig } from "../types.ts";
-import { CLI, captureOutput, cleanup, makeFixture } from "./__test-helpers.ts";
+import {
+	CLI,
+	captureOutput,
+	cleanup,
+	initializeGitRepository,
+	makeFixture,
+} from "./__test-helpers.ts";
 import { auditCommand, buildAuditReport, detectCycles } from "./audit.ts";
 
 function makeRef(sourceFile: string, resolvedPath: string): ModuleReference {
@@ -549,12 +555,7 @@ describe("audit non-source exclusion", () => {
 			},
 			{ tsconfig: true, outsideRepo: true }
 		);
-		const init = Bun.spawn(["git", "init", "-b", "main"], {
-			cwd: dir,
-			stdout: "pipe",
-			stderr: "pipe",
-		});
-		await init.exited;
+		await initializeGitRepository(dir, { branch: "main", commit: false });
 		return dir;
 	}
 

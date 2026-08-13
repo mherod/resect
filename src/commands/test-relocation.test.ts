@@ -1,20 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { access, readFile } from "node:fs/promises";
 import path from "node:path";
+import { readRegistrationSource } from "../mcp-tools/registration-test-helpers.ts";
 import {
 	captureOutput,
 	cleanup,
-	makeFixture as makeFixtureBase,
-	readRegistrationSource,
+	makeExternalStrictFixture as makeFixture,
 } from "./__test-helpers";
 import { testRelocationCommand } from "./test-relocation.ts";
-
-async function makeFixture(name: string, files: Record<string, string>) {
-	return makeFixtureBase(`test-relocation-${name}`, files, {
-		tsconfig: true,
-		outsideRepo: true,
-	});
-}
 
 async function exists(filePath: string): Promise<boolean> {
 	try {

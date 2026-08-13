@@ -1,9 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CLI, cleanup, makeFixture as makeFixtureBase } from "./__test-helpers";
-
-async function makeFixture(name: string, files: Record<string, string>) {
-	return makeFixtureBase(`discover-${name}`, files);
-}
+import { CLI, cleanup, makeFixture } from "./__test-helpers";
 
 describe("discover command", () => {
 	test("discovers tsconfig.json in a directory", async () => {

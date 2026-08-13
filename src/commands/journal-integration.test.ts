@@ -1,16 +1,7 @@
-import { afterAll, describe, expect, test } from "bun:test";
-import { mkdir } from "node:fs/promises";
+import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import { readOperationJournal } from "../core/journal.ts";
-import { CLI, cleanup, makeTempDir, runGitCommand } from "./__test-helpers.ts";
-
-const tempDirs: string[] = [];
-
-afterAll(async () => {
-	for (const dir of tempDirs) {
-		await cleanup(dir);
-	}
-});
+import { makeProject, runCli } from "./__test-helpers.ts";
 
 async function makeRepository(
 	name: string,
@@ -20,47 +11,26 @@ async function makeRepository(
 		include: ["src/**/*.ts"],
 	}
 ): Promise<string> {
-	const dir = await makeTempDir(name);
-	tempDirs.push(dir);
-	await Bun.write(path.join(dir, "tsconfig.json"), JSON.stringify(tsconfig));
-	for (const [relativePath, content] of Object.entries(files)) {
-		const file = path.join(dir, relativePath);
-		await mkdir(path.dirname(file), { recursive: true });
-		await Bun.write(file, content);
-	}
-	await runGitCommand(dir, ["init", "--template="]);
-	await runGitCommand(dir, ["add", "."]);
-	await runGitCommand(dir, [
-		"-c",
-		"user.name=Resect Test",
-		"-c",
-		"user.email=resect@example.invalid",
-		"commit",
-		"-m",
-		"initial",
-	]);
-	return dir;
+	const fixture = await makeProject({
+		name,
+		files,
+		git: true,
+		outsideRepo: true,
+		tsconfig,
+	});
+	return fixture.dir;
 }
 
-async function runCli(
+async function runJournalCli(
 	dir: string,
 	...args: string[]
 ): Promise<{ exitCode: number | null; stderr: string; stdout: string }> {
-	const process = Bun.spawn([...CLI, ...args], {
+	return runCli(args, {
 		cwd: dir,
 		env: {
-			...globalThis.process.env,
 			PATH: `${path.resolve(import.meta.dir, "../../node_modules/.bin")}${path.delimiter}${globalThis.process.env.PATH ?? ""}`,
 		},
-		stderr: "pipe",
-		stdout: "pipe",
 	});
-	const [stdout, stderr] = await Promise.all([
-		new Response(process.stdout).text(),
-		new Response(process.stderr).text(),
-	]);
-	await process.exited;
-	return { exitCode: process.exitCode, stderr, stdout };
 }
 
 async function readJournalSummary(
@@ -82,7 +52,7 @@ describe("journaled CLI mutations", () => {
 		const project = path.join(dir, "tsconfig.json");
 		const source = path.join(dir, "src/a.ts");
 		const target = path.join(dir, "src/moved/a.ts");
-		const move = await runCli(
+		const move = await runJournalCli(
 			dir,
 			"move",
 			source,
@@ -101,7 +71,7 @@ describe("journaled CLI mutations", () => {
 		});
 		expect(await Bun.file(target).exists()).toBe(true);
 
-		const undo = await runCli(
+		const undo = await runJournalCli(
 			dir,
 			"undo",
 			"--project",
@@ -119,7 +89,7 @@ describe("journaled CLI mutations", () => {
 			"src/a.ts": "export const before = 1;\n",
 			"src/use.ts": 'import { before } from "./a";\nexport { before };\n',
 		});
-		const result = await runCli(
+		const result = await runJournalCli(
 			dir,
 			"rename",
 			path.join(dir, "src/a.ts"),
@@ -156,7 +126,7 @@ describe("journaled CLI mutations", () => {
 				include: ["src/**/*.ts"],
 			}
 		);
-		const result = await runCli(
+		const result = await runJournalCli(
 			dir,
 			"alias",
 			path.join(dir, "src/use.ts"),
@@ -188,7 +158,7 @@ export function usedInternal() {
 }
 `,
 		});
-		const result = await runCli(
+		const result = await runJournalCli(
 			dir,
 			"tidy",
 			path.join(dir, "src"),

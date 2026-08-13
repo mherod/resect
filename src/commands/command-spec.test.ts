@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readRegistrationSource } from "./__test-helpers.ts";
+import { readRegistrationSource } from "../mcp-tools/registration-test-helpers.ts";
 import {
 	COMMAND_NAMES,
 	COMMAND_SPECS,

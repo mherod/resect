@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import path from "node:path";
-import { cleanup, makeFixture, moveInFixture } from "./__test-helpers.ts";
+import { cleanup, makeFixture } from "./__test-helpers.ts";
+import { moveInFixture } from "./move-test-helpers.ts";
 
 /**
  * Regression coverage for #121: when `move` relocates a file INTO a package and

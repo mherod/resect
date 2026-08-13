@@ -1,18 +1,10 @@
-import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import path from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { cleanup, makeFixture } from "./commands/__test-helpers.ts";
+import { makeFixture } from "./commands/__test-helpers.ts";
 import { moveTool } from "./mcp-tools/mutating.ts";
 
 setDefaultTimeout(20_000);
-
-const tempDirs: string[] = [];
-
-afterAll(async () => {
-	for (const dir of tempDirs) {
-		await cleanup(dir);
-	}
-});
 
 interface MovePayload {
 	success: boolean;
@@ -42,7 +34,6 @@ describe("MCP move verification", () => {
 			},
 			{ outsideRepo: true, tsconfig: true }
 		);
-		tempDirs.push(dir);
 
 		const source = path.join(dir, "src/foo.ts");
 		const target = path.join(dir, "src/moved/foo.ts");

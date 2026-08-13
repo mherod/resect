@@ -6,8 +6,8 @@ import { bunRuntime, setRuntime } from "../runtime/index.ts";
 import {
 	CLI,
 	cleanup,
-	makeFixture as makeFixtureBase,
-	runGitCommand,
+	makeStrictFixture as makeFixture,
+	makeGitFixture,
 } from "./__test-helpers";
 import { applyTidyFixes, buildTidyReport } from "./tidy.ts";
 
@@ -17,23 +17,6 @@ import { applyTidyFixes, buildTidyReport } from "./tidy.ts";
 // rollback tests don't flake when the suite is invoked without that flag (e.g.
 // the bare `bun test` in .husky/pre-commit).
 setDefaultTimeout(20_000);
-
-async function makeFixture(name: string, files: Record<string, string>) {
-	return makeFixtureBase(`tidy-${name}`, files, { tsconfig: true });
-}
-
-async function makeGitFixture(name: string, files: Record<string, string>) {
-	const dir = await makeFixtureBase(`tidy-${name}`, files, {
-		tsconfig: true,
-		outsideRepo: true,
-	});
-	await runGitCommand(dir, ["init", "-b", "main"]);
-	await runGitCommand(dir, ["config", "user.email", "resect-test"]);
-	await runGitCommand(dir, ["config", "user.name", "Test User"]);
-	await runGitCommand(dir, ["add", "."]);
-	await runGitCommand(dir, ["commit", "-m", "initial"]);
-	return dir;
-}
 
 const DUPLICATE_A = `
 export function formatDate(input: Date): string {

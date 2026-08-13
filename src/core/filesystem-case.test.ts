@@ -1,5 +1,5 @@
-import { afterAll, describe, expect, test } from "bun:test";
-import { readdir, rm, writeFile } from "node:fs/promises";
+import { describe, expect, test } from "bun:test";
+import { readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { makeTempDir } from "../commands/__test-helpers.ts";
 import { nodeRuntime } from "../runtime/node.ts";
@@ -10,19 +10,9 @@ import {
 	safeCaseRename,
 } from "./filesystem-case.ts";
 
-const tempDirs: string[] = [];
-
 async function tempDir(): Promise<string> {
-	const dir = await makeTempDir("case");
-	tempDirs.push(dir);
-	return dir;
+	return makeTempDir("case");
 }
-
-afterAll(async () => {
-	for (const dir of tempDirs) {
-		await rm(dir, { recursive: true, force: true });
-	}
-});
 
 describe("filesystem case helpers", () => {
 	test("detects case-only basename changes", () => {

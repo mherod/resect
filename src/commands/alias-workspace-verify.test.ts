@@ -1,27 +1,19 @@
-import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { readOperationJournal } from "../core/journal.ts";
-import { CLI, cleanup, makeTempDir, runGitCommand } from "./__test-helpers.ts";
+import { CLI, initializeGitRepository, makeTempDir } from "./__test-helpers.ts";
 
 setDefaultTimeout(20_000);
 
-const tempDirs: string[] = [];
 const cliEnvironment = {
 	...process.env,
 	PATH: `${path.resolve(import.meta.dir, "../../node_modules/.bin")}${path.delimiter}${process.env.PATH ?? ""}`,
 };
 
-afterAll(async () => {
-	for (const dir of tempDirs) {
-		await cleanup(dir);
-	}
-});
-
 describe("alias --workspace verification", () => {
 	test("rolls back a failing workspace rewrite without journaling", async () => {
 		const dir = await makeTempDir("alias-workspace-verify");
-		tempDirs.push(dir);
 		const packageDir = path.join(dir, "packages/app");
 		const sourceDir = path.join(packageDir, "src");
 		await mkdir(sourceDir, { recursive: true });
@@ -63,17 +55,10 @@ describe("alias --workspace verification", () => {
 			'import { value } from "@app/value";\nexport const result = value;\n';
 		await Bun.write(consumerPath, before);
 
-		await runGitCommand(dir, ["init", "-b", "main"]);
-		await runGitCommand(dir, ["add", "."]);
-		await runGitCommand(dir, [
-			"-c",
-			"user.name=Resect Test",
-			"-c",
-			"user.email=resect@example.invalid",
-			"commit",
-			"-m",
-			"fixture",
-		]);
+		await initializeGitRepository(dir, {
+			branch: "main",
+			commitMessage: "fixture",
+		});
 
 		const proc = Bun.spawn(
 			[

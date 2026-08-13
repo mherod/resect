@@ -1,15 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { CLI, cleanup, makeFixture as makeFixtureBase } from "./__test-helpers";
-
-async function makeFixture(name: string, files: Record<string, string>) {
-	return makeFixtureBase(`find-${name}`, {
-		"tsconfig.json": JSON.stringify({
-			compilerOptions: { strict: true },
-			include: ["**/*.ts"],
-		}),
-		...files,
-	});
-}
+import {
+	CLI,
+	cleanup,
+	makeStrictFixture as makeFixture,
+} from "./__test-helpers";
 
 describe("find command", () => {
 	test("finds files by name", async () => {
