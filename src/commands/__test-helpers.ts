@@ -1,12 +1,21 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { loadProject, resolveTsConfig } from "../core/project.ts";
 import { discoverWorkspace } from "../core/workspace.ts";
 import type { MoveResult } from "../types/move.ts";
 import { moveModule } from "./move.ts";
 
 export const CLI = ["bun", path.resolve(import.meta.dir, "../cli.ts")];
+
+export function parseMcpTextPayload<T>(result: CallToolResult): T {
+	const content = result.content[0];
+	if (content?.type !== "text") {
+		throw new Error("Expected an MCP text result");
+	}
+	return JSON.parse(content.text) as T;
+}
 
 export async function runGitCommand(
 	cwd: string,

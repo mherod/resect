@@ -30,6 +30,7 @@ export {
 } from "./commands/analyze-impact.ts";
 // ── Commands: audit ─────────────────────────────────────────────────
 export type {
+	AuditAnalysis,
 	AuditJsonReport,
 	AuditOptions,
 	AuditProjectGraph,
@@ -39,6 +40,7 @@ export type {
 	FileMetrics,
 } from "./commands/audit.ts";
 export {
+	analyzeAudit,
 	auditCommand,
 	auditReportToJson,
 	buildAuditReport,

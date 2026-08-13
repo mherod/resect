@@ -24,6 +24,7 @@ import {
 	planAliasEdits,
 	renameImportSpecifiers,
 } from "../commands/alias.ts";
+import { setupCommandContext } from "../commands/command-context.ts";
 import { runExtractCommon } from "../commands/extract-common.ts";
 import { inlineBarrel } from "../commands/inline.ts";
 import { moveModule, rollbackTransformMove } from "../commands/move.ts";
@@ -271,6 +272,7 @@ export async function renameTool(args: {
 	oldName: string;
 	newName: string;
 	project?: string;
+	workspace?: boolean;
 	dryRun: boolean;
 	force: boolean;
 	journal?: boolean;
@@ -278,14 +280,16 @@ export async function renameTool(args: {
 	verbose: boolean;
 }): Promise<CallToolResult> {
 	const absolutePath = path.resolve(args.file);
-	const tsconfigPath = resolveTsConfig(
-		args.project,
-		path.dirname(absolutePath)
-	);
-	if (!tsconfigPath) {
+	const context = await setupCommandContext({
+		project: args.project,
+		searchPath: path.dirname(absolutePath),
+		targetFile: absolutePath,
+		workspace: args.workspace ? "projects" : "none",
+	});
+	if (!context) {
 		return tsconfigNotFound(absolutePath);
 	}
-	const project = loadProject(tsconfigPath, absolutePath);
+	const { extraProjects, project } = context;
 
 	const wt = await checkWorktree(project.rootDir, args.force);
 	if (wt.blocked) {
@@ -304,7 +308,7 @@ export async function renameTool(args: {
 			project,
 			args.dryRun,
 			args.verbose,
-			[],
+			extraProjects,
 			args.force
 		);
 

@@ -271,6 +271,7 @@ export async function renameSymbol(
 		logger.info("Building dependency graph...");
 	}
 	const graph = await buildDependencyGraph(project);
+	const extraPrograms: ts.Program[] = [];
 
 	// Find all files that import from this file
 	const references = findAllReferences(filePath, graph);
@@ -279,6 +280,7 @@ export async function renameSymbol(
 	for (const extraProject of extraProjects) {
 		try {
 			const extraGraph = await buildDependencyGraph(extraProject);
+			extraPrograms.push(extraGraph.program ?? createProgram(extraProject));
 			const extraRefs = findAllReferences(filePath, extraGraph);
 			references.push(...extraRefs);
 		} catch {
@@ -293,6 +295,18 @@ export async function renameSymbol(
 	// (buildDependencyGraph sets it for project-loaded graphs; fallback covers
 	// test-constructed graphs that bypass it).
 	const program = graph.program ?? createProgram(project);
+	const programs = [program, ...extraPrograms];
+	const sourceFileFromProjects = (
+		candidate: string
+	): ts.SourceFile | undefined => {
+		for (const candidateProgram of programs) {
+			const sourceFile = candidateProgram.getSourceFile(candidate);
+			if (sourceFile) {
+				return sourceFile;
+			}
+		}
+		return undefined;
+	};
 	const checker = program.getTypeChecker();
 
 	// First, rename the export in the source file
@@ -338,7 +352,7 @@ export async function renameSymbol(
 		if (!hasUnaliasedImport) {
 			continue;
 		}
-		const importingAst = program.getSourceFile(ref.sourceFile);
+		const importingAst = sourceFileFromProjects(ref.sourceFile);
 		if (!importingAst) {
 			continue;
 		}
@@ -431,7 +445,7 @@ export async function renameSymbol(
 	// Update each importing file
 	for (const [importingFile, fileRefs] of refsByFile) {
 		try {
-			const fileAst = program.getSourceFile(importingFile);
+			const fileAst = sourceFileFromProjects(importingFile);
 			if (!fileAst) {
 				errors.push({ file: importingFile, message: "Could not parse file" });
 				continue;

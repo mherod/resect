@@ -439,7 +439,7 @@ Examples:
   ${CLI_NAME} rename src/types.ts UserDTO User --no-verify
 `,
 		mcpDescription:
-			"Rename an exported symbol (function, class, type, interface, enum, const) in its source file and update every import that references it across the project. Updates both the declaration and all unaliased import bindings; aliased imports (`import { foo as bar }`) are left intact because the local name is already decoupled. Checks for conflicts before mutating: aborts if the new name already exists in the source file or in any importing file's local bindings. Defaults to `dryRun: true`; when `dryRun: false` and `verify: true` (both default) runs `tsc --noEmit` before AND after and returns the diagnostic delta. A dirty worktree is returned as an error unless `force: true`. Returns success, updated reference list, errors, worktree-dirty flag, and (when verified) the typecheck delta.",
+			"Rename an exported symbol (function, class, type, interface, enum, const) in its source file and update every import that references it across the project, including sibling packages when `workspace: true`. Updates both the declaration and all unaliased import bindings; aliased imports (`import { foo as bar }`) are left intact because the local name is already decoupled. Checks for conflicts before mutating: aborts if the new name already exists in the source file or in any importing file's local bindings. Defaults to `dryRun: true`; when `dryRun: false` and `verify: true` (both default) runs `tsc --noEmit` before AND after and returns the diagnostic delta. A dirty worktree is returned as an error unless `force: true`. Returns success, updated reference list, errors, worktree-dirty flag, and (when verified) the typecheck delta.",
 	},
 	{
 		name: "undo",
@@ -653,7 +653,7 @@ Examples:
   ${CLI_NAME} audit src --fan-out-threshold=8 --export-threshold=5
 `,
 		mcpDescription:
-			"Assess architectural health across a whole project and surface refactoring targets. Builds the import graph and reports: circular dependencies (cycles), files with high fan-out (import too many modules — likely doing too much), files with high fan-in (imported by many — high-blast-radius hubs), and files with large export surfaces. Use this to find god modules, over-coupled files, and dependency cycles, or to answer 'what's the riskiest/most-tangled part of this codebase?'. To drill into one file the audit flags, follow up with `analyze`. Tune thresholds to widen or narrow what gets flagged. Read-only.",
+			"Assess architectural health across a whole project or every sibling package when `workspace: true`, and surface refactoring targets. Builds the import graph and reports: circular dependencies (cycles), files with high fan-out (import too many modules — likely doing too much), files with high fan-in (imported by many — high-blast-radius hubs), and files with large export surfaces. Use this to find god modules, over-coupled files, and dependency cycles, or to answer 'what's the riskiest/most-tangled part of this codebase?'. To drill into one file the audit flags, follow up with `analyze`. Tune thresholds to widen or narrow what gets flagged. Read-only.",
 	},
 	{
 		name: "barrel",

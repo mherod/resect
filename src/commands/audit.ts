@@ -103,6 +103,16 @@ export interface AuditJsonReport {
 	warnings: string[];
 }
 
+export interface AuditAnalysis {
+	absoluteDir: string;
+	report: AuditReport;
+	thresholds: {
+		fanOutThreshold: number;
+		fanInThreshold: number;
+		exportThreshold: number;
+	};
+}
+
 interface AuditProjectBoundary {
 	outDir?: string;
 	project: ProjectConfig;
@@ -546,7 +556,10 @@ export function auditReportToJson(
 	};
 }
 
-export async function auditCommand(options: AuditOptions): Promise<void> {
+/** Build the audit report shared by CLI, MCP, and library callers. */
+export async function analyzeAudit(
+	options: AuditOptions
+): Promise<AuditAnalysis | null> {
 	const {
 		directory,
 		project: projectArg,
@@ -557,11 +570,9 @@ export async function auditCommand(options: AuditOptions): Promise<void> {
 		exportThreshold = 8,
 		includeIgnored = false,
 	} = options;
-
 	const absoluteDir = path.resolve(directory);
 	const onProgress =
 		options.onProgress ?? logger.createFileScanProgress({ enabled: !json });
-
 	const context = await setupCommandContext({
 		project: projectArg,
 		searchPath: absoluteDir,
@@ -571,13 +582,8 @@ export async function auditCommand(options: AuditOptions): Promise<void> {
 		mergeWorkspaceGraphs: workspace,
 		onProgress,
 	});
-	if (!context) {
-		logger.error("Could not find tsconfig.json");
-		process.exit(1);
-	}
-	const { graph } = context;
-	if (!graph) {
-		throw new Error("Dependency graph was not built");
+	if (!context?.graph) {
+		return null;
 	}
 
 	const projectsByConfig = new Map(
@@ -593,37 +599,45 @@ export async function auditCommand(options: AuditOptions): Promise<void> {
 	const frameworkClassifier = await createFrameworkGeneratedArtifactClassifier(
 		context.graphs.map(({ tsconfigPath }) => tsconfigPath)
 	);
-	// Git is consulted once here, outside the pure report builder, so the
-	// classifier handed to it stays synchronous (#202).
 	const nonSourceClassifier = includeIgnored
 		? undefined
 		: await createNonSourceClassifier(
-				[...graph.imports.keys()],
+				[...context.graph.imports.keys()],
 				absoluteDir,
 				context.project
 			);
-	const report = buildAuditReport(
-		graph,
-		{
-			fanOutThreshold,
-			fanInThreshold,
-			exportThreshold,
-		},
-		projectGraphs,
-		frameworkClassifier,
-		nonSourceClassifier
-	);
+	const thresholds = {
+		fanOutThreshold,
+		fanInThreshold,
+		exportThreshold,
+	};
+	return {
+		absoluteDir,
+		report: buildAuditReport(
+			context.graph,
+			thresholds,
+			projectGraphs,
+			frameworkClassifier,
+			nonSourceClassifier
+		),
+		thresholds,
+	};
+}
 
-	if (json) {
+export async function auditCommand(options: AuditOptions): Promise<void> {
+	const analysis = await analyzeAudit(options);
+	if (!analysis) {
+		logger.error("Could not find tsconfig.json");
+		process.exit(1);
+	}
+	const { absoluteDir, report, thresholds } = analysis;
+
+	if (options.json) {
 		logger.json(auditReportToJson(report, absoluteDir));
 		return;
 	}
 
-	printReport(report, absoluteDir, {
-		fanOutThreshold,
-		fanInThreshold,
-		exportThreshold,
-	});
+	printReport(report, absoluteDir, thresholds);
 }
 
 function printReport(

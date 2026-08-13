@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { cleanup, makeFixture } from "./commands/__test-helpers.ts";
+import {
+	cleanup,
+	makeFixture,
+	parseMcpTextPayload,
+} from "./commands/__test-helpers.ts";
 import { analyzeTool, unusedTool } from "./mcp-server.ts";
 
 interface AnalyzeEntrypointPayload {
@@ -19,14 +22,6 @@ interface UnusedEntrypointPayload {
 	publicApiExports: Array<{ file: string; name: string }>;
 	unused: Array<{ file: string; name: string }>;
 	orphanFiles: Array<{ file: string }>;
-}
-
-function parsePayload<T>(result: CallToolResult): T {
-	const content = result.content[0];
-	if (content?.type !== "text") {
-		throw new Error("Expected an MCP text result");
-	}
-	return JSON.parse(content.text) as T;
 }
 
 describe("MCP framework and configured entrypoints", () => {
@@ -55,14 +50,14 @@ describe("MCP framework and configured entrypoints", () => {
 			const ordinaryFile = path.join(dir, "src/lib/route.ts");
 			const publicFile = path.join(dir, "src/public.ts");
 
-			const route = parsePayload<AnalyzeEntrypointPayload>(
+			const route = parseMcpTextPayload<AnalyzeEntrypointPayload>(
 				await analyzeTool(routeFile, { project })
 			);
 			expect(route.externalUsageAssumed).toBeTrue();
 			expect(route.noExternalUsage).toBeFalse();
 			expect(route.unusedExports).toHaveLength(0);
 
-			const configured = parsePayload<AnalyzeEntrypointPayload>(
+			const configured = parseMcpTextPayload<AnalyzeEntrypointPayload>(
 				await analyzeTool(hookFile, {
 					project,
 					entrypointGlobs: "src/hooks/**",
@@ -71,14 +66,14 @@ describe("MCP framework and configured entrypoints", () => {
 			expect(configured.externalUsageAssumed).toBeTrue();
 			expect(configured.unusedExports).toHaveLength(0);
 
-			const ordinary = parsePayload<AnalyzeEntrypointPayload>(
+			const ordinary = parseMcpTextPayload<AnalyzeEntrypointPayload>(
 				await analyzeTool(ordinaryFile, { project })
 			);
 			expect(ordinary.externalUsageAssumed).toBeFalse();
 			expect(ordinary.noExternalUsage).toBeTrue();
 			expect(ordinary.unusedExports.map((item) => item.name)).toEqual(["GET"]);
 
-			const packagePublic = parsePayload<AnalyzeEntrypointPayload>(
+			const packagePublic = parseMcpTextPayload<AnalyzeEntrypointPayload>(
 				await analyzeTool(publicFile, { project })
 			);
 			expect(packagePublic.publicApiExports.map((item) => item.name)).toEqual([
@@ -88,7 +83,7 @@ describe("MCP framework and configured entrypoints", () => {
 			expect(packagePublic.noExternalUsage).toBeFalse();
 			expect(packagePublic.unusedExports).toHaveLength(0);
 
-			const unused = parsePayload<UnusedEntrypointPayload>(
+			const unused = parseMcpTextPayload<UnusedEntrypointPayload>(
 				await unusedTool(dir, { project })
 			);
 			expect(unused.excludedEntrypointFileCount).toBe(1);

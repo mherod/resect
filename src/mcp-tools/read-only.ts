@@ -11,7 +11,7 @@
 import path from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { analysisReportToJson, analyze } from "../commands/analyze.ts";
-import { auditReportToJson, buildAuditReport } from "../commands/audit.ts";
+import { analyzeAudit, auditReportToJson } from "../commands/audit.ts";
 import { analyzeBarrels, barrelReportToJson } from "../commands/barrel.ts";
 import { executeDeps } from "../commands/deps.ts";
 import { discoveryReportToJson } from "../commands/discover.ts";
@@ -40,9 +40,6 @@ import {
 	previewTidyFixes,
 } from "../commands/tidy.ts";
 import { findUnusedExports } from "../commands/unused.ts";
-import { createFrameworkGeneratedArtifactClassifier } from "../core/generated-artifacts.ts";
-import { buildDependencyGraph } from "../core/graph.ts";
-import { createNonSourceClassifier } from "../core/non-source-files.ts";
 import { loadProject, resolveTsConfig } from "../core/project.ts";
 import { analyzeSimilarity } from "../core/similarity.ts";
 import { serializeStructuredEdits } from "../core/text-changes.ts";
@@ -224,37 +221,24 @@ export async function auditTool(
 		fanInThreshold?: number;
 		exportThreshold?: number;
 		includeIgnored?: boolean;
+		workspace?: boolean;
 	}
 ): Promise<CallToolResult> {
 	const absoluteDir = path.resolve(directory);
-	const tsconfigPath = resolveTsConfig(options.project, absoluteDir);
-	if (!tsconfigPath) {
+	const analysis = await analyzeAudit({
+		directory: absoluteDir,
+		project: options.project,
+		workspace: options.workspace,
+		fanOutThreshold: options.fanOutThreshold,
+		fanInThreshold: options.fanInThreshold,
+		exportThreshold: options.exportThreshold,
+		includeIgnored: options.includeIgnored,
+		json: true,
+	});
+	if (!analysis) {
 		return tsconfigNotFound(absoluteDir);
 	}
-	const projectConfig = loadProject(tsconfigPath);
-	const graph = await buildDependencyGraph(projectConfig);
-	const frameworkClassifier = await createFrameworkGeneratedArtifactClassifier([
-		tsconfigPath,
-	]);
-	const thresholds = {
-		fanOutThreshold: options.fanOutThreshold ?? 10,
-		fanInThreshold: options.fanInThreshold ?? 10,
-		exportThreshold: options.exportThreshold ?? 8,
-	};
-	const nonSourceClassifier = options.includeIgnored
-		? undefined
-		: await createNonSourceClassifier(
-				[...graph.imports.keys()],
-				absoluteDir,
-				projectConfig
-			);
-	const report = buildAuditReport(
-		graph,
-		thresholds,
-		[{ graph, project: projectConfig }],
-		frameworkClassifier,
-		nonSourceClassifier
-	);
+	const { report, thresholds } = analysis;
 	return jsonText({
 		...auditReportToJson(report, absoluteDir),
 		thresholds,

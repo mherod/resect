@@ -248,6 +248,10 @@ export function registerMutationTools(server: McpServer): void {
 					.describe(
 						"Optional path to the project root or tsconfig.json. Omit to auto-resolve the nearest tsconfig that owns the file"
 					),
+				workspace: z
+					.boolean()
+					.optional()
+					.describe("Scan references across all workspace packages"),
 				dryRun: z
 					.boolean()
 					.optional()
@@ -283,6 +287,7 @@ export function registerMutationTools(server: McpServer): void {
 			oldName,
 			newName,
 			project,
+			workspace,
 			dryRun,
 			force,
 			journal,
@@ -296,6 +301,7 @@ export function registerMutationTools(server: McpServer): void {
 					oldName,
 					newName,
 					project,
+					workspace: workspace ?? false,
 					dryRun: dryRun ?? true,
 					force: force ?? false,
 					journal: journal ?? false,

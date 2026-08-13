@@ -240,6 +240,10 @@ export function registerAnalysisTools(server: McpServer): void {
 					.describe(
 						"Optional path to the project root or tsconfig.json. Omit to auto-resolve the tsconfig for `directory`"
 					),
+				workspace: z
+					.boolean()
+					.optional()
+					.describe("Scan across all workspace packages (default false)"),
 				fanOutThreshold: z
 					.number()
 					.optional()
@@ -269,6 +273,7 @@ export function registerAnalysisTools(server: McpServer): void {
 		async ({
 			directory,
 			project,
+			workspace,
 			fanOutThreshold,
 			fanInThreshold,
 			exportThreshold,
@@ -277,6 +282,7 @@ export function registerAnalysisTools(server: McpServer): void {
 			return withErrorHandling(async () => {
 				return auditTool(directory, {
 					project,
+					workspace,
 					fanOutThreshold,
 					fanInThreshold,
 					exportThreshold,
