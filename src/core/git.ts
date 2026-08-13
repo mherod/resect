@@ -359,6 +359,8 @@ async function isSameInode(a: string, b: string): Promise<boolean> {
  * @param projectRoot - git working directory the restore runs in
  * @param renames - source/target pairs that were moved
  * @param importerFiles - files whose import specifiers were rewritten by the move
+ * @throws when Git cannot restore the original sources or unstage a target;
+ *   target files are never deleted unless source restoration succeeded first
  */
 export async function rollbackMoves(
 	projectRoot: string,
@@ -367,14 +369,20 @@ export async function rollbackMoves(
 ): Promise<void> {
 	const { unlink } = await import("node:fs/promises");
 	const rt = getRuntime();
+	const rollbackErrors: string[] = [];
 
-	const runGit = async (args: string[]): Promise<void> => {
+	const runGit = async (args: string[]): Promise<boolean> => {
 		const { stderr, exitCode } = await rt.process.exec(["git", ...args], {
 			cwd: projectRoot,
 		});
-		if (exitCode !== 0 && stderr.trim()) {
-			logger.error(`Rollback step failed (git ${args[0]}): ${stderr.trim()}`);
+		if (exitCode === 0) {
+			return true;
 		}
+		const detail = stderr.trim() || `git ${args[0]} exited ${exitCode}`;
+		const message = `Rollback step failed (git ${args[0]}): ${detail}`;
+		logger.error(message);
+		rollbackErrors.push(message);
+		return false;
 	};
 
 	// Restore the original files in both the index and worktree. For a case-only
@@ -383,8 +391,17 @@ export async function rollbackMoves(
 		...renames.map((r) => path.relative(projectRoot, r.from)),
 		...Array.from(importerFiles).map((f) => path.relative(projectRoot, f)),
 	];
-	if (restorePaths.length > 0) {
-		await runGit(["restore", "--staged", "--worktree", "--", ...restorePaths]);
+	const restoredSources =
+		restorePaths.length === 0 ||
+		(await runGit([
+			"restore",
+			"--staged",
+			"--worktree",
+			"--",
+			...restorePaths,
+		]));
+	if (!restoredSources) {
+		throw new Error(rollbackErrors.join("\n"));
 	}
 
 	// Clean up the new-name entries. Unstage them from the index ONLY — running
@@ -398,5 +415,8 @@ export async function rollbackMoves(
 		if ((await rt.fs.exists(to)) && !(await isSameInode(from, to))) {
 			await unlink(to);
 		}
+	}
+	if (rollbackErrors.length > 0) {
+		throw new Error(rollbackErrors.join("\n"));
 	}
 }

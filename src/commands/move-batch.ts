@@ -1,12 +1,20 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
-import { ensureCleanWorktree } from "../core/git.ts";
+import {
+	ensureRollbackSafeWorktree,
+	type RollbackSafety,
+} from "../core/git.ts";
 import { buildDependencyGraph, type DependencyGraph } from "../core/graph.ts";
 import {
 	completeOperationJournal,
 	prepareOperationJournal,
 } from "../core/journal.ts";
 import { isCrossPackageMove, normalizePath } from "../core/resolver.ts";
+import {
+	createMoveRollbackStrategy,
+	createRollbackCheckpoint,
+	tryRestoreRollback,
+} from "../core/rollback.ts";
 import { scanBarrelExports, scanModuleReferences } from "../core/scanner.ts";
 import { createSourceFileFromText } from "../core/source-file.ts";
 import {
@@ -60,6 +68,8 @@ export interface MoveBatchResult {
 	items: MoveBatchItemResult[];
 	applied: MoveBatchItemResult[];
 	failed: MoveBatchItemResult[];
+	rolledBack: boolean;
+	worktreeDirtyRollbackDisabled: boolean;
 	typecheck?: VerificationResult;
 	projectRoot: string;
 	journalEntryId?: string;
@@ -67,7 +77,11 @@ export interface MoveBatchResult {
 
 interface MoveBatchDependencies {
 	buildDependencyGraph: typeof buildDependencyGraph;
-	ensureCleanWorktree: typeof ensureCleanWorktree;
+	ensureRollbackSafeWorktree: (
+		directory: string,
+		force: boolean,
+		dryRun: boolean
+	) => Promise<RollbackSafety>;
 	moveModule: typeof moveModule;
 	runPackageBuilds: typeof runPackageBuilds;
 	runWithTypecheckGuard: typeof runWithTypecheckGuard;
@@ -76,7 +90,12 @@ interface MoveBatchDependencies {
 
 const DEFAULT_DEPENDENCIES: MoveBatchDependencies = {
 	buildDependencyGraph,
-	ensureCleanWorktree,
+	ensureRollbackSafeWorktree: async (directory, force, dryRun) =>
+		ensureRollbackSafeWorktree(directory, {
+			force,
+			dryRun,
+			operation: "move-batch",
+		}),
 	moveModule,
 	runPackageBuilds,
 	runWithTypecheckGuard,
@@ -218,7 +237,11 @@ export async function moveBatchWithDependencies(
 	}
 	const { project, workspace } = context;
 	validateWorkspaceBoundaries(moves, workspace?.root);
-	await dependencies.ensureCleanWorktree(project.rootDir, force, dryRun);
+	const rollbackSafety = await dependencies.ensureRollbackSafeWorktree(
+		project.rootDir,
+		force,
+		dryRun
+	);
 	const journalContext = await prepareOperationJournal(
 		project.rootDir,
 		(options.journal ?? false) && !dryRun
@@ -285,8 +308,23 @@ export async function moveBatchWithDependencies(
 				})
 			: { result: await applyMoves(), delta: undefined };
 	const items = guarded.result;
-	const applied = items.filter(({ result }) => result.success);
+	const attemptedApplied = items.filter(({ result }) => result.success);
 	const failed = items.filter(({ result }) => !result.success);
+	let rolledBack = false;
+	if (
+		guarded.delta &&
+		!guarded.delta.success &&
+		attemptedApplied.length > 0 &&
+		rollbackSafety.rollbackEnabled
+	) {
+		rolledBack = await rollbackMoveBatch(project.rootDir, attemptedApplied);
+	}
+	if (guarded.delta) {
+		guarded.delta.rolledBack = rolledBack;
+		guarded.delta.worktreeDirtyRollbackDisabled =
+			rollbackSafety.worktreeDirtyRollbackDisabled;
+	}
+	const applied = rolledBack ? [] : attemptedApplied;
 	const success = failed.length === 0 && (guarded.delta?.success ?? true);
 	const journalEntry = success
 		? await completeOperationJournal(journalContext, {
@@ -311,10 +349,34 @@ export async function moveBatchWithDependencies(
 		items,
 		applied,
 		failed,
+		rolledBack,
+		worktreeDirtyRollbackDisabled: rollbackSafety.worktreeDirtyRollbackDisabled,
 		typecheck: guarded.delta,
 		projectRoot: project.rootDir,
 		journalEntryId: journalEntry?.id,
 	};
+}
+
+async function rollbackMoveBatch(
+	projectRoot: string,
+	applied: MoveBatchItemResult[]
+): Promise<boolean> {
+	const renames = applied.map(({ move }) => ({
+		from: move.source,
+		to: move.target,
+	}));
+	const movePaths = new Set(
+		renames.flatMap(({ from, to }) => [normalizePath(from), normalizePath(to)])
+	);
+	const changedFiles = applied.flatMap(({ result }) =>
+		result.edits
+			.map((edit) => edit.file)
+			.filter((file) => !movePaths.has(normalizePath(file)))
+	);
+	const checkpoint = await createRollbackCheckpoint(
+		createMoveRollbackStrategy(projectRoot, renames, changedFiles)
+	);
+	return tryRestoreRollback(checkpoint);
 }
 
 export async function moveBatchCommand(
@@ -342,6 +404,9 @@ export async function moveBatchCommand(
 		}
 		if (result.typecheck) {
 			printVerificationResults(result.typecheck);
+			if (!result.typecheck.success) {
+				logger.error(batchVerificationFailureMessage(result));
+			}
 		}
 		if (result.journalEntryId) {
 			logger.info(`Journaled operation ${result.journalEntryId}`);
@@ -351,6 +416,16 @@ export async function moveBatchCommand(
 	if (!result.success) {
 		process.exit(1);
 	}
+}
+
+function batchVerificationFailureMessage(result: MoveBatchResult): string {
+	if (result.rolledBack) {
+		return "Batch verification failed; successful moves were rolled back.";
+	}
+	if (result.worktreeDirtyRollbackDisabled) {
+		return "Batch verification failed; moves remain applied because rollback was disabled (--force on dirty tree).";
+	}
+	return "Batch verification failed and automatic rollback could not restore the successful moves.";
 }
 
 export function serializeMoveBatchResult(result: MoveBatchResult): object {
@@ -380,6 +455,8 @@ export function serializeMoveBatchResult(result: MoveBatchResult): object {
 		dryRun: result.dryRun,
 		appliedCount: result.applied.length,
 		failedCount: result.failed.length,
+		rolledBack: result.rolledBack,
+		worktreeDirtyRollbackDisabled: result.worktreeDirtyRollbackDisabled,
 		items: result.items.map(serializeItem),
 		typecheck: result.typecheck,
 		journalEntryId: result.journalEntryId,

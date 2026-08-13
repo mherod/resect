@@ -26,6 +26,8 @@ export function combineName(person: { first: string; last: string }) {
 interface RenamePayload {
 	success: boolean;
 	worktreeDirty: boolean;
+	rolledBack?: boolean;
+	worktreeDirtyRollbackDisabled?: boolean;
 	errors: Array<{ message: string }>;
 }
 
@@ -37,8 +39,15 @@ function parsePayload(result: CallToolResult): RenamePayload {
 	return JSON.parse(content.text) as RenamePayload;
 }
 
-async function setupProject(): Promise<{ dir: string; filePath: string }> {
-	const dir = await makeTempDir("mcp-rename");
+async function setupProject(options?: { verification?: boolean }): Promise<{
+	dir: string;
+	filePath: string;
+	consumerPath?: string;
+}> {
+	const verification = options?.verification ?? false;
+	const dir = await makeTempDir(
+		verification ? "mcp-rename-verify" : "mcp-rename"
+	);
 	tempDirs.push(dir);
 	await writeFile(
 		path.join(dir, "tsconfig.json"),
@@ -54,8 +63,18 @@ async function setupProject(): Promise<{ dir: string; filePath: string }> {
 			include: ["**/*.ts"],
 		})
 	);
-	const filePath = path.join(dir, "mod.ts");
-	await writeFile(filePath, DUPLICATE_SOURCE);
+	const filePath = path.join(dir, verification ? "api.ts" : "mod.ts");
+	const consumerPath = verification ? path.join(dir, "consumer.ts") : undefined;
+	await writeFile(
+		filePath,
+		verification ? "export const foo = 1;\n" : DUPLICATE_SOURCE
+	);
+	if (consumerPath) {
+		await writeFile(
+			consumerPath,
+			'import * as api from "./api";\nexport const value: 1 = api.foo;\n'
+		);
+	}
 	await runGitCommand(dir, ["init", "--template="]);
 	await runGitCommand(dir, ["add", "."]);
 	await runGitCommand(dir, [
@@ -67,7 +86,7 @@ async function setupProject(): Promise<{ dir: string; filePath: string }> {
 		"-m",
 		"initial",
 	]);
-	return { dir, filePath };
+	return { dir, filePath, consumerPath };
 }
 
 const runMcpRename = async (
@@ -116,5 +135,31 @@ describe("MCP rename force handling", () => {
 		const forced = parsePayload(await runMcpRename(filePath, true));
 		expect(forced.worktreeDirty).toBe(true);
 		expect(forced.success).toBe(true);
+	});
+
+	test("verification failure rolls back and reports the restored state", async () => {
+		const { consumerPath, filePath } = await setupProject({
+			verification: true,
+		});
+		if (!consumerPath) {
+			throw new Error("Expected a verification consumer fixture");
+		}
+		const result = parsePayload(
+			await renameTool({
+				file: filePath,
+				oldName: "foo",
+				newName: "bar",
+				dryRun: false,
+				force: false,
+				verify: true,
+				verbose: false,
+			})
+		);
+
+		expect(result.success).toBe(false);
+		expect(result.rolledBack).toBe(true);
+		expect(result.worktreeDirtyRollbackDisabled).toBe(false);
+		expect(await Bun.file(filePath).text()).toContain("export const foo = 1");
+		expect(await Bun.file(consumerPath).text()).toContain("api.foo");
 	});
 });

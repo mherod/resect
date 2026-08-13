@@ -36,7 +36,7 @@ import type {
 	ExtensionPolicy,
 	PreferStrategy,
 } from "../commands/option-domains.ts";
-import { renameSymbol } from "../commands/rename.ts";
+import { renameSymbol, rollbackRenameChanges } from "../commands/rename.ts";
 import { getRollbackSafety, isWorktreeDirty } from "../core/git.ts";
 import {
 	completeOperationJournal,
@@ -87,13 +87,19 @@ export async function moveBatchTool(args: {
 			extensions: args.extensions,
 		},
 		{
-			ensureCleanWorktree: async (directory, _force, dryRun) => {
+			ensureRollbackSafeWorktree: async (directory, _force, dryRun) => {
+				const dirty = await isWorktreeDirty(directory);
 				if (args.force || dryRun) {
-					return;
+					return getRollbackSafety({
+						dirty,
+						force: args.force,
+						dryRun,
+					});
 				}
-				if (await isWorktreeDirty(directory)) {
+				if (dirty) {
 					throw new Error(WORKTREE_BLOCKED_MESSAGE);
 				}
+				return getRollbackSafety({ dirty, force: false, dryRun });
 			},
 		}
 	);
@@ -306,8 +312,23 @@ export async function renameTool(args: {
 	const { result, delta } = shouldVerify
 		? await runWithTypecheckGuard(project, runRename)
 		: { result: await runRename(), delta: undefined };
+	const rollbackSafety = getRollbackSafety({
+		dirty: wt.dirty,
+		force: args.force,
+		dryRun: args.dryRun,
+	});
+	let rolledBack = false;
+	if (delta) {
+		delta.worktreeDirtyRollbackDisabled =
+			rollbackSafety.worktreeDirtyRollbackDisabled;
+		if (result.success && !delta.success && rollbackSafety.rollbackEnabled) {
+			rolledBack = await rollbackRenameChanges(project, result);
+		}
+		delta.rolledBack = rolledBack;
+	}
+	const success = result.success && (delta?.success ?? true);
 	const journalEntry =
-		result.success && !args.dryRun && (delta?.success ?? true)
+		success && !args.dryRun
 			? await completeOperationJournal(journalContext, {
 					args: {
 						file: path.relative(project.rootDir, absolutePath),
@@ -323,7 +344,9 @@ export async function renameTool(args: {
 		dryRun: args.dryRun,
 		force: args.force,
 		worktreeDirty: wt.dirty,
-		success: result.success,
+		success,
+		rolledBack,
+		worktreeDirtyRollbackDisabled: rollbackSafety.worktreeDirtyRollbackDisabled,
 		renamedSymbol: {
 			file: path.relative(root, result.renamedSymbol.file),
 			oldName: result.renamedSymbol.oldName,

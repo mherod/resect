@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import ts from "typescript";
-import { makeTempDir, runCli } from "./__test-helpers.ts";
+import { makeTempDir, runCli, runGitCommand } from "./__test-helpers.ts";
 import { renameInSourceFile } from "./rename";
 
 const tempDirs: string[] = [];
@@ -337,9 +337,67 @@ describe("rename CLI verification", () => {
 		expect(await Bun.file(apiPath).text()).toBe(previewed);
 	});
 
-	test("fails by default when the rename introduces a typecheck delta", async () => {
+	test("rolls back when the rename introduces a typecheck delta", async () => {
 		const { apiPath, consumerPath, tsconfigPath } =
 			await makeRenameCliProject();
+		const projectRoot = path.dirname(tsconfigPath);
+		await runGitCommand(projectRoot, ["init", "--template="]);
+		await runGitCommand(projectRoot, ["add", "."]);
+		await runGitCommand(projectRoot, [
+			"-c",
+			"user.name=Resect Test",
+			"-c",
+			"user.email=resect@example.invalid",
+			"commit",
+			"-m",
+			"initial",
+		]);
+
+		const result = await runCli([
+			"rename",
+			apiPath,
+			"foo",
+			"bar",
+			"--json",
+			"-p",
+			tsconfigPath,
+		]);
+		const payload = JSON.parse(result.stdout) as {
+			success: boolean;
+			rolledBack: boolean;
+			worktreeDirtyRollbackDisabled: boolean;
+		};
+
+		expect(result.exitCode).toBe(1);
+		expect(payload.success).toBe(false);
+		expect(payload.rolledBack).toBe(true);
+		expect(payload.worktreeDirtyRollbackDisabled).toBe(false);
+		expect(await Bun.file(apiPath).text()).toContain("export const foo = 1");
+		expect(await Bun.file(consumerPath).text()).toContain("api.foo");
+		expect(await runGitCommand(projectRoot, ["status", "--porcelain=v1"])).toBe(
+			""
+		);
+	});
+
+	test("forced dirty verification failure preserves user and rename edits", async () => {
+		const { apiPath, consumerPath, tsconfigPath } =
+			await makeRenameCliProject();
+		const projectRoot = path.dirname(tsconfigPath);
+		await runGitCommand(projectRoot, ["init", "--template="]);
+		await runGitCommand(projectRoot, ["add", "."]);
+		await runGitCommand(projectRoot, [
+			"-c",
+			"user.name=Resect Test",
+			"-c",
+			"user.email=resect@example.invalid",
+			"commit",
+			"-m",
+			"initial",
+		]);
+		await Bun.write(
+			apiPath,
+			`${await Bun.file(apiPath).text()}// dirty user edit\n`
+		);
 
 		const result = await runCli([
 			"rename",
@@ -347,15 +405,24 @@ describe("rename CLI verification", () => {
 			"foo",
 			"bar",
 			"--force",
+			"--json",
 			"-p",
 			tsconfigPath,
 		]);
+		const payload = JSON.parse(result.stdout) as {
+			success: boolean;
+			rolledBack: boolean;
+			worktreeDirtyRollbackDisabled: boolean;
+		};
 
 		expect(result.exitCode).toBe(1);
-		expect(result.stdout).toContain("Renamed successfully");
-		expect(result.stderr).toContain("Type checking failed");
-		expect(result.stderr).toContain("Property 'foo' does not exist");
-		expect(await Bun.file(apiPath).text()).toContain("export const bar = 1");
+		expect(payload.success).toBe(false);
+		expect(payload.rolledBack).toBe(false);
+		expect(payload.worktreeDirtyRollbackDisabled).toBe(true);
+		expect(result.stderr).toContain("rename rollback is disabled");
+		const api = await Bun.file(apiPath).text();
+		expect(api).toContain("export const bar = 1");
+		expect(api).toContain("// dirty user edit");
 		expect(await Bun.file(consumerPath).text()).toContain("api.foo");
 	});
 

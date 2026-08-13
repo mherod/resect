@@ -6,7 +6,11 @@ import {
 	compareDeclarations,
 	describeComparison,
 } from "../core/duplicate-detection.ts";
-import { ensureCleanWorktree } from "../core/git.ts";
+import {
+	ensureCleanWorktree,
+	ensureRollbackSafeWorktree,
+	type RollbackSafety,
+} from "../core/git.ts";
 import { buildDependencyGraph, findAllReferences } from "../core/graph.ts";
 import {
 	completeOperationJournal,
@@ -14,6 +18,11 @@ import {
 } from "../core/journal.ts";
 import { createProgram } from "../core/project.ts";
 import { normalizePath } from "../core/resolver.ts";
+import {
+	createGitFilesRollbackStrategy,
+	createRollbackCheckpoint,
+	tryRestoreRollback,
+} from "../core/rollback.ts";
 import { getNameNode, hasExportModifier } from "../core/scanner.ts";
 import { parentOf } from "../core/source-file.ts";
 import {
@@ -27,6 +36,7 @@ import {
 import {
 	printVerificationResults,
 	runWithTypecheckGuard,
+	type VerificationResult,
 } from "../core/verify.ts";
 import { getRuntime } from "../runtime/index.ts";
 import type { ModuleReference } from "../types/graph.ts";
@@ -67,8 +77,16 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 
 	const absolutePath = path.resolve(file);
 
-	// Guard: refuse to mutate a dirty worktree unless --force
-	await ensureCleanWorktree(path.dirname(absolutePath), force, dryRun);
+	const rollbackSafety = verify
+		? await ensureRollbackSafeWorktree(path.dirname(absolutePath), {
+				force,
+				dryRun,
+				operation: "rename",
+			})
+		: undefined;
+	if (!rollbackSafety) {
+		await ensureCleanWorktree(path.dirname(absolutePath), force, dryRun);
+	}
 
 	const context = await setupCommandContext({
 		project: projectArg,
@@ -112,8 +130,18 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 		verify && !dryRun
 			? await runWithTypecheckGuard(project, runRename)
 			: { result: await runRename(), delta: undefined };
+	let rolledBack = false;
+	if (delta) {
+		delta.worktreeDirtyRollbackDisabled =
+			rollbackSafety?.worktreeDirtyRollbackDisabled ?? false;
+		if (result.success && !delta.success && rollbackSafety?.rollbackEnabled) {
+			rolledBack = await rollbackRenameChanges(project, result);
+		}
+		delta.rolledBack = rolledBack;
+	}
+	const success = result.success && (delta?.success ?? true);
 	const journalEntry =
-		result.success && (delta?.success ?? true) && !dryRun
+		success && !dryRun
 			? await completeOperationJournal(journalContext, {
 					args: {
 						file: path.relative(project.rootDir, absolutePath),
@@ -130,6 +158,10 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 			JSON.stringify(
 				{
 					...result,
+					success,
+					rolledBack,
+					worktreeDirtyRollbackDisabled:
+						rollbackSafety?.worktreeDirtyRollbackDisabled ?? false,
 					renamedSymbol: {
 						...result.renamedSymbol,
 						file: path.relative(root, result.renamedSymbol.file),
@@ -154,7 +186,11 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 		);
 	} else {
 		printCommandResult(
-			result,
+			{
+				...result,
+				success,
+				updatedReferences: rolledBack ? [] : result.updatedReferences,
+			},
 			"rename",
 			"Renamed",
 			dryRun,
@@ -169,10 +205,39 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 	if (delta && !json) {
 		printVerificationResults(delta);
 	}
+	if (delta && !delta.success) {
+		logger.error(renameVerificationFailureMessage(delta, rollbackSafety));
+	}
 
-	if (!result.success || (delta !== undefined && !delta.success)) {
+	if (!success) {
 		process.exit(1);
 	}
+}
+
+export async function rollbackRenameChanges(
+	project: ProjectConfig,
+	result: RenameResult
+): Promise<boolean> {
+	const checkpoint = await createRollbackCheckpoint(
+		createGitFilesRollbackStrategy(
+			project.rootDir,
+			result.edits.map((edit) => edit.file)
+		)
+	);
+	return tryRestoreRollback(checkpoint);
+}
+
+function renameVerificationFailureMessage(
+	delta: VerificationResult,
+	rollbackSafety: RollbackSafety | undefined
+): string {
+	if (delta.rolledBack) {
+		return "Rename verification failed; changes were rolled back.";
+	}
+	if (rollbackSafety?.worktreeDirtyRollbackDisabled) {
+		return "Rename verification failed; changes remain applied because rollback was disabled (--force on dirty tree).";
+	}
+	return "Rename verification failed and automatic rollback could not restore the changed files.";
 }
 
 export async function renameSymbol(
