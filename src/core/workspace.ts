@@ -160,11 +160,7 @@ async function findWorkspaceRoot(startDir: string): Promise<{
 				const patterns = Array.isArray(workspaces)
 					? workspaces
 					: (workspaces.packages ?? []);
-				const type = (await getRuntime().fs.exists(
-					path.join(currentDir, "yarn.lock")
-				))
-					? "yarn"
-					: "npm";
+				const type = await detectWorkspaceType(currentDir, pkg.packageManager);
 				return { root: currentDir, type, patterns };
 			}
 		}
@@ -173,6 +169,51 @@ async function findWorkspaceRoot(startDir: string): Promise<{
 	}
 
 	return null;
+}
+
+function explicitWorkspaceType(
+	packageManager: unknown
+): WorkspaceInfo["type"] | null {
+	if (typeof packageManager !== "string") {
+		return null;
+	}
+	const manager = packageManager.split("@")[0];
+	if (manager === "pnpm" || manager === "yarn" || manager === "npm") {
+		return manager;
+	}
+	return "unknown";
+}
+
+async function detectWorkspaceType(
+	root: string,
+	packageManager: unknown
+): Promise<WorkspaceInfo["type"]> {
+	const explicitType = explicitWorkspaceType(packageManager);
+	if (explicitType) {
+		return explicitType;
+	}
+
+	const lockfileSignals = [
+		["pnpm-lock.yaml", "pnpm"],
+		["yarn.lock", "yarn"],
+		["package-lock.json", "npm"],
+		["npm-shrinkwrap.json", "npm"],
+		["bun.lock", "unknown"],
+		["bun.lockb", "unknown"],
+	] as const;
+	const detected = new Set<WorkspaceInfo["type"]>();
+	for (const [lockfile, type] of lockfileSignals) {
+		if (await getRuntime().fs.exists(path.join(root, lockfile))) {
+			detected.add(type);
+		}
+	}
+	if (detected.size === 0) {
+		return "npm";
+	}
+	if (detected.size === 1) {
+		return detected.values().next().value ?? "unknown";
+	}
+	return "unknown";
 }
 
 /**
