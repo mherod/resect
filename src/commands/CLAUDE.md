@@ -39,6 +39,13 @@ Mutating commands must:
 - return structured dry-run edits; MCP defaults `dryRun:true`;
 - restore through the shared rollback seam when verification fails.
 
+Whole-file Git rollback is safe only when the worktree was clean before the
+mutation. Commands that support `--force` must use
+`ensureRollbackSafeWorktree()`: on a forced dirty worktree, leave tool changes
+applied after failed verification and report
+`worktreeDirtyRollbackDisabled: true`. Never run `git restore` in that state,
+because it also destroys the user's pre-existing edits.
+
 DON'T add a mutating command without a dirty-worktree guard and conflict detection.
 
 `move.ts` and `rename.ts` use AST `hasLocalBinding()` walkers over variables, functions, classes, types, interfaces, enums, and import bindings, excluding the changed import. `alias.ts` refuses duplicate target-specifier bindings. `extract-common --output` calls `checkOutputDeclarationConflicts()`.

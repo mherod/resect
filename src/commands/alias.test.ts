@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { loadProject } from "../core/project.ts";
+import { aliasTool } from "../mcp-tools/mutating.ts";
 import { captureOutput, runCli, runGitCommand } from "./__test-helpers.ts";
 import {
 	aliasCommand,
@@ -193,6 +194,89 @@ describe("applyChangesWithVerification", () => {
 		expect(result.success).toBe(false);
 		expect(result.newErrors.length).toBeGreaterThan(0);
 		expect(await Bun.file(consumerPath).text()).toBe(before);
+	});
+
+	test("preserves dirty edits when forced verification fails", async () => {
+		const { dir, projectPath, srcDir } = await writeAliasProject({
+			"src/utils/foo.ts": "export const foo = 1;\n",
+			"src/consumer.ts": 'import { foo } from "@utils/foo";\nexport { foo };\n',
+		});
+		await runGitCommand(dir, ["init", "-b", "main"]);
+		await runGitCommand(dir, ["config", "user.email", "resect-test"]);
+		await runGitCommand(dir, ["config", "user.name", "Resect Test"]);
+		await runGitCommand(dir, ["add", "."]);
+		await runGitCommand(dir, ["commit", "-m", "fixture"]);
+		const consumerPath = path.join(srcDir, "consumer.ts");
+		await Bun.write(
+			consumerPath,
+			`${await Bun.file(consumerPath).text()}// dirty user edit\n`
+		);
+
+		const result = await runCli([
+			"alias",
+			srcDir,
+			"--rename-specifier=@utils/foo=@utils/missing",
+			"--force",
+			"--json",
+			"-p",
+			projectPath,
+		]);
+		const payload = JSON.parse(result.stdout) as {
+			typecheck: {
+				rolledBack: boolean;
+				worktreeDirtyRollbackDisabled: boolean;
+			};
+		};
+
+		expect(result.exitCode).toBe(1);
+		expect(payload.typecheck.rolledBack).toBe(false);
+		expect(payload.typecheck.worktreeDirtyRollbackDisabled).toBe(true);
+		expect(result.stderr).toContain("alias rollback is disabled");
+		const contents = await Bun.file(consumerPath).text();
+		expect(contents).toContain("// dirty user edit");
+		expect(contents).toContain('from "@utils/missing"');
+	});
+
+	test("MCP reports forced dirty verification failures without rollback", async () => {
+		const { dir, projectPath, srcDir } = await writeAliasProject({
+			"src/utils/foo.ts": "export const foo = 1;\n",
+			"src/consumer.ts": 'import { foo } from "@utils/foo";\nexport { foo };\n',
+		});
+		await runGitCommand(dir, ["init", "-b", "main"]);
+		await runGitCommand(dir, ["config", "user.email", "resect-test"]);
+		await runGitCommand(dir, ["config", "user.name", "Resect Test"]);
+		await runGitCommand(dir, ["add", "."]);
+		await runGitCommand(dir, ["commit", "-m", "fixture"]);
+		const consumerPath = path.join(srcDir, "consumer.ts");
+		await Bun.write(
+			consumerPath,
+			`${await Bun.file(consumerPath).text()}// dirty user edit\n`
+		);
+
+		const response = await aliasTool({
+			target: srcDir,
+			renameSpecifiers: ["@utils/foo=@utils/missing"],
+			project: projectPath,
+			dryRun: false,
+			force: true,
+			verify: true,
+		});
+		const content = response.content[0];
+		if (content?.type !== "text") {
+			throw new Error("Expected an MCP text result");
+		}
+		const payload = JSON.parse(content.text) as {
+			success: boolean;
+			rolledBack: boolean;
+			worktreeDirtyRollbackDisabled: boolean;
+		};
+
+		expect(payload.success).toBe(false);
+		expect(payload.rolledBack).toBe(false);
+		expect(payload.worktreeDirtyRollbackDisabled).toBe(true);
+		const contents = await Bun.file(consumerPath).text();
+		expect(contents).toContain("// dirty user edit");
+		expect(contents).toContain('from "@utils/missing"');
 	});
 });
 

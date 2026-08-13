@@ -65,6 +65,10 @@ export interface VerificationResult {
 	 * before/after delta is not trustworthy and `success` will be false.
 	 */
 	verificationIncomplete: boolean;
+	/** Whether a failed mutation was restored to its committed state. */
+	rolledBack?: boolean;
+	/** Whether rollback was unsafe because --force bypassed a dirty worktree. */
+	worktreeDirtyRollbackDisabled?: boolean;
 	/** Unresolvable imports detected after changes, with file paths and specifiers */
 	unresolvableDiagnostics?: UnresolvableDiagnosticWithFile[];
 }

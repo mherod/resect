@@ -1,10 +1,8 @@
 import path from "node:path";
-import { logger } from "../cli-logger.ts";
 import { mapConcurrent } from "../core/concurrency.ts";
 import { diffDiagnostics } from "../core/diagnostics.ts";
 import {
-	ensureCleanWorktree,
-	isWorktreeDirty,
+	ensureRollbackSafeWorktree,
 	type MoveRename,
 	rollbackFiles,
 	rollbackMoves,
@@ -289,19 +287,17 @@ export async function applyTidyFixes(
 ): Promise<TidyApplyResult> {
 	const context = providedContext ?? (await resolveTidyProjectContext(options));
 	const maxChanges = options.maxChanges ?? DEFAULT_MAX_CHANGES;
-	const dirty = await isWorktreeDirty(context.project.rootDir);
-	await ensureCleanWorktree(context.project.rootDir, options.force);
+	const { rollbackEnabled } = await ensureRollbackSafeWorktree(
+		context.project.rootDir,
+		{
+			force: options.force,
+			operation: "tidy",
+		}
+	);
 	const journalContext = await prepareOperationJournal(
 		context.project.rootDir,
 		options.journal ?? false
 	);
-	const rollbackEnabled = !(options.force && dirty);
-	if (!rollbackEnabled) {
-		logger.error(
-			"Warning: --force bypasses the dirty-worktree guard; tidy rollback is disabled."
-		);
-	}
-
 	const planned = await planTidyFixes(
 		report,
 		options,

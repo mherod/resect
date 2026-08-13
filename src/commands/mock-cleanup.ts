@@ -1,7 +1,12 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
 import { diffDiagnostics } from "../core/diagnostics.ts";
-import { ensureCleanWorktree, rollbackFiles } from "../core/git.ts";
+import {
+	ensureCleanWorktree,
+	ensureRollbackSafeWorktree,
+	type RollbackSafety,
+	rollbackFiles,
+} from "../core/git.ts";
 import {
 	buildProjectGraphs,
 	type DependencyGraph,
@@ -328,6 +333,7 @@ export async function applyMockCleanup(
 		reportDirectory: string;
 		dryRun: boolean;
 		verify?: boolean;
+		rollbackSafety?: RollbackSafety;
 	}
 ): Promise<MockCleanupApplyResult> {
 	if (report.orphans.length === 0 || options.dryRun) {
@@ -337,6 +343,8 @@ export async function applyMockCleanup(
 			report,
 			modifiedFiles: [],
 			rolledBack: false,
+			worktreeDirtyRollbackDisabled:
+				options.rollbackSafety?.worktreeDirtyRollbackDisabled ?? false,
 			errors: [],
 		};
 	}
@@ -357,6 +365,8 @@ export async function applyMockCleanup(
 			},
 			modifiedFiles,
 			rolledBack: false,
+			worktreeDirtyRollbackDisabled:
+				options.rollbackSafety?.worktreeDirtyRollbackDisabled ?? false,
 			errors: [],
 		};
 	}
@@ -371,15 +381,20 @@ export async function applyMockCleanup(
 	const verificationIncomplete =
 		before?.incomplete === true || after.incomplete;
 	if (newErrors.length > 0 || verificationIncomplete) {
-		await rollbackFiles(options.reportDirectory, modifiedFiles);
+		const rollbackEnabled = options.rollbackSafety?.rollbackEnabled ?? true;
+		if (rollbackEnabled) {
+			await rollbackFiles(options.reportDirectory, modifiedFiles);
+		}
 		return {
 			dryRun: false,
 			success: false,
 			report,
 			modifiedFiles,
-			rolledBack: true,
+			rolledBack: rollbackEnabled,
+			worktreeDirtyRollbackDisabled:
+				options.rollbackSafety?.worktreeDirtyRollbackDisabled ?? false,
 			errors: verificationIncomplete
-				? ["Type checking did not complete after mock cleanup"]
+				? [mockCleanupVerificationFailure("did not complete", rollbackEnabled)]
 				: newErrors,
 			typecheck: {
 				errorsBefore,
@@ -399,6 +414,8 @@ export async function applyMockCleanup(
 		},
 		modifiedFiles,
 		rolledBack: false,
+		worktreeDirtyRollbackDisabled:
+			options.rollbackSafety?.worktreeDirtyRollbackDisabled ?? false,
 		errors: [],
 		typecheck: {
 			errorsBefore,
@@ -407,6 +424,15 @@ export async function applyMockCleanup(
 			verificationIncomplete,
 		},
 	};
+}
+
+function mockCleanupVerificationFailure(
+	reason: string,
+	rollbackEnabled: boolean
+): string {
+	return rollbackEnabled
+		? `Type checking ${reason} after mock cleanup; changes were rolled back`
+		: `Type checking ${reason} after mock cleanup; changes remain applied because rollback was disabled (--force on dirty tree)`;
 }
 
 export function formatMockCleanupReport(
@@ -449,8 +475,18 @@ export async function mockCleanupCommand(
 ): Promise<void> {
 	const reportDirectory = path.resolve(options.directory);
 	const shouldApply = options.fix === true && options.dryRun !== true;
+	let rollbackSafety: RollbackSafety | undefined;
 	if (shouldApply) {
-		await ensureCleanWorktree(reportDirectory, options.force);
+		rollbackSafety =
+			options.verify === false
+				? undefined
+				: await ensureRollbackSafeWorktree(reportDirectory, {
+						force: options.force,
+						operation: "mock-cleanup",
+					});
+		if (!rollbackSafety) {
+			await ensureCleanWorktree(reportDirectory, options.force);
+		}
 	}
 
 	const report = await buildMockCleanupReport({
@@ -469,6 +505,7 @@ export async function mockCleanupCommand(
 		reportDirectory,
 		dryRun: false,
 		verify: options.verify,
+		rollbackSafety,
 	});
 	writeMockCleanupOutput(result, options.json, reportDirectory);
 	exitOnMockCleanupErrors(result.errors, result.success);

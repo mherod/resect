@@ -247,6 +247,54 @@ export async function ensureCleanWorktree(
 	}
 }
 
+/** Whether a verification failure may safely restore whole files from Git. */
+export interface RollbackSafety {
+	rollbackEnabled: boolean;
+	worktreeDirtyRollbackDisabled: boolean;
+}
+
+/**
+ * Compute rollback safety for a mutating command that may restore whole files.
+ * A forced mutation on a dirty worktree must leave its own edits applied on
+ * verification failure, because Git cannot distinguish them from user edits.
+ */
+export function getRollbackSafety(options: {
+	dirty: boolean;
+	force?: boolean;
+	dryRun?: boolean;
+}): RollbackSafety {
+	const worktreeDirtyRollbackDisabled =
+		options.dirty && options.force === true && options.dryRun !== true;
+	return {
+		rollbackEnabled: !worktreeDirtyRollbackDisabled,
+		worktreeDirtyRollbackDisabled,
+	};
+}
+
+/** Guard a mutation and warn when forced dirty state makes rollback unsafe. */
+export async function ensureRollbackSafeWorktree(
+	dir: string,
+	options: {
+		force?: boolean;
+		dryRun?: boolean;
+		operation: string;
+	}
+): Promise<RollbackSafety> {
+	const dirty = await isWorktreeDirty(dir);
+	await ensureCleanWorktree(dir, options.force, options.dryRun);
+	const safety = getRollbackSafety({
+		dirty,
+		force: options.force,
+		dryRun: options.dryRun,
+	});
+	if (safety.worktreeDirtyRollbackDisabled) {
+		logger.error(
+			`Warning: --force bypasses the dirty-worktree guard; ${options.operation} rollback is disabled.`
+		);
+	}
+	return safety;
+}
+
 /**
  * Roll back files to their committed state by discarding both staged and
  * worktree changes via `git restore --staged --worktree`.

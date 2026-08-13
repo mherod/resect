@@ -9,7 +9,7 @@ import {
 	excludeFrameworkGeneratedArtifacts,
 	generatedArtifactWarning,
 } from "../core/generated-artifacts.ts";
-import { ensureCleanWorktree, rollbackMoves } from "../core/git.ts";
+import { ensureRollbackSafeWorktree, rollbackMoves } from "../core/git.ts";
 import {
 	type DependencyGraph,
 	mergeDependencyGraphs,
@@ -797,6 +797,7 @@ export interface NamingFixResult {
 	report: NamingReport;
 	renames: Array<{ from: string; to: string }>;
 	rolledBack: boolean;
+	worktreeDirtyRollbackDisabled: boolean;
 	errors: string[];
 }
 
@@ -812,6 +813,11 @@ export async function applyNamingFix(
 	const { moveModule } = await import("./move.ts");
 
 	const reportDirectory = path.resolve(options.directory);
+	const rollbackSafety = await ensureRollbackSafeWorktree(reportDirectory, {
+		force: options.force,
+		dryRun: options.dryRun,
+		operation: "naming",
+	});
 	const tsconfigPath = resolveTsConfig(options.project, reportDirectory);
 	if (!tsconfigPath) {
 		throw new Error(`Could not find tsconfig.json for ${reportDirectory}`);
@@ -825,6 +831,7 @@ export async function applyNamingFix(
 		report,
 		renames: [],
 		rolledBack: false,
+		worktreeDirtyRollbackDisabled: rollbackSafety.worktreeDirtyRollbackDisabled,
 		errors: [],
 	};
 
@@ -884,7 +891,9 @@ export async function applyNamingFix(
 	const shouldRollback = after.incomplete || newTypeErrors.length > 0;
 
 	if (shouldRollback) {
-		await rollbackMoves(project.rootDir, computedRenames, importerFiles);
+		if (rollbackSafety.rollbackEnabled) {
+			await rollbackMoves(project.rootDir, computedRenames, importerFiles);
+		}
 		const reason = after.incomplete
 			? "type checking did not complete"
 			: "type checking introduced new errors";
@@ -893,8 +902,15 @@ export async function applyNamingFix(
 			success: false,
 			report,
 			renames: computedRenames,
-			rolledBack: true,
-			errors: [`naming --fix rolled back because ${reason}.`, ...newTypeErrors],
+			rolledBack: rollbackSafety.rollbackEnabled,
+			worktreeDirtyRollbackDisabled:
+				rollbackSafety.worktreeDirtyRollbackDisabled,
+			errors: [
+				rollbackSafety.rollbackEnabled
+					? `naming --fix rolled back because ${reason}.`
+					: `naming --fix failed because ${reason}; changes remain applied because rollback was disabled (--force on dirty tree).`,
+				...newTypeErrors,
+			],
 		};
 	}
 
@@ -909,6 +925,7 @@ export async function applyNamingFix(
 		report: updatedReport,
 		renames: computedRenames,
 		rolledBack: false,
+		worktreeDirtyRollbackDisabled: rollbackSafety.worktreeDirtyRollbackDisabled,
 		errors,
 	};
 }
@@ -918,7 +935,6 @@ export async function namingCommand(options: NamingOptions): Promise<void> {
 		logger.warn(TARGET_CASE_THRESHOLD_WARNING);
 	}
 	if (options.fix) {
-		await ensureCleanWorktree(path.resolve(options.directory), options.force);
 		const result = await applyNamingFix(options);
 		if (options.json) {
 			process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

@@ -80,6 +80,7 @@ export interface MockCleanupApplyResult {
 	report: MockCleanupReport;
 	modifiedFiles: string[];
 	rolledBack: boolean;
+	worktreeDirtyRollbackDisabled: boolean;
 	errors: string[];
 	typecheck?: MockCleanupTypecheck;
 }

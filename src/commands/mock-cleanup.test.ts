@@ -6,6 +6,8 @@ import {
 	cleanup,
 	makeFixture,
 	readRegistrationSource,
+	runCli,
+	runGitCommand,
 } from "./__test-helpers";
 import { mockCleanupCommand } from "./mock-cleanup.ts";
 
@@ -111,6 +113,61 @@ describe("mock-cleanup command", () => {
 			const next = await Bun.file(path.join(dir, "mod.test.ts")).text();
 			expect(next).not.toContain("baz");
 			expect(next).toContain('const wrong: number = "shifted"');
+		} finally {
+			await cleanup(dir);
+		}
+	});
+
+	test("preserves dirty edits when forced verification fails", async () => {
+		const dir = await makeMockFixture("forced-dirty-failure", {
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: {
+					strict: true,
+					types: ["missing-resect-test-types"],
+				},
+				include: ["**/*.ts"],
+			}),
+			"mod.ts": "export const foo = 1;\n",
+			"mod.test.ts": `
+				declare const vi: {
+					fn(): unknown;
+					mock(specifier: string, factory: () => Record<string, unknown>): void;
+				};
+				vi.mock("./mod", () => ({ foo: vi.fn(), baz: vi.fn() }));
+			`,
+		});
+
+		try {
+			await runGitCommand(dir, ["init", "-b", "main"]);
+			await runGitCommand(dir, ["config", "user.email", "resect-test"]);
+			await runGitCommand(dir, ["config", "user.name", "Resect Test"]);
+			await runGitCommand(dir, ["add", "."]);
+			await runGitCommand(dir, ["commit", "-m", "fixture"]);
+			const testPath = path.join(dir, "mod.test.ts");
+			await Bun.write(
+				testPath,
+				`${await Bun.file(testPath).text()}// dirty user edit\n`
+			);
+
+			const fix = await runCli([
+				"mock-cleanup",
+				dir,
+				"--fix",
+				"--force",
+				"--json",
+			]);
+			const result = JSON.parse(fix.stdout) as {
+				success: boolean;
+				rolledBack: boolean;
+				worktreeDirtyRollbackDisabled: boolean;
+			};
+			expect(result.success).toBe(false);
+			expect(result.rolledBack).toBe(false);
+			expect(result.worktreeDirtyRollbackDisabled).toBe(true);
+			expect(fix.stderr).toContain("mock-cleanup rollback is disabled");
+			const contents = await Bun.file(testPath).text();
+			expect(contents).toContain("// dirty user edit");
+			expect(contents).not.toContain("baz");
 		} finally {
 			await cleanup(dir);
 		}

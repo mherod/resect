@@ -1,7 +1,10 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
 import ts from "../core/ast-utils.ts";
-import { ensureCleanWorktree } from "../core/git.ts";
+import {
+	ensureCleanWorktree,
+	ensureRollbackSafeWorktree,
+} from "../core/git.ts";
 import {
 	buildProjectGraphs,
 	mergeDependencyGraphs,
@@ -516,8 +519,16 @@ export async function inlineCommand(options: InlineOptions): Promise<void> {
 
 	const absolute = path.resolve(barrelFile);
 
-	// Guard: refuse to mutate a dirty worktree unless --force or --dry-run
-	await ensureCleanWorktree(path.dirname(absolute), force, dryRun);
+	const rollbackSafety = verify
+		? await ensureRollbackSafeWorktree(path.dirname(absolute), {
+				force,
+				dryRun,
+				operation: "inline",
+			})
+		: undefined;
+	if (!rollbackSafety) {
+		await ensureCleanWorktree(path.dirname(absolute), force, dryRun);
+	}
 
 	const context = await setupCommandContext({
 		project: projectArg,
@@ -588,14 +599,22 @@ export async function inlineCommand(options: InlineOptions): Promise<void> {
 	}
 
 	if (verify) {
-		const verifyResult = await applyChangesWithVerification(changes, project);
+		const verifyResult = await applyChangesWithVerification(
+			changes,
+			project,
+			rollbackSafety
+		);
 		// Update filesChanged after actual apply
 		result.filesChanged = new Set(changes.map((c) => c.file)).size;
 		printInlineResults(result, verbose, project.rootDir);
 		logger.empty();
 		printVerificationResults(verifyResult);
 		if (!verifyResult.success) {
-			logger.error("\nType checking failed. Inline changes were rolled back.");
+			logger.error(
+				verifyResult.rolledBack
+					? "\nType checking failed. Inline changes were rolled back."
+					: "\nType checking failed. Inline changes remain applied because rollback was disabled (--force on dirty tree)."
+			);
 			process.exit(1);
 		}
 	} else {

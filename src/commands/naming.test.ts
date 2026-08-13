@@ -797,6 +797,52 @@ describe("naming command", () => {
 		await cleanup(dir);
 	});
 
+	test("--fix preserves dirty edits when forced verification fails", async () => {
+		const dir = await makeGitFixture("fix-forced-dirty", {
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: {
+					strict: true,
+					types: ["missing-resect-test-types"],
+				},
+				include: ["**/*.ts"],
+			}),
+			"src/group/BuildReport.ts": functionFile("BuildReport"),
+			...withFiles(CAMEL_NAMES, functionFile),
+		});
+		const dirtyPath = path.join(dir, "src/group/alphaOne.ts");
+		await Bun.write(
+			dirtyPath,
+			`${await Bun.file(dirtyPath).text()}// dirty user edit\n`
+		);
+
+		const result = await runCli([
+			"naming",
+			path.join(dir, "src"),
+			"--fix",
+			"--force",
+			"--json",
+		]);
+		const out = JSON.parse(result.stdout) as {
+			success: boolean;
+			rolledBack: boolean;
+			worktreeDirtyRollbackDisabled: boolean;
+		};
+		expect(result.exitCode).toBe(1);
+		expect(out.success).toBe(false);
+		expect(out.rolledBack).toBe(false);
+		expect(out.worktreeDirtyRollbackDisabled).toBe(true);
+		expect(result.stderr).toContain("naming rollback is disabled");
+		expect(await Bun.file(dirtyPath).text()).toContain("// dirty user edit");
+		expect(await hasExactFile(path.join(dir, "src/group/BuildReport.ts"))).toBe(
+			false
+		);
+		expect(await hasExactFile(path.join(dir, "src/group/buildReport.ts"))).toBe(
+			true
+		);
+
+		await cleanup(dir);
+	});
+
 	test("--fix keeps renames when a pre-existing error only moves to the renamed path", async () => {
 		// Regression for #209: a renamed file re-reports its pre-existing error at
 		// the new path; raw-string diffing counted it as new and rolled back a

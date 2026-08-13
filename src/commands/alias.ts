@@ -3,7 +3,11 @@ import { logger } from "../cli-logger.ts";
 import ts from "../core/ast-utils.ts";
 import { mapConcurrent } from "../core/concurrency.ts";
 import { diffDiagnostics } from "../core/diagnostics.ts";
-import { ensureCleanWorktree } from "../core/git.ts";
+import {
+	ensureCleanWorktree,
+	ensureRollbackSafeWorktree,
+	type RollbackSafety,
+} from "../core/git.ts";
 import {
 	completeOperationJournal,
 	prepareOperationJournal,
@@ -154,8 +158,17 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 	}
 	const isRenameMode = specifierRenames.length > 0;
 
-	// Guard: refuse to mutate a dirty worktree unless --force
-	await ensureCleanWorktree(absoluteTarget, force, dryRun);
+	const rollbackSafety =
+		verify && (isRenameMode || workspace)
+			? await ensureRollbackSafeWorktree(absoluteTarget, {
+					force,
+					dryRun,
+					operation: "alias",
+				})
+			: undefined;
+	if (!rollbackSafety) {
+		await ensureCleanWorktree(absoluteTarget, force, dryRun);
+	}
 
 	if (isRenameMode) {
 		if (workspace) {
@@ -171,6 +184,7 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 			verbose,
 			verify,
 			journal,
+			rollbackSafety,
 		});
 		return;
 	}
@@ -273,7 +287,8 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 				? await applyChangesWithWorkspaceVerification(
 						result.changes,
 						projects,
-						wsInfo.root
+						wsInfo.root,
+						rollbackSafety
 					)
 				: undefined;
 			if (!verify) {
@@ -309,7 +324,7 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 			}
 			if (verifyResult && !verifyResult.success) {
 				logger.error(
-					"\nType checking failed. Workspace alias changes were rolled back."
+					aliasVerificationFailureMessage("Workspace alias", verifyResult)
 				);
 				process.exit(1);
 			}
@@ -437,6 +452,7 @@ async function aliasRenameSpecifierCommand(options: {
 	verbose: boolean;
 	verify: boolean;
 	journal: boolean;
+	rollbackSafety?: RollbackSafety;
 }): Promise<void> {
 	const context = await setupCommandContext({
 		project: options.projectArg,
@@ -513,7 +529,8 @@ async function aliasRenameSpecifierCommand(options: {
 	if (options.verify) {
 		const verifyResult = await applyChangesWithVerification(
 			result.changes,
-			project
+			project,
+			options.rollbackSafety
 		);
 		const journalEntry = verifyResult.success
 			? await completeOperationJournal(journalContext, {
@@ -544,7 +561,7 @@ async function aliasRenameSpecifierCommand(options: {
 
 		if (!verifyResult.success) {
 			logger.error(
-				"\nType checking failed. Specifier rename changes were rolled back."
+				aliasVerificationFailureMessage("Specifier rename", verifyResult)
 			);
 			process.exit(1);
 		}
@@ -826,19 +843,25 @@ export function renameImportSpecifiers(
 
 export async function applyChangesWithVerification(
 	changes: AliasChange[],
-	project: ProjectConfig
+	project: ProjectConfig,
+	rollbackSafety?: RollbackSafety
 ): Promise<VerificationResult> {
 	return applyChangesWithWorkspaceVerification(
 		changes,
 		[project],
-		project.rootDir
+		project.rootDir,
+		rollbackSafety
 	);
 }
 
 async function applyChangesWithWorkspaceVerification(
 	changes: AliasChange[],
 	projects: ProjectConfig[],
-	rollbackRoot: string
+	rollbackRoot: string,
+	rollbackSafety: RollbackSafety = {
+		rollbackEnabled: true,
+		worktreeDirtyRollbackDisabled: false,
+	}
 ): Promise<VerificationResult> {
 	const uniqueProjects = [
 		...new Map(
@@ -887,13 +910,25 @@ async function applyChangesWithWorkspaceVerification(
 		newErrors,
 		fixedErrors,
 		verificationIncomplete,
+		rolledBack: false,
+		worktreeDirtyRollbackDisabled: rollbackSafety.worktreeDirtyRollbackDisabled,
 	};
 
-	if (!result.success) {
+	if (!result.success && rollbackSafety.rollbackEnabled) {
 		await rollback.restore();
+		result.rolledBack = true;
 	}
 
 	return result;
+}
+
+function aliasVerificationFailureMessage(
+	operation: string,
+	result: VerificationResult
+): string {
+	return result.rolledBack
+		? `\nType checking failed. ${operation} changes were rolled back.`
+		: `\nType checking failed. ${operation} changes remain applied because rollback was disabled (--force on dirty tree).`;
 }
 
 export async function applyChanges(changes: AliasChange[]): Promise<void> {

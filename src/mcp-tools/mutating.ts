@@ -37,7 +37,7 @@ import type {
 	PreferStrategy,
 } from "../commands/option-domains.ts";
 import { renameSymbol } from "../commands/rename.ts";
-import { isWorktreeDirty } from "../core/git.ts";
+import { getRollbackSafety, isWorktreeDirty } from "../core/git.ts";
 import {
 	completeOperationJournal,
 	prepareOperationJournal,
@@ -399,12 +399,18 @@ export async function aliasTool(args: {
 		result.conflicts.length === 0
 	) {
 		if (args.verify && renames.length > 0) {
+			const rollbackSafety = getRollbackSafety({
+				dirty: wt.dirty,
+				force: args.force,
+				dryRun: args.dryRun,
+			});
 			const verification = await applyAliasChangesWithVerification(
 				result.changes,
-				project
+				project,
+				rollbackSafety
 			);
 			delta = verification;
-			rolledBack = !verification.success;
+			rolledBack = verification.rolledBack ?? false;
 		} else {
 			const guarded = args.verify
 				? await runWithTypecheckGuard(project, async () =>
@@ -438,9 +444,12 @@ export async function aliasTool(args: {
 		dryRun: args.dryRun,
 		force: args.force,
 		worktreeDirty: wt.dirty,
-		success: result.conflicts.length === 0 && !rolledBack,
+		success:
+			result.conflicts.length === 0 && !rolledBack && (delta?.success ?? true),
 		strategy: renames.length > 0 ? "rename-specifier" : args.prefer,
 		rolledBack,
+		worktreeDirtyRollbackDisabled:
+			delta?.worktreeDirtyRollbackDisabled ?? false,
 		filesProcessed: result.filesProcessed,
 		importsUpdated: result.importsUpdated,
 		edits: serializeStructuredEdits(result.edits, (file) =>
@@ -593,12 +602,18 @@ export async function inlineTool(args: {
 	let rolledBack = false;
 	if (!args.dryRun && result.isPureBarrel && changes.length > 0) {
 		if (args.verify) {
+			const rollbackSafety = getRollbackSafety({
+				dirty: wt.dirty,
+				force: args.force,
+				dryRun: args.dryRun,
+			});
 			const verification = await applyAliasChangesWithVerification(
 				changes,
-				project
+				project,
+				rollbackSafety
 			);
 			delta = verification;
-			rolledBack = !verification.success;
+			rolledBack = verification.rolledBack ?? false;
 		} else {
 			await applyAliasChanges(changes);
 		}
@@ -610,10 +625,15 @@ export async function inlineTool(args: {
 		force: args.force,
 		worktreeDirty: wt.dirty,
 		success:
-			result.isPureBarrel && result.conflicts.length === 0 && !rolledBack,
+			result.isPureBarrel &&
+			result.conflicts.length === 0 &&
+			!rolledBack &&
+			(delta?.success ?? true),
 		isPureBarrel: result.isPureBarrel,
 		canonicalSpecifier: result.canonicalSpecifier,
 		rolledBack,
+		worktreeDirtyRollbackDisabled:
+			delta?.worktreeDirtyRollbackDisabled ?? false,
 		filesChanged: rolledBack ? 0 : result.filesChanged,
 		rewrites: result.rewrites.map((r: InlineRewrite) => ({
 			file: path.relative(root, r.file),
