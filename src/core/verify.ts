@@ -20,7 +20,10 @@ export const VERIFY_INCOMPLETE_PREFIX = "VERIFY_INCOMPLETE:";
  * comparisons and caller-supplied `translateBeforeFile` callbacks can compare
  * against absolute paths regardless of how tsc reported the file.
  */
-function resolveDiagnosticFile(project: ProjectConfig, file: string): string {
+export function resolveDiagnosticFile(
+	project: ProjectConfig,
+	file: string
+): string {
 	const cwd = path.dirname(project.tsconfigPath);
 	return path.normalize(path.resolve(cwd, file)).replace(/\\/g, "/");
 }

@@ -2,6 +2,7 @@ import path from "node:path";
 import ts from "typescript";
 import { mapConcurrent } from "../core/concurrency.ts";
 import { removeExtension } from "../core/constants.ts";
+import { diffDiagnostics } from "../core/diagnostics.ts";
 import { ensureCleanWorktree } from "../core/git.ts";
 import {
 	createProgram,
@@ -14,7 +15,7 @@ import {
 	createRollbackCheckpoint,
 } from "../core/rollback.ts";
 import { applyTextChanges, type TextChange } from "../core/text-changes.ts";
-import { runTypeCheckDetailed } from "../core/verify.ts";
+import { resolveDiagnosticFile, runTypeCheckDetailed } from "../core/verify.ts";
 import { getRuntime } from "../runtime/index.ts";
 import {
 	classifyFreeVariables,
@@ -580,9 +581,11 @@ export async function executeExtractComponent(
 	const after = await runTypeCheckDetailed(project);
 
 	const errorsBefore = before.errors;
-	const newErrors = after.errors.filter(
-		(error) => !errorsBefore.includes(error)
-	);
+	// Compare by normalized diagnostic identity, not raw string equality, so a
+	// pre-existing error whose line/col shifted isn't misreported as new (#128).
+	const { newErrors } = diffDiagnostics(errorsBefore, after.errors, {
+		resolveFile: (file) => resolveDiagnosticFile(project, file),
+	});
 	const verificationIncomplete = before.incomplete || after.incomplete;
 	const typecheck: ExtractComponentTypecheck = {
 		errorsBefore,

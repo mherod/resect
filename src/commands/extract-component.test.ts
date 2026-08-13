@@ -569,4 +569,43 @@ export function Counter() {
 			await cleanup(dir);
 		}
 	});
+
+	test("keeps the extraction when a pre-existing error only shifts line", async () => {
+		// Regression for #209: the inserted import shifts a pre-existing error
+		// down one line; raw-string diffing misreported the shifted diagnostic as
+		// new and rolled back a correct extraction (#128).
+		const dir = await makeEcFixture("shifted-preexisting", {
+			"Panel.tsx": `export const wrong: number = "shifted";
+export function Panel() {
+	const title = "hello";
+	return (
+		<section>
+			<div className="body">
+				<span>{title}</span>
+			</div>
+		</section>
+	);
+}
+`,
+		});
+		try {
+			const result = await executeExtractComponent({
+				file: path.join(dir, "Panel.tsx"),
+				selector: "div",
+				newFile: path.join(dir, "PanelBody.tsx"),
+			});
+
+			expect(result.success).toBe(true);
+			expect(result.rolledBack).toBe(false);
+			expect(result.typecheck?.newErrors).toEqual([]);
+			expect(await Bun.file(path.join(dir, "PanelBody.tsx")).exists()).toBe(
+				true
+			);
+			const rewritten = await Bun.file(path.join(dir, "Panel.tsx")).text();
+			expect(rewritten).toContain('const wrong: number = "shifted"');
+			expect(rewritten).toContain("<PanelBody title={title} />");
+		} finally {
+			await cleanup(dir);
+		}
+	});
 });

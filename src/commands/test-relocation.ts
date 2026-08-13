@@ -3,6 +3,7 @@ import path from "node:path";
 import { logger } from "../cli-logger.ts";
 import { mapConcurrent } from "../core/concurrency.ts";
 import { TS_JS_VUE_EXTENSIONS } from "../core/constants.ts";
+import { diffDiagnostics } from "../core/diagnostics.ts";
 import { ensureCleanWorktree } from "../core/git.ts";
 import {
 	buildProjectGraphs,
@@ -17,7 +18,7 @@ import {
 	createRollbackCheckpoint,
 } from "../core/rollback.ts";
 import { isTestFile } from "../core/test-files.ts";
-import { runTypeCheckDetailed } from "../core/verify.ts";
+import { resolveDiagnosticFile, runTypeCheckDetailed } from "../core/verify.ts";
 import { discoverWorkspace } from "../core/workspace.ts";
 import type { MoveResult } from "../types/move.ts";
 import type {
@@ -414,9 +415,23 @@ export async function applyRelocations(
 
 	const after = await runTypeCheckDetailed(options.project);
 	const errorsBefore = before?.errors ?? [];
-	const newErrors = after.errors.filter(
-		(error) => !errorsBefore.includes(error)
+	// Compare by normalized diagnostic identity, not raw string equality (#128).
+	// Relocated test files re-report their pre-existing errors at the new path,
+	// so translate each before-side path to its relocation target.
+	const relocationTargets = new Map(
+		report.findings.map((relocation) => {
+			const { source, target } = absoluteRelocation(
+				relocation,
+				options.reportDirectory
+			);
+			return [normalizePath(source), normalizePath(target)];
+		})
 	);
+	const { newErrors } = diffDiagnostics(errorsBefore, after.errors, {
+		resolveFile: (file) => resolveDiagnosticFile(options.project, file),
+		translateBeforeFile: (file) =>
+			relocationTargets.get(normalizePath(file)) ?? file,
+	});
 	const verificationIncomplete =
 		before?.incomplete === true || after.incomplete;
 	if (newErrors.length > 0 || verificationIncomplete) {

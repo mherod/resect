@@ -1,5 +1,6 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
+import { diffDiagnostics } from "../core/diagnostics.ts";
 import { ensureCleanWorktree, rollbackFiles } from "../core/git.ts";
 import {
 	buildProjectGraphs,
@@ -20,7 +21,7 @@ import {
 	deduplicateChanges,
 	type TextChange,
 } from "../core/text-changes.ts";
-import { runTypeCheckDetailed } from "../core/verify.ts";
+import { resolveDiagnosticFile, runTypeCheckDetailed } from "../core/verify.ts";
 import { getRuntime } from "../runtime/index.ts";
 import type { ModuleReference } from "../types/graph.ts";
 import type {
@@ -362,9 +363,11 @@ export async function applyMockCleanup(
 
 	const after = await runTypeCheckDetailed(options.project);
 	const errorsBefore = before?.errors ?? [];
-	const newErrors = after.errors.filter(
-		(error) => !errorsBefore.includes(error)
-	);
+	// Compare by normalized diagnostic identity, not raw string equality, so a
+	// pre-existing error whose line/col shifted isn't misreported as new (#128).
+	const { newErrors } = diffDiagnostics(errorsBefore, after.errors, {
+		resolveFile: (file) => resolveDiagnosticFile(options.project, file),
+	});
 	const verificationIncomplete =
 		before?.incomplete === true || after.incomplete;
 	if (newErrors.length > 0 || verificationIncomplete) {

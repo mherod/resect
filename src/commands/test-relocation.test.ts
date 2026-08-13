@@ -138,6 +138,34 @@ describe("test-relocation command", () => {
 		await cleanup(dir);
 	});
 
+	test("--fix keeps relocations when a pre-existing error only moves with the file", async () => {
+		// Regression for #209: a relocated test file re-reports its pre-existing
+		// error at the new path; raw-string diffing counted it as new and rolled
+		// back a correct relocation (#128). translateBeforeFile maps old -> new.
+		const dir = await makeFixture("fix-shifted-preexisting", {
+			"src/core/cookies/foo.ts": "export const foo = 1;\n",
+			"src/tests/foo.test.ts":
+				'import { foo } from "../core/cookies/foo";\nexport const result: string = foo;\n',
+		});
+
+		const result = await captureOutput(async () =>
+			testRelocationCommand({
+				directory: path.join(dir, "src"),
+				fix: true,
+				force: true,
+				json: true,
+			})
+		);
+		const report = JSON.parse(result.stdout);
+		expect(report.success).toBe(true);
+		expect(report.rolledBack).toBe(false);
+		const target = path.join(dir, "src/core/cookies/__tests__/foo.test.ts");
+		expect(await exists(target)).toBe(true);
+		expect(await exists(path.join(dir, "src/tests/foo.test.ts"))).toBe(false);
+
+		await cleanup(dir);
+	});
+
 	test("registers the MCP tool", async () => {
 		// Registrations moved to per-domain modules in #187; they sit inside
 		// `register<Domain>Tools(server)`, hence the extra tab.

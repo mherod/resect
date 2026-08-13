@@ -804,7 +804,11 @@ export async function applyNamingFix(
 	options: NamingOptions
 ): Promise<NamingFixResult> {
 	const { loadProject } = await import("../core/project.ts");
-	const { runTypeCheckDetailed } = await import("../core/verify.ts");
+	const { diffDiagnostics } = await import("../core/diagnostics.ts");
+	const { resolveDiagnosticFile, runTypeCheckDetailed } = await import(
+		"../core/verify.ts"
+	);
+	const { normalizePath } = await import("../core/resolver.ts");
 	const { moveModule } = await import("./move.ts");
 
 	const reportDirectory = path.resolve(options.directory);
@@ -859,7 +863,24 @@ export async function applyNamingFix(
 	}
 
 	const after = await runTypeCheckDetailed(project);
-	const newTypeErrors = after.errors.filter((e) => !before.errors.includes(e));
+	// Compare by normalized diagnostic identity, not raw string equality (#128).
+	// Renamed files re-report their pre-existing errors at the new path, so
+	// translate each before-side path to its rename target.
+	const renameTargets = new Map(
+		computedRenames.map((rename) => [
+			normalizePath(rename.from),
+			normalizePath(rename.to),
+		])
+	);
+	const { newErrors: newTypeErrors } = diffDiagnostics(
+		before.errors,
+		after.errors,
+		{
+			resolveFile: (file) => resolveDiagnosticFile(project, file),
+			translateBeforeFile: (file) =>
+				renameTargets.get(normalizePath(file)) ?? file,
+		}
+	);
 	const shouldRollback = after.incomplete || newTypeErrors.length > 0;
 
 	if (shouldRollback) {

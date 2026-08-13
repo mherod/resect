@@ -80,6 +80,42 @@ describe("mock-cleanup command", () => {
 		}
 	});
 
+	test("keeps the fix applied when a pre-existing error only shifts position", async () => {
+		// Regression for #209: the factory edit shifts the column of an unrelated
+		// pre-existing error on the same line; raw-string diffing misreported the
+		// shifted diagnostic as new and rolled back a correct fix (#128).
+		const dir = await makeMockFixture("shifted-preexisting", {
+			"mod.ts": "export const foo = 1;\n",
+			"mod.test.ts": `
+				declare const vi: {
+					fn(): unknown;
+					mock(specifier: string, factory: () => Record<string, unknown>): void;
+				};
+				vi.mock("./mod", () => ({ foo: vi.fn(), baz: vi.fn() })); const wrong: number = "shifted";
+			`,
+		});
+
+		try {
+			const fix = await captureOutput(async () =>
+				mockCleanupCommand({
+					directory: dir,
+					fix: true,
+					force: true,
+					json: true,
+				})
+			);
+			const result = JSON.parse(fix.stdout);
+			expect(result.success).toBe(true);
+			expect(result.rolledBack).toBe(false);
+
+			const next = await Bun.file(path.join(dir, "mod.test.ts")).text();
+			expect(next).not.toContain("baz");
+			expect(next).toContain('const wrong: number = "shifted"');
+		} finally {
+			await cleanup(dir);
+		}
+	});
+
 	test("reports spread factories as skipped and leaves fix as a no-op", async () => {
 		const dir = await makeMockFixture("spread", {
 			"mod.ts": "export const foo = 1;\n",

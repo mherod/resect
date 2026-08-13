@@ -797,6 +797,34 @@ describe("naming command", () => {
 		await cleanup(dir);
 	});
 
+	test("--fix keeps renames when a pre-existing error only moves to the renamed path", async () => {
+		// Regression for #209: a renamed file re-reports its pre-existing error at
+		// the new path; raw-string diffing counted it as new and rolled back a
+		// correct rename (#128). translateBeforeFile maps old -> new.
+		const dir = await makeGitFixture("fix-shifted-preexisting", {
+			"src/group/BuildReport.ts": `export function BuildReport() { return "BuildReport"; }\nexport const wrong: number = "pre-existing";\n`,
+			...withFiles(CAMEL_NAMES, functionFile),
+		});
+
+		const result = await captureOutput(async () =>
+			namingCommand({ directory: path.join(dir, "src"), fix: true, json: true })
+		);
+		const out = JSON.parse(result.stdout) as {
+			success: boolean;
+			rolledBack: boolean;
+		};
+		expect(out.success).toBe(true);
+		expect(out.rolledBack).toBe(false);
+		expect(await hasExactFile(path.join(dir, "src/group/buildReport.ts"))).toBe(
+			true
+		);
+		expect(await hasExactFile(path.join(dir, "src/group/BuildReport.ts"))).toBe(
+			false
+		);
+
+		await cleanup(dir);
+	});
+
 	test("--fix refuses on dirty worktree without --force", async () => {
 		const dir = await makeGitFixture("fix-dirty", {
 			"src/group/BuildReport.ts": functionFile("BuildReport"),
