@@ -34,11 +34,10 @@ The full suite uses a 20s per-test timeout:
 bun test --timeout=20000
 ```
 
-Budget full-suite output. Bun writes its reporter to stderr and buffers it to
-exit when non-TTY, so pipes and redirects stay quiet before all `pass`/`fail`/
-`Ran ...` lines arrive. Capture once with
-`bun test --timeout=20000 > <log> 2>&1`, poll that process, and read totals after
-exit (about 160s). DON'T restart because output is quiet or truncated.
+Bun buffers its non-TTY stderr reporter until exit, so redirects stay quiet
+before all `pass`/`fail`/`Ran ...` lines arrive. Capture once with
+`bun test --timeout=20000 > <log> 2>&1`, poll it, and read totals after exit
+(about 160s). DON'T restart for quiet or truncated output.
 
 ## Global build and install
 
@@ -58,26 +57,22 @@ echo "${PNPM_HOME:-unset}"
 grep -n 'PNPM_HOME' ~/.zshrc
 ```
 
-Non-interactive shells (agent tool calls, git hooks) do not source `~/.zshrc`,
-so `PNPM_HOME` is unset there and pnpm falls back to
-`~/.local/share/pnpm/bin`, which is not on `PATH`, while the profile-configured
-`$PNPM_HOME/bin` already is. Supply the profile's value for the one command:
+Non-interactive shells and hooks do not source `~/.zshrc`, so unset `PNPM_HOME`
+falls back to `~/.local/share/pnpm/bin`, which is not on `PATH`. Supply the
+profile's value once:
 
 ```bash
 PNPM_HOME="$HOME/Library/pnpm" pnpm add --global .
 ```
 
-DON'T run `pnpm setup` to work around that error in a non-interactive shell.
-The profile is already correct; `pnpm setup` rewrites user shell configuration
-and still leaves the current shell unchanged. Reserve it for a shell that has
-genuinely never been configured.
+DON'T run `pnpm setup` for this non-interactive-shell error. It rewrites shell
+configuration without changing the current shell; reserve it for an
+unconfigured shell.
 
-The `pnpm add --global .` step in `.husky/pre-commit` hits this same fallback
-and logs `⚠️  pnpm add --global . failed (global re-install skipped)`. That
-warning is non-fatal and does not stale the installed commands: the global
-package is a symlink to this checkout, and both bin shims import TypeScript
-sources, so committed source changes are live without a re-install. Only the
-standalone `bin/*-bin` binaries need the rebuild the hook already ran.
+In `.husky/pre-commit`, this fallback logs
+`⚠️  pnpm add --global . failed (global re-install skipped)`. It is non-fatal:
+the global package symlinks this checkout and both shims import TypeScript
+sources. Only standalone `bin/*-bin` binaries need the hook's rebuild.
 
 `pnpm build` creates:
 
@@ -266,6 +261,8 @@ DON'T split one logical fix into offset, documentation, and comment commits. DON
 ## Commit and hook flow
 
 This is a solo trunk-based repository: commit scoped work directly to `main` unless the user requests another branch. Always create/update tasks before implementation and keep the task list synchronized through commit.
+
+While this solo workflow remains, `main` intentionally has no required status check. Keep force-push and branch-deletion protection enabled, verify locally before pushing, and require complete post-push CI before reporting delivery. If collaboration, PR-only delivery, or pre-merge CI enforcement becomes required, enforce checks for administrators and update this workflow together.
 
 Before committing:
 
