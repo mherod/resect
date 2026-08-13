@@ -34,18 +34,11 @@ The full suite uses a 20s per-test timeout:
 bun test --timeout=20000
 ```
 
-DO budget output for the full suite or filter its first run to failures, totals, and `Ran ...`. DON'T rerun hundreds of passing tests only because terminal output was truncated; poll the original process for its exit and summary.
-
-Bun's test reporter writes to stderr and flushes at exit when the stream is not
-a TTY. Neither `| tail -25` nor a redirect to a log file streams per-file
-progress: mid-run the destination holds only stdout the tests themselves
-printed, and every `pass`/`fail`/`Ran ...` line lands at once when the run
-ends. A quiet log is normal, not a hang.
-
-DON'T restart the suite because a redirect or pipe looks empty partway through.
-Wait for the process to exit, then read the totals. Capture with
-`bun test --timeout=20000 > <log> 2>&1` and wait on the `Ran ` marker rather
-than re-running (about 160s for the full suite).
+Budget full-suite output. Bun writes its reporter to stderr and buffers it to
+exit when non-TTY, so pipes and redirects stay quiet before all `pass`/`fail`/
+`Ran ...` lines arrive. Capture once with
+`bun test --timeout=20000 > <log> 2>&1`, poll that process, and read totals after
+exit (about 160s). DON'T restart because output is quiet or truncated.
 
 ## Global build and install
 
@@ -99,9 +92,8 @@ $PNPM_HOME/bin/resect
 $PNPM_HOME/bin/resect-mcp
 ```
 
-The global package must resolve to this checkout. `bin/resect.js` and
-`bin/resect-mcp.js` import the TypeScript entrypoints, so the installed commands
-see the checkout; rebuilding still refreshes the standalone binaries.
+The global package must resolve to this checkout. Both JS shims import the
+TypeScript entrypoints; rebuilding refreshes standalone binaries.
 
 Verify the result:
 
@@ -112,9 +104,8 @@ resect --version
 resect move --help | rg -- '--batch'
 ```
 
-Expected executable directory: `$PNPM_HOME/bin`. Expected package target: the
-current resect repository. The CLI version comes from `package.json` (`1.8.0`
-until bumped).
+Expect `$PNPM_HOME/bin`, this repository as package target, and the
+`package.json` CLI version (`1.8.0` until bumped).
 
 Those four checks cover `resect` only. `command -v resect-mcp` resolves the
 shim and exits, so it passes even when the server starts, registers its tools,
@@ -139,12 +130,12 @@ command behavior.
 
 DON'T run zero-argument `pnpm link --global` with pnpm `11.9.0`; it fails with `[ERR_PNPM_LINK_BAD_PARAMS] You must provide a parameter. Usage: pnpm link <dir>`.
 
-DON'T run `bun link --global` with Bun `1.3.14`. That flag interprets the global context incorrectly and can register the home directory as `"matthewherod"`, creating `~/.bun/install/global/node_modules/matthewherod -> /Users/matthewherod`. Register the package from the repository with plain `bun link`.
+DON'T run `bun link --global` with Bun `1.3.14`. That flag interprets the global context incorrectly and can register the home directory as `"matthewherod"`, creating `~/.bun/install/global/node_modules/matthewherod -> $HOME`. Register the package from the repository with plain `bun link`.
 
-If the erroneous home link exists, first verify it is a symlink whose target is exactly `/Users/matthewherod`, then remove only the symlink with:
+If the erroneous home link exists, first verify it is a symlink whose target is exactly `$HOME`, then remove only the symlink with:
 
 ```bash
-unlink /Users/matthewherod/.bun/install/global/node_modules/matthewherod
+unlink "$HOME/.bun/install/global/node_modules/matthewherod"
 ```
 
 Never recursively remove that path or its target.
@@ -306,124 +297,31 @@ DON'T write scratch files under hidden home directories. Use `/tmp` or a reposit
 
 # Ultracite Code Standards
 
-This project uses **Ultracite**, a zero-config preset that enforces strict code quality standards through automated formatting and linting.
+Ultracite/Biome enforces accessible, performant, type-safe, maintainable code.
+Run `pnpm run fix`, `pnpm run check`, or `pnpm exec ultracite doctor`; fix code,
+not rules.
 
-## Quick Reference
+- Types: prefer narrowing and `unknown` over assertions/`any`; use explicit
+  signatures where clearer, `as const` for literals, descriptive constants,
+  and no magic numbers.
+- JavaScript: prefer `const`, destructuring, templates, `?.`, `??`, arrow
+  callbacks, and `for...of`; avoid `var`, indexed loops, and `.forEach()`.
+- Async/errors: await promises and use `async`/`await`; never use async Promise
+  executors. Throw descriptive `Error` objects, use meaningful `try-catch`,
+  early-return, and remove production `console.log`, `debugger`, and `alert`.
+- Structure/performance: keep functions focused, name complex conditions,
+  avoid nested ternaries, spread accumulators, loop-created regexes, namespace
+  imports, and barrels; group concerns and prefer specific imports.
+- Security: validate input; avoid `eval()`, direct `document.cookie`, and
+  `dangerouslySetInnerHTML`; pair `target="_blank"` with `rel="noopener"`.
+- React: use function components, top-level hooks with complete dependencies,
+  stable keys, nested children, and no nested component definitions. Use
+  semantic HTML/ARIA, labels, heading order, alt text, and keyboard equivalents.
+- Next.js: use `<Image>`, `next/head` or App Router metadata, and Server
+  Components for async fetching. React 19+ passes ref as a prop instead of
+  `React.forwardRef`. Solid/Svelte/Vue/Qwik use `class` and `for`.
+- Tests: assert inside `it()`/`test()`, use async/await instead of `done`, keep
+  suites flat, and never commit `.only` or `.skip`.
 
-- **Format code**: `pnpm run fix`
-- **Check for issues**: `pnpm run check`
-- **Diagnose setup**: `pnpm exec ultracite doctor`
-
-Biome (the underlying engine) provides robust linting and formatting. Most issues are automatically fixable.
-
----
-
-## Core Principles
-
-Write code that is **accessible, performant, type-safe, and maintainable**. Focus on clarity and explicit intent over brevity.
-
-### Type Safety & Explicitness
-
-- Use explicit types for function parameters and return values when they enhance clarity
-- Prefer `unknown` over `any` when the type is genuinely unknown
-- Use const assertions (`as const`) for immutable values and literal types
-- Leverage TypeScript's type narrowing instead of type assertions
-- Use meaningful variable names instead of magic numbers - extract constants with descriptive names
-
-### Modern JavaScript/TypeScript
-
-- Use arrow functions for callbacks and short functions
-- Prefer `for...of` loops over `.forEach()` and indexed `for` loops
-- Use optional chaining (`?.`) and nullish coalescing (`??`) for safer property access
-- Prefer template literals over string concatenation
-- Use destructuring for object and array assignments
-- Use `const` by default, `let` only when reassignment is needed, never `var`
-
-### Async & Promises
-
-- Always `await` promises in async functions - don't forget to use the return value
-- Use `async/await` syntax instead of promise chains for better readability
-- Handle errors appropriately in async code with try-catch blocks
-- Don't use async functions as Promise executors
-
-### React & JSX
-
-- Use function components over class components
-- Call hooks at the top level only, never conditionally
-- Specify all dependencies in hook dependency arrays correctly
-- Use the `key` prop for elements in iterables (prefer unique IDs over array indices)
-- Nest children between opening and closing tags instead of passing as props
-- Don't define components inside other components
-- Use semantic HTML and ARIA attributes for accessibility:
-  - Provide meaningful alt text for images
-  - Use proper heading hierarchy
-  - Add labels for form inputs
-  - Include keyboard event handlers alongside mouse events
-  - Use semantic elements (`<button>`, `<nav>`, etc.) instead of divs with roles
-
-### Error Handling & Debugging
-
-- Remove `console.log`, `debugger`, and `alert` statements from production code
-- Throw `Error` objects with descriptive messages, not strings or other values
-- Use `try-catch` blocks meaningfully - don't catch errors just to rethrow them
-- Prefer early returns over nested conditionals for error cases
-
-### Code Organization
-
-- Keep functions focused and under reasonable cognitive complexity limits
-- Extract complex conditions into well-named boolean variables
-- Use early returns to reduce nesting
-- Prefer simple conditionals over nested ternary operators
-- Group related code together and separate concerns
-
-### Security
-
-- Add `rel="noopener"` when using `target="_blank"` on links
-- Avoid `dangerouslySetInnerHTML` unless absolutely necessary
-- Don't use `eval()` or assign directly to `document.cookie`
-- Validate and sanitize user input
-
-### Performance
-
-- Avoid spread syntax in accumulators within loops
-- Use top-level regex literals instead of creating them in loops
-- Prefer specific imports over namespace imports
-- Avoid barrel files (index files that re-export everything)
-- Use proper image components (e.g., Next.js `<Image>`) over `<img>` tags
-
-### Framework-Specific Guidance
-
-**Next.js:**
-- Use Next.js `<Image>` component for images
-- Use `next/head` or App Router metadata API for head elements
-- Use Server Components for async data fetching instead of async Client Components
-
-**React 19+:**
-- Use ref as a prop instead of `React.forwardRef`
-
-**Solid/Svelte/Vue/Qwik:**
-- Use `class` and `for` attributes (not `className` or `htmlFor`)
-
----
-
-## Testing
-
-- Write assertions inside `it()` or `test()` blocks
-- Avoid done callbacks in async tests - use async/await instead
-- Don't use `.only` or `.skip` in committed code
-- Keep test suites reasonably flat - avoid excessive `describe` nesting
-
-## When Biome Can't Help
-
-Biome's linter will catch most issues automatically. Focus your attention on:
-
-1. **Business logic correctness** - Biome can't validate your algorithms
-2. **Meaningful naming** - Use descriptive names for functions, variables, and types
-3. **Architecture decisions** - Component structure, data flow, and API design
-4. **Edge cases** - Handle boundary conditions and error states
-5. **User experience** - Accessibility, performance, and usability considerations
-6. **Documentation** - Add comments for complex logic, but prefer self-documenting code
-
----
-
-Most formatting and common issues are automatically fixed by Biome. Run `pnpm run fix` before committing to ensure compliance.
+Biome cannot judge business logic, naming, architecture, edge cases, UX, or
+documentation. Review those manually and prefer self-documenting code.
