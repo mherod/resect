@@ -1,5 +1,7 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
+import { diffDiagnostics } from "../core/diagnostics.ts";
+import { findGitRoot } from "../core/git.ts";
 import {
 	markOperationJournalEntryUndone,
 	type OperationJournalEntry,
@@ -12,7 +14,11 @@ import {
 	type RollbackCheckpoint,
 	tryRestoreRollback,
 } from "../core/rollback.ts";
-import { runTypeCheckDetailed, type TypeCheckOutcome } from "../core/verify.ts";
+import {
+	resolveDiagnosticFile,
+	runTypeCheckDetailed,
+	type TypeCheckOutcome,
+} from "../core/verify.ts";
 import type { ProjectConfig } from "../types.ts";
 
 export interface UndoOptions {
@@ -26,6 +32,11 @@ export interface UndoOptions {
 
 export interface UndoVerification {
 	success: boolean;
+	errorsBefore: string[];
+	errorsAfter: string[];
+	newErrors: string[];
+	fixedErrors: string[];
+	/** Backwards-compatible alias of newErrors. */
 	errors: string[];
 	verificationIncomplete: boolean;
 	rolledBack: boolean;
@@ -44,6 +55,7 @@ interface UndoDependencies {
 		projectRoot: string,
 		files: string[]
 	) => Promise<RollbackCheckpoint<unknown>>;
+	findGitRoot: typeof findGitRoot;
 	loadProject: typeof loadProject;
 	markOperationJournalEntryUndone: typeof markOperationJournalEntryUndone;
 	resolveTsConfig: typeof resolveTsConfig;
@@ -63,6 +75,7 @@ const createUndoRollback = async (
 
 const DEFAULT_DEPENDENCIES: UndoDependencies = {
 	createUndoRollback,
+	findGitRoot,
 	loadProject,
 	markOperationJournalEntryUndone,
 	resolveTsConfig,
@@ -71,13 +84,36 @@ const DEFAULT_DEPENDENCIES: UndoDependencies = {
 };
 
 function verificationResult(
-	result: TypeCheckOutcome,
+	project: ProjectConfig,
+	repositoryRoot: string,
+	entry: OperationJournalEntry,
+	before: TypeCheckOutcome,
+	after: TypeCheckOutcome,
 	rolledBack: boolean
 ): UndoVerification {
+	const reversedMoves = new Map(
+		entry.movedFiles.map((move) => [
+			path.normalize(path.resolve(repositoryRoot, move.to)),
+			path.normalize(path.resolve(repositoryRoot, move.from)),
+		])
+	);
+	const { newErrors, fixedErrors } = diffDiagnostics(
+		before.errors,
+		after.errors,
+		{
+			resolveFile: (file) => resolveDiagnosticFile(project, file),
+			translateBeforeFile: (file) => reversedMoves.get(file) ?? file,
+		}
+	);
+	const verificationIncomplete = before.incomplete || after.incomplete;
 	return {
-		errors: result.errors,
-		success: result.errors.length === 0 && !result.incomplete,
-		verificationIncomplete: result.incomplete,
+		errors: [...newErrors],
+		errorsAfter: after.errors,
+		errorsBefore: before.errors,
+		fixedErrors,
+		newErrors,
+		success: newErrors.length === 0 && !verificationIncomplete,
+		verificationIncomplete,
 		rolledBack,
 	};
 }
@@ -117,6 +153,9 @@ export async function executeUndo(
 		...undoOptions,
 		dryRun: true,
 	});
+	const repositoryRoot =
+		(await dependencies.findGitRoot(project.rootDir)) ?? project.rootDir;
+	const beforeTypecheck = await dependencies.runTypeCheckDetailed(project);
 	const rollback = await dependencies.createUndoRollback(
 		project.rootDir,
 		preview.restoredFiles
@@ -138,10 +177,24 @@ export async function executeUndo(
 				: `Post-undo typecheck failed and rollback also failed: ${message}`
 		);
 	}
-	let verification = verificationResult(typecheck, false);
+	let verification = verificationResult(
+		project,
+		repositoryRoot,
+		undo.entry,
+		beforeTypecheck,
+		typecheck,
+		false
+	);
 	if (!verification.success) {
 		const rolledBack = await tryRestoreRollback(rollback);
-		verification = verificationResult(typecheck, rolledBack);
+		verification = verificationResult(
+			project,
+			repositoryRoot,
+			undo.entry,
+			beforeTypecheck,
+			typecheck,
+			rolledBack
+		);
 		if (!rolledBack) {
 			verification.errors.push(
 				"Post-undo verification failed and rollback also failed."

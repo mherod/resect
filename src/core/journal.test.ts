@@ -96,7 +96,7 @@ describe("operation journal", () => {
 		expect((await readOperationJournal(dir)).entries[0]?.undoneAt).toBeString();
 	});
 
-	test("rejects unrelated and diverged work unless force is explicit", async () => {
+	test("rejects unrelated and dirty targeted files unless force is explicit", async () => {
 		const dir = await makeRepository("journal-guard");
 		const context = await prepareOperationJournal(dir, true);
 		await Bun.write(path.join(dir, "a.ts"), "export const value = 2;\n");
@@ -109,12 +109,18 @@ describe("operation journal", () => {
 		expect(
 			await rejectionMessage(async () => undoJournalOperation(dir))
 		).toContain("unrelated changes");
+		expect(await Bun.file(path.join(dir, "a.ts")).text()).toBe(
+			"export const value = 2;\n"
+		);
 		await rm(unrelated);
 
 		await Bun.write(path.join(dir, "a.ts"), "export const value = 3;\n");
 		expect(
 			await rejectionMessage(async () => undoJournalOperation(dir))
 		).toContain("has changed since operation");
+		expect(await Bun.file(path.join(dir, "a.ts")).text()).toBe(
+			"export const value = 3;\n"
+		);
 		await undoJournalOperation(dir, { force: true });
 		expect(await Bun.file(path.join(dir, "a.ts")).text()).toBe(
 			"export const value = 1;\n"

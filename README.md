@@ -136,10 +136,12 @@ resect undo <operation-id>                    # restore a named entry
 The journal retains the newest 20 entries. It is a single-operation safety aid,
 not a transaction log or a replacement for Git: commit or stash one operation
 before journaling another. Undo refuses unrelated changes or later edits to an
-affected file unless `--force` is explicit, and applied undo runs a TypeScript
-check unless `--no-verify` is supplied. A failed check rolls back the attempted
-undo and leaves the entry applied. Because `--force` can overwrite later work,
-preview first when the recorded state is no longer current.
+affected file unless `--force` is explicit. Unless `--no-verify` is supplied,
+applied undo compares TypeScript diagnostics before and after the restore and
+fails only for newly introduced errors or an incomplete check. A failed check
+rolls back the attempted undo and leaves the entry applied. Because `--force`
+can overwrite later work, preview first when the recorded state is no longer
+current.
 
 The MCP `undo` tool defaults to `dryRun: true`, like the other mutating tools.
 Library consumers can call `executeUndo()` or `undoCommand()`; journal and undo

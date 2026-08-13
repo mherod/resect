@@ -468,7 +468,7 @@ Examples:
   ${CLI_NAME} undo 7b3c2af0-7d8e-4bb8-a8fa-8abfdc73640e
 `,
 		mcpDescription:
-			"Undo the latest or a named operation from `.resect/history.json`. Defaults to `dryRun: true`; set `dryRun: false` to restore recorded files. Refuses unrelated or later edits unless `force: true`. When `verify: true`, the entry is marked undone only after the post-undo TypeScript check passes; a failed check rolls back the attempted undo.",
+			"Undo the latest or a named operation from `.resect/history.json`. Defaults to `dryRun: true`; set `dryRun: false` to restore recorded files. Refuses unrelated or later edits unless `force: true`. When `verify: true`, runs TypeScript checks before and after restoring files and fails only for newly introduced diagnostics or incomplete verification; a failed check rolls back the attempted undo before the entry is marked undone.",
 	},
 	{
 		name: "similar",
