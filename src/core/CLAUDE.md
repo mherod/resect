@@ -150,6 +150,8 @@ DON'T run the barrel short-circuit before explicit exports or use relative cross
 
 `DependencyGraph.barrelReExports` tracks actual `export ... from` relationships. DON'T infer re-exports from `graph.imports`; regular barrel imports are not exports.
 
+Bundler-owned stylesheet and SQL imports resolve as `asset`, never as TypeScript graph nodes. DO preserve the reported module specifier while stripping `?query` and `#fragment` suffixes only for extension classification and filesystem lookup. Missing relative assets must remain unresolvable; bare package assets remain external.
+
 ## Performance and caching
 
 ### Reuse parsed programs

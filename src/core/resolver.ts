@@ -6,8 +6,8 @@ import type {
 } from "../commands/option-domains.ts";
 import type { ProjectConfig } from "../types.ts";
 import {
+	BUNDLER_ASSET_EXTENSIONS,
 	removeExtension,
-	STYLESHEET_EXTENSIONS,
 	TS_JS_VUE_EXTENSIONS,
 	VUE_EXTENSION,
 } from "./constants.ts";
@@ -25,9 +25,21 @@ export type ResolveResult =
 	| { kind: "asset"; path: string; specifier: string }
 	| { kind: "unresolvable"; specifier: string; diagnostic: string };
 
+const RESOURCE_SUFFIX_START = /[?#]/u;
+
+/**
+ * Return the filesystem portion of a bundler module specifier. Query and
+ * fragment suffixes control how the bundler loads the resource, but they are
+ * not part of the path on disk.
+ */
+function resourcePathFromSpecifier(specifier: string): string {
+	const suffixStart = specifier.search(RESOURCE_SUFFIX_START);
+	return suffixStart === -1 ? specifier : specifier.slice(0, suffixStart);
+}
+
 /**
  * Resolve a bare, alias-style specifier to an existing file via the project's
- * `paths` mapping. Shared by the `.vue` and stylesheet fallbacks, which both
+ * `paths` mapping. Shared by the `.vue` and bundler-asset fallbacks, which both
  * need alias expansion that `ts.resolveModuleName` does not perform for
  * non-TypeScript extensions.
  */
@@ -65,12 +77,13 @@ function findExistingNonModuleFile(
 	fromFile: string,
 	project: ProjectConfig
 ): string | null {
-	if (isRelativeImport(specifier) || path.isAbsolute(specifier)) {
-		const absolutePath = path.resolve(path.dirname(fromFile), specifier);
+	const resourcePath = resourcePathFromSpecifier(specifier);
+	if (isRelativeImport(resourcePath) || path.isAbsolute(resourcePath)) {
+		const absolutePath = path.resolve(path.dirname(fromFile), resourcePath);
 		return ts.sys.fileExists(absolutePath) ? absolutePath : null;
 	}
-	if (isBareImport(specifier)) {
-		return resolveExistingFileByAlias(specifier, project);
+	if (isBareImport(resourcePath)) {
+		return resolveExistingFileByAlias(resourcePath, project);
 	}
 	return null;
 }
@@ -84,6 +97,7 @@ export function resolveModuleSpecifier(
 	fromFile: string,
 	project: ProjectConfig
 ): ResolveResult {
+	const resourcePath = resourcePathFromSpecifier(specifier);
 	const result = ts.resolveModuleName(
 		specifier,
 		fromFile,
@@ -99,7 +113,7 @@ export function resolveModuleSpecifier(
 	}
 
 	// .vue specifiers are not resolved by ts.resolveModuleName — handle directly
-	if (VUE_EXTENSION.test(specifier)) {
+	if (VUE_EXTENSION.test(resourcePath)) {
 		const vuePath = findExistingNonModuleFile(specifier, fromFile, project);
 		if (vuePath) {
 			return { kind: "resolved", path: vuePath };
@@ -111,10 +125,11 @@ export function resolveModuleSpecifier(
 		};
 	}
 
-	// Stylesheets are bundler-owned assets, not TypeScript modules (#188). An
-	// existing one resolves to `asset` so no diagnostic fires and no graph node
-	// is created; a missing relative one still falls through to `unresolvable`.
-	if (STYLESHEET_EXTENSIONS.test(specifier)) {
+	// Stylesheets and SQL files are bundler-owned assets, not TypeScript modules
+	// (#188). An existing one resolves to `asset` so no diagnostic fires and no
+	// graph node is created; a missing relative one still falls through to
+	// `unresolvable`. Filesystem lookup ignores bundler queries such as `?raw`.
+	if (BUNDLER_ASSET_EXTENSIONS.test(resourcePath)) {
 		const assetPath = findExistingNonModuleFile(specifier, fromFile, project);
 		if (assetPath) {
 			return { kind: "asset", path: assetPath, specifier };

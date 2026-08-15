@@ -488,7 +488,7 @@ describe("audit command coverage", () => {
 
 // ─── Stylesheet asset diagnostics (#188) ───────────────────────────────────
 
-describe("audit command stylesheet diagnostics", () => {
+describe("audit command bundler-owned asset diagnostics", () => {
 	async function runAudit(directory: string): Promise<string> {
 		const proc = Bun.spawn([...CLI, "audit", directory, "--json"], {
 			stdout: "pipe",
@@ -502,32 +502,37 @@ describe("audit command stylesheet diagnostics", () => {
 		return stdout + stderr;
 	}
 
-	test("existing stylesheets are silent while a missing one still warns", async () => {
-		const dir = await makeFixture("audit-stylesheet-assets", {
+	test("existing assets are silent while missing relative assets still warn", async () => {
+		const dir = await makeFixture("audit-bundler-assets", {
 			"tsconfig.json": JSON.stringify({
 				compilerOptions: { strict: true, jsx: "preserve" },
 				include: ["app/**/*.tsx"],
 			}),
 			"app/globals.css": "body { color: red; }",
 			"app/styles.module.css": ".title { font-weight: 700; }",
+			"drizzle/seed.sql": "select 1;",
 			"app/layout.tsx":
 				'import "./globals.css";\n' +
 				'import styles from "./styles.module.css";\n' +
+				'import seed from "../drizzle/seed.sql?raw";\n' +
 				'import "./missing.css";\n' +
+				'import "../drizzle/missing.sql?raw";\n' +
 				'import "bootstrap/dist/css/bootstrap.css";\n' +
-				"export const layout = styles;\n",
+				"export const layout = { seed, styles };\n",
 		});
 		try {
 			const output = await runAudit(dir);
 
 			expect(output).not.toContain('Cannot resolve "./globals.css"');
 			expect(output).not.toContain('Cannot resolve "./styles.module.css"');
+			expect(output).not.toContain('Cannot resolve "../drizzle/seed.sql?raw"');
 			// A bare package stylesheet is external, not missing.
 			expect(output).not.toContain(
 				'Cannot resolve "bootstrap/dist/css/bootstrap.css"'
 			);
-			// A genuinely missing stylesheet is still reported.
+			// Genuinely missing relative assets are still reported.
 			expect(output).toContain('Cannot resolve "./missing.css"');
+			expect(output).toContain('Cannot resolve "../drizzle/missing.sql?raw"');
 		} finally {
 			await cleanup(dir);
 		}

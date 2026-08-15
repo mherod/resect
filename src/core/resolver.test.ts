@@ -1084,11 +1084,11 @@ describe("calculateNewSpecifier specifier style (#173)", () => {
 
 // ─── Stylesheet asset resolution (#188) ────────────────────────────────────
 
-describe("resolveModuleSpecifier — stylesheet assets", () => {
+describe("resolveModuleSpecifier — bundler-owned assets", () => {
 	let dir: string;
 
 	beforeAll(async () => {
-		dir = await makeFixture("resolver-stylesheet-assets", {
+		dir = await makeFixture("resolver-bundler-assets", {
 			"tsconfig.json": JSON.stringify({
 				compilerOptions: {
 					strict: true,
@@ -1100,6 +1100,7 @@ describe("resolveModuleSpecifier — stylesheet assets", () => {
 			"app/globals.css": "body { color: red; }",
 			"app/styles.module.css": ".title { font-weight: 700; }",
 			"app/theme.scss": "$brand: red;",
+			"drizzle/schema.sql": "select 1;",
 			"app/layout.tsx": 'import "./globals.css";\n',
 		});
 	});
@@ -1149,6 +1150,36 @@ describe("resolveModuleSpecifier — stylesheet assets", () => {
 		});
 	});
 
+	test("an existing SQL raw import resolves as an asset", () => {
+		const result = resolveFrom("../drizzle/schema.sql?raw");
+
+		expect(result).toMatchObject({
+			kind: "asset",
+			path: path.join(dir, "drizzle/schema.sql"),
+			specifier: "../drizzle/schema.sql?raw",
+		});
+	});
+
+	test("an alias-style SQL raw import resolves as an asset", () => {
+		const result = resolveFrom("@/drizzle/schema.sql?raw");
+
+		expect(result).toMatchObject({
+			kind: "asset",
+			path: path.join(dir, "drizzle/schema.sql"),
+			specifier: "@/drizzle/schema.sql?raw",
+		});
+	});
+
+	test("query and fragment suffixes do not enter the resolved asset path", () => {
+		const result = resolveFrom("./globals.css?inline#theme");
+
+		expect(result).toMatchObject({
+			kind: "asset",
+			path: path.join(dir, "app/globals.css"),
+			specifier: "./globals.css?inline#theme",
+		});
+	});
+
 	test("a missing relative stylesheet is still reported as unresolvable", () => {
 		const result = resolveFrom("./missing.css");
 
@@ -1156,6 +1187,21 @@ describe("resolveModuleSpecifier — stylesheet assets", () => {
 		expect(result).toMatchObject({
 			diagnostic: expect.stringContaining('Cannot resolve "./missing.css"'),
 		});
+	});
+
+	test("a missing relative SQL raw import is still reported as unresolvable", () => {
+		const result = resolveFrom("../drizzle/missing.sql?raw");
+
+		expect(result).toMatchObject({
+			kind: "unresolvable",
+			diagnostic: expect.stringContaining(
+				'Cannot resolve "../drizzle/missing.sql?raw"'
+			),
+		});
+	});
+
+	test("an ordinary missing relative module stays unresolvable", () => {
+		expect(resolveFrom("./missing.ts").kind).toBe("unresolvable");
 	});
 
 	test("a bare package stylesheet stays external rather than missing", () => {

@@ -33,13 +33,14 @@ export const VUE_EXTENSION = /\.vue$/;
 export const TS_JS_VUE_EXTENSIONS = /\.(ts|tsx|js|jsx|mts|cts|mjs|cjs|vue)$/;
 
 /**
- * Stylesheet extensions that bundlers consume directly (#188). These are real
+ * Non-module extensions that bundlers consume directly (#188). These are real
  * assets rather than TypeScript modules: an existing one is not an unresolvable
  * import, but it must never become a dependency-graph node either. CSS Modules
- * need no separate pattern — `styles.module.css` ends in `.css`.
+ * need no separate pattern — `styles.module.css` ends in `.css` — while SQL is
+ * commonly loaded as source text through a query such as `?raw`.
  */
-export const STYLESHEET_EXTENSIONS =
-	/\.(css|scss|sass|less|styl|pcss|postcss)$/;
+export const BUNDLER_ASSET_EXTENSIONS =
+	/\.(css|scss|sass|less|styl|pcss|postcss|sql)$/;
 
 /**
  * TypeScript declaration file extensions, matched as a single unit so
