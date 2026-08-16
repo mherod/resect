@@ -6,16 +6,8 @@ import {
 	compareDeclarations,
 	describeComparison,
 } from "../core/duplicate-detection.ts";
-import {
-	ensureCleanWorktree,
-	ensureRollbackSafeWorktree,
-	type RollbackSafety,
-} from "../core/git.ts";
 import { buildDependencyGraph, findAllReferences } from "../core/graph.ts";
-import {
-	completeOperationJournal,
-	prepareOperationJournal,
-} from "../core/journal.ts";
+import { runMutation } from "../core/mutation-pipeline.ts";
 import { createProgram } from "../core/project.ts";
 import { normalizePath } from "../core/resolver.ts";
 import {
@@ -35,7 +27,6 @@ import {
 } from "../core/text-changes.ts";
 import {
 	printVerificationResults,
-	runWithTypecheckGuard,
 	type VerificationResult,
 } from "../core/verify.ts";
 import { getRuntime } from "../runtime/index.ts";
@@ -77,17 +68,6 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 
 	const absolutePath = path.resolve(file);
 
-	const rollbackSafety = verify
-		? await ensureRollbackSafeWorktree(path.dirname(absolutePath), {
-				force,
-				dryRun,
-				operation: "rename",
-			})
-		: undefined;
-	if (!rollbackSafety) {
-		await ensureCleanWorktree(path.dirname(absolutePath), force, dryRun);
-	}
-
 	const context = await setupCommandContext({
 		project: projectArg,
 		searchPath: path.dirname(absolutePath),
@@ -99,10 +79,6 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 		process.exit(1);
 	}
 	const { extraProjects, project } = context;
-	const journalContext = await prepareOperationJournal(
-		project.rootDir,
-		journal && !dryRun
-	);
 	if (!json && verbose && extraProjects.length > 0) {
 		logger.info(
 			`Workspace: scanning ${extraProjects.length} additional package(s)`
@@ -115,42 +91,46 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 		logger.info(`   ${oldName} → ${newName}\n`);
 	}
 
-	const runRename = async () =>
-		renameSymbol(
-			absolutePath,
-			oldName,
-			newName,
-			project,
-			dryRun,
-			json ? false : verbose,
-			extraProjects,
-			force
+	const outcome = await runMutation<RenameResult>({
+		apply: async () =>
+			renameSymbol(
+				absolutePath,
+				oldName,
+				newName,
+				project,
+				dryRun,
+				json ? false : verbose,
+				extraProjects,
+				force
+			),
+		dryRun,
+		force,
+		guardDir: path.dirname(absolutePath),
+		isApplySuccessful: (renameResult) => renameResult.success,
+		journalDetails: {
+			args: {
+				file: path.relative(project.rootDir, absolutePath),
+				newName,
+				oldName,
+			},
+			command: "rename",
+		},
+		journalEnabled: journal,
+		operation: "rename",
+		project,
+		rollbackStrategy: async (renameResult) =>
+			rollbackRenameChanges(project, renameResult),
+		verify: verify ? "rollback" : "none",
+	});
+	if (outcome.blocked || !outcome.result) {
+		logger.error(
+			"Error: working tree has uncommitted changes. " +
+				"Commit or stash your changes first, or rerun with --force to proceed anyway."
 		);
-	const { result, delta } =
-		verify && !dryRun
-			? await runWithTypecheckGuard(project, runRename)
-			: { result: await runRename(), delta: undefined };
-	let rolledBack = false;
-	if (delta) {
-		delta.worktreeDirtyRollbackDisabled =
-			rollbackSafety?.worktreeDirtyRollbackDisabled ?? false;
-		if (result.success && !delta.success && rollbackSafety?.rollbackEnabled) {
-			rolledBack = await rollbackRenameChanges(project, result);
-		}
-		delta.rolledBack = rolledBack;
+		process.exit(1);
 	}
-	const success = result.success && (delta?.success ?? true);
-	const journalEntry =
-		success && !dryRun
-			? await completeOperationJournal(journalContext, {
-					args: {
-						file: path.relative(project.rootDir, absolutePath),
-						newName,
-						oldName,
-					},
-					command: "rename",
-				})
-			: null;
+	const { delta, journalEntry, rolledBack, success } = outcome;
+	const result = outcome.result;
 
 	if (json) {
 		const root = project.rootDir;
@@ -160,8 +140,7 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 					...result,
 					success,
 					rolledBack,
-					worktreeDirtyRollbackDisabled:
-						rollbackSafety?.worktreeDirtyRollbackDisabled ?? false,
+					worktreeDirtyRollbackDisabled: outcome.worktreeDirtyRollbackDisabled,
 					renamedSymbol: {
 						...result.renamedSymbol,
 						file: path.relative(root, result.renamedSymbol.file),
@@ -206,7 +185,12 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 		printVerificationResults(delta);
 	}
 	if (delta && !delta.success) {
-		logger.error(renameVerificationFailureMessage(delta, rollbackSafety));
+		logger.error(
+			renameVerificationFailureMessage(
+				delta,
+				outcome.worktreeDirtyRollbackDisabled
+			)
+		);
 	}
 
 	if (!success) {
@@ -229,12 +213,12 @@ export async function rollbackRenameChanges(
 
 function renameVerificationFailureMessage(
 	delta: VerificationResult,
-	rollbackSafety: RollbackSafety | undefined
+	worktreeDirtyRollbackDisabled: boolean
 ): string {
 	if (delta.rolledBack) {
 		return "Rename verification failed; changes were rolled back.";
 	}
-	if (rollbackSafety?.worktreeDirtyRollbackDisabled) {
+	if (worktreeDirtyRollbackDisabled) {
 		return "Rename verification failed; changes remain applied because rollback was disabled (--force on dirty tree).";
 	}
 	return "Rename verification failed and automatic rollback could not restore the changed files.";

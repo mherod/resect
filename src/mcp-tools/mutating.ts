@@ -37,12 +37,17 @@ import type {
 	ExtensionPolicy,
 	PreferStrategy,
 } from "../commands/option-domains.ts";
-import { renameSymbol, rollbackRenameChanges } from "../commands/rename.ts";
+import {
+	type RenameResult,
+	renameSymbol,
+	rollbackRenameChanges,
+} from "../commands/rename.ts";
 import { getRollbackSafety, isWorktreeDirty } from "../core/git.ts";
 import {
 	completeOperationJournal,
 	prepareOperationJournal,
 } from "../core/journal.ts";
+import { runMutation } from "../core/mutation-pipeline.ts";
 import { loadProject, resolveTsConfig } from "../core/project.ts";
 import { normalizePath } from "../core/resolver.ts";
 import { serializeStructuredEdits } from "../core/text-changes.ts";
@@ -291,66 +296,52 @@ export async function renameTool(args: {
 	}
 	const { extraProjects, project } = context;
 
-	const wt = await checkWorktree(project.rootDir, args.force);
-	if (wt.blocked) {
+	const outcome = await runMutation<RenameResult>({
+		apply: async () =>
+			renameSymbol(
+				absolutePath,
+				args.oldName,
+				args.newName,
+				project,
+				args.dryRun,
+				args.verbose,
+				extraProjects,
+				args.force
+			),
+		blockDirtyDryRun: true,
+		dryRun: args.dryRun,
+		force: args.force,
+		guardDir: project.rootDir,
+		isApplySuccessful: (renameResult) => renameResult.success,
+		journalDetails: {
+			args: {
+				file: path.relative(project.rootDir, absolutePath),
+				newName: args.newName,
+				oldName: args.oldName,
+			},
+			command: "rename",
+		},
+		journalEnabled: args.journal ?? false,
+		operation: "rename",
+		project,
+		rollbackStrategy: async (renameResult) =>
+			rollbackRenameChanges(project, renameResult),
+		verify: args.verify ? "rollback" : "none",
+	});
+	if (outcome.blocked || !outcome.result) {
 		return errorText(WORKTREE_BLOCKED_MESSAGE);
 	}
-	const journalContext = await prepareOperationJournal(
-		project.rootDir,
-		(args.journal ?? false) && !args.dryRun
-	);
-
-	const runRename = async () =>
-		renameSymbol(
-			absolutePath,
-			args.oldName,
-			args.newName,
-			project,
-			args.dryRun,
-			args.verbose,
-			extraProjects,
-			args.force
-		);
-
-	const shouldVerify = args.verify && !args.dryRun;
-	const { result, delta } = shouldVerify
-		? await runWithTypecheckGuard(project, runRename)
-		: { result: await runRename(), delta: undefined };
-	const rollbackSafety = getRollbackSafety({
-		dirty: wt.dirty,
-		force: args.force,
-		dryRun: args.dryRun,
-	});
-	let rolledBack = false;
-	if (delta) {
-		delta.worktreeDirtyRollbackDisabled =
-			rollbackSafety.worktreeDirtyRollbackDisabled;
-		if (result.success && !delta.success && rollbackSafety.rollbackEnabled) {
-			rolledBack = await rollbackRenameChanges(project, result);
-		}
-		delta.rolledBack = rolledBack;
-	}
-	const success = result.success && (delta?.success ?? true);
-	const journalEntry =
-		success && !args.dryRun
-			? await completeOperationJournal(journalContext, {
-					args: {
-						file: path.relative(project.rootDir, absolutePath),
-						newName: args.newName,
-						oldName: args.oldName,
-					},
-					command: "rename",
-				})
-			: null;
+	const { delta, journalEntry, rolledBack, success } = outcome;
+	const result = outcome.result;
 
 	const root = project.rootDir;
 	return jsonText({
 		dryRun: args.dryRun,
 		force: args.force,
-		worktreeDirty: wt.dirty,
+		worktreeDirty: outcome.dirty,
 		success,
 		rolledBack,
-		worktreeDirtyRollbackDisabled: rollbackSafety.worktreeDirtyRollbackDisabled,
+		worktreeDirtyRollbackDisabled: outcome.worktreeDirtyRollbackDisabled,
 		renamedSymbol: {
 			file: path.relative(root, result.renamedSymbol.file),
 			oldName: result.renamedSymbol.oldName,

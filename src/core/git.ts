@@ -271,6 +271,43 @@ export function getRollbackSafety(options: {
 	};
 }
 
+/** Outcome of a return-based worktree guard check. */
+export interface WorktreeGuardOutcome extends RollbackSafety {
+	/** True when the dirty-worktree guard refuses the mutation (dirty, no force, not a dry run). */
+	blocked: boolean;
+	dirty: boolean;
+}
+
+/**
+ * Return-based sibling of `ensureRollbackSafeWorktree` for callers that must
+ * not exit the process (MCP tools, the mutation pipeline). Computes the block
+ * decision and rollback safety without logging or exiting.
+ */
+export async function checkRollbackSafeWorktree(
+	dir: string,
+	options: {
+		force?: boolean;
+		dryRun?: boolean;
+		/**
+		 * Block dirty unforced dry runs too. CLI guards bypass on dry-run;
+		 * MCP tools historically block dirty worktrees even for dry runs.
+		 */
+		blockDirtyDryRun?: boolean;
+	}
+): Promise<WorktreeGuardOutcome> {
+	const dirty = await isWorktreeDirty(dir);
+	const blocked =
+		dirty &&
+		options.force !== true &&
+		(options.blockDirtyDryRun === true || options.dryRun !== true);
+	const safety = getRollbackSafety({
+		dirty,
+		force: options.force,
+		dryRun: options.dryRun,
+	});
+	return { blocked, dirty, ...safety };
+}
+
 /** Guard a mutation and warn when forced dirty state makes rollback unsafe. */
 export async function ensureRollbackSafeWorktree(
 	dir: string,
