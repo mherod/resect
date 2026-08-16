@@ -2,7 +2,7 @@ import path from "node:path";
 import { logger } from "../cli-logger.ts";
 import { getRuntime } from "../runtime/index.ts";
 import type { ConsumerDependencyContractInput } from "../types/deps.ts";
-import { EXPORT_STATEMENT_PATTERN, removeExtension } from "./constants.ts";
+import { EXPORT_STATEMENT_PATTERN } from "./constants.ts";
 import { readPackageJson } from "./package-json.ts";
 
 export interface WorkspacePackage {
@@ -393,92 +393,6 @@ async function isBarrelFile(filePath: string): Promise<boolean> {
 	} catch {
 		return false;
 	}
-}
-
-/**
- * Resolve the import path for a file within a workspace package
- */
-export function resolvePackageImport(
-	targetPath: string,
-	workspace: WorkspaceInfo
-): { packageName: string; subpath: string; resolvedImport: string } | null {
-	const normalizedTarget = path.normalize(targetPath);
-
-	for (const pkg of workspace.packages) {
-		if (normalizedTarget.startsWith(pkg.path + path.sep)) {
-			const relativePath = path.relative(pkg.path, normalizedTarget);
-			const subpath = removeExtension(relativePath);
-
-			// Check if this matches an export in the package
-			const exportPath = findMatchingExport(pkg, subpath);
-			if (exportPath) {
-				return {
-					packageName: pkg.name,
-					subpath,
-					resolvedImport: exportPath,
-				};
-			}
-
-			// Fall back to package name + subpath
-			// Check if it's in src/ and the package exports from dist/
-			if (subpath.startsWith("src/") && pkg.main?.includes("dist")) {
-				// Can't import from src/ when package exports dist/
-				return null;
-			}
-
-			return {
-				packageName: pkg.name,
-				subpath,
-				resolvedImport: subpath ? `${pkg.name}/${subpath}` : pkg.name,
-			};
-		}
-	}
-
-	return null;
-}
-
-/**
- * Find a matching export path in package.json exports
- */
-function findMatchingExport(
-	pkg: WorkspacePackage,
-	subpath: string
-): string | null {
-	if (!pkg.exports) {
-		return null;
-	}
-
-	// Handle string exports (simple case)
-	if (typeof pkg.exports === "string") {
-		if (subpath === "" || subpath === "index") {
-			return pkg.name;
-		}
-		return null;
-	}
-
-	// Handle exports map
-	for (const [exportKey, _exportValue] of Object.entries(pkg.exports)) {
-		// Normalize export key (remove leading ./)
-		const normalizedKey = exportKey.replace(/^\.\//, "").replace(/^\.$/, "");
-
-		if (normalizedKey === subpath || normalizedKey === `${subpath}/index`) {
-			const resolvedPath =
-				exportKey === "." ? pkg.name : `${pkg.name}/${normalizedKey}`;
-			return resolvedPath;
-		}
-
-		// Handle wildcard exports like "./*": "./dist/*"
-		if (exportKey.includes("*")) {
-			const pattern = exportKey.replace("*", "(.+)");
-			const regex = new RegExp(`^${pattern}$`);
-			const match = `./${subpath}`.match(regex);
-			if (match) {
-				return `${pkg.name}/${match[1]}`;
-			}
-		}
-	}
-
-	return null;
 }
 
 /**
