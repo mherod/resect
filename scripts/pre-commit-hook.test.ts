@@ -3,6 +3,10 @@ import path from "node:path";
 import { cleanup, makeTempDir } from "../src/commands/__test-helpers.ts";
 
 const PRE_COMMIT_HOOK = path.join(import.meta.dir, "../.husky/pre-commit");
+const AFFECTED_TEST_RUNNER = path.join(
+	import.meta.dir,
+	"run-affected-tests.ts"
+);
 const PACKAGE_JSON = path.join(import.meta.dir, "../package.json");
 const dirs: string[] = [];
 
@@ -55,11 +59,15 @@ describe("pre-commit hook", () => {
 		).toEqual(["pnpm exec biome check --write --no-errors-on-unmatched"]);
 	});
 
-	test("clears hook-local Git state before fixture tests", async () => {
+	test("clears hook-local Git state only for fixture tests", async () => {
 		const hook = await Bun.file(PRE_COMMIT_HOOK).text();
+		const runner = await Bun.file(AFFECTED_TEST_RUNNER).text();
 
-		expect(hook).toMatch(
-			/for git_local_env_var in \$\(git rev-parse --local-env-vars\); do\s+unset "\$git_local_env_var"\s+done\s+bun scripts\/run-affected-tests\.ts/
+		expect(hook).toContain("bun scripts/run-affected-tests.ts");
+		expect(hook).not.toContain("git rev-parse --local-env-vars");
+		expect(runner).toContain("git rev-parse --local-env-vars");
+		expect(runner).toContain(
+			"env: createTestEnvironment(gitLocalEnvVariables)"
 		);
 	});
 

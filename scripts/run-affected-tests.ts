@@ -1,6 +1,37 @@
 #!/usr/bin/env bun
 import { affected } from "../src/commands/affected.ts";
 
+function createTestEnvironment(
+	gitLocalEnvVariables: readonly string[]
+): Record<string, string> {
+	const localVariables = new Set(gitLocalEnvVariables);
+	const testEnvironment: Record<string, string> = {};
+
+	for (const [name, value] of Object.entries(process.env)) {
+		if (value !== undefined && !localVariables.has(name)) {
+			testEnvironment[name] = value;
+		}
+	}
+
+	return testEnvironment;
+}
+
+async function runTests(testFiles: readonly string[] = []): Promise<number> {
+	const gitLocalEnvVariables = (
+		await Bun.$`git rev-parse --local-env-vars`.text()
+	)
+		.split("\n")
+		.map((name) => name.trim())
+		.filter((name) => name.length > 0);
+	const proc = Bun.spawn(["bun", "test", "--timeout=20000", ...testFiles], {
+		env: createTestEnvironment(gitLocalEnvVariables),
+		stdout: "inherit",
+		stderr: "inherit",
+	});
+	await proc.exited;
+	return proc.exitCode ?? 1;
+}
+
 const diff =
 	await Bun.$`git diff --cached --name-only --diff-filter=ACMR`.text();
 const stagedFiles = diff
@@ -41,8 +72,7 @@ if (hasConfigOrNonSourceChanges) {
 	console.log(
 		"Configuration or non-source changes detected. Running full test suite..."
 	);
-	const proc = await Bun.$`bun test --timeout=20000`;
-	process.exit(proc.exitCode);
+	process.exit(await runTests());
 }
 
 try {
@@ -66,13 +96,11 @@ try {
 	);
 
 	// Run only the affected test files
-	const proc = await Bun.$`bun test --timeout=20000 ${testFiles}`;
-	process.exit(proc.exitCode);
+	process.exit(await runTests(testFiles));
 } catch (error) {
 	console.error(
 		"Error calculating affected files. Falling back to full test suite...",
 		error
 	);
-	const proc = await Bun.$`bun test --timeout=20000`;
-	process.exit(proc.exitCode);
+	process.exit(await runTests());
 }
