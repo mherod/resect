@@ -73,6 +73,13 @@ export interface VerificationResult {
 	worktreeDirtyRollbackDisabled?: boolean;
 	/** Unresolvable imports detected after changes, with file paths and specifiers */
 	unresolvableDiagnostics?: UnresolvableDiagnosticWithFile[];
+	/**
+	 * Set when the closing typecheck itself threw (e.g. a spawn failure), rather
+	 * than completing with a nonzero exit. Implies `verificationIncomplete`.
+	 * Callers that need a human-readable failure reason (tidy's rollback message)
+	 * read this instead of parsing `errorsAfter`.
+	 */
+	verificationException?: string;
 }
 
 /**
@@ -141,7 +148,19 @@ export async function runWithTypecheckGuard<T>(
 ): Promise<{ result: T; delta: VerificationResult }> {
 	const errorsBefore = await runTypeCheck(project);
 	const result = await applyChanges();
-	const errorsAfter = await runTypeCheck(project);
+	// The closing typecheck runs after writes have already landed, so a thrown
+	// exception here (not just a nonzero tsc exit) must still surface as an
+	// incomplete, rollback-eligible verification rather than crash the whole
+	// mutation uncaught with changes already on disk.
+	let errorsAfter: string[];
+	let verificationException: string | undefined;
+	try {
+		errorsAfter = await runTypeCheck(project);
+	} catch (error) {
+		verificationException =
+			error instanceof Error ? error.message : String(error);
+		errorsAfter = errorsBefore;
+	}
 	const { newErrors, fixedErrors } = diffDiagnostics(
 		errorsBefore,
 		errorsAfter,
@@ -151,7 +170,9 @@ export async function runWithTypecheckGuard<T>(
 		}
 	);
 	const verificationIncomplete =
-		isIncompleteTypeCheck(errorsBefore) || isIncompleteTypeCheck(errorsAfter);
+		verificationException !== undefined ||
+		isIncompleteTypeCheck(errorsBefore) ||
+		isIncompleteTypeCheck(errorsAfter);
 
 	return {
 		result,
@@ -162,6 +183,7 @@ export async function runWithTypecheckGuard<T>(
 			newErrors,
 			fixedErrors,
 			verificationIncomplete,
+			...(verificationException === undefined ? {} : { verificationException }),
 		},
 	};
 }

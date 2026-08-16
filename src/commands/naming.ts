@@ -9,7 +9,7 @@ import {
 	excludeFrameworkGeneratedArtifacts,
 	generatedArtifactWarning,
 } from "../core/generated-artifacts.ts";
-import { ensureRollbackSafeWorktree, rollbackMoves } from "../core/git.ts";
+import { checkRollbackSafeWorktree, rollbackMoves } from "../core/git.ts";
 import {
 	type DependencyGraph,
 	mergeDependencyGraphs,
@@ -805,19 +805,11 @@ export async function applyNamingFix(
 	options: NamingOptions
 ): Promise<NamingFixResult> {
 	const { loadProject } = await import("../core/project.ts");
-	const { diffDiagnostics } = await import("../core/diagnostics.ts");
-	const { resolveDiagnosticFile, runTypeCheckDetailed } = await import(
-		"../core/verify.ts"
-	);
+	const { runMutation } = await import("../core/mutation-pipeline.ts");
 	const { normalizePath } = await import("../core/resolver.ts");
 	const { moveModule } = await import("./move.ts");
 
 	const reportDirectory = path.resolve(options.directory);
-	const rollbackSafety = await ensureRollbackSafeWorktree(reportDirectory, {
-		force: options.force,
-		dryRun: options.dryRun,
-		operation: "naming",
-	});
 	const tsconfigPath = resolveTsConfig(options.project, reportDirectory);
 	if (!tsconfigPath) {
 		throw new Error(`Could not find tsconfig.json for ${reportDirectory}`);
@@ -831,7 +823,7 @@ export async function applyNamingFix(
 		report,
 		renames: [],
 		rolledBack: false,
-		worktreeDirtyRollbackDisabled: rollbackSafety.worktreeDirtyRollbackDisabled,
+		worktreeDirtyRollbackDisabled: false,
 		errors: [],
 	};
 
@@ -851,25 +843,21 @@ export async function applyNamingFix(
 		return { ...emptyResult, dryRun: true, renames: computedRenames };
 	}
 
-	const before = await runTypeCheckDetailed(project);
-	const importerFiles = new Set<string>();
-	const errors: string[] = [];
-
-	for (const { from: oldAbs, to: newAbs } of computedRenames) {
-		const result = await moveModule(oldAbs, newAbs, project, false, false);
-		if (!result.success) {
-			for (const e of result.errors) {
-				errors.push(`${path.relative(reportDirectory, oldAbs)}: ${e.message}`);
-			}
-		}
-		for (const ref of result.updatedReferences) {
-			if (ref.file !== oldAbs && ref.file !== newAbs) {
-				importerFiles.add(ref.file);
-			}
-		}
+	const guard = await checkRollbackSafeWorktree(reportDirectory, {
+		force: options.force,
+		dryRun: false,
+	});
+	if (guard.blocked) {
+		return {
+			...emptyResult,
+			success: false,
+			renames: computedRenames,
+			errors: [
+				"Error: working tree has uncommitted changes. Commit or stash your changes first, or rerun with --force to proceed anyway.",
+			],
+		};
 	}
 
-	const after = await runTypeCheckDetailed(project);
 	// Compare by normalized diagnostic identity, not raw string equality (#128).
 	// Renamed files re-report their pre-existing errors at the new path, so
 	// translate each before-side path to its rename target.
@@ -879,22 +867,58 @@ export async function applyNamingFix(
 			normalizePath(rename.to),
 		])
 	);
-	const { newErrors: newTypeErrors } = diffDiagnostics(
-		before.errors,
-		after.errors,
+
+	const outcome = await runMutation<{
+		errors: string[];
+		importerFiles: Set<string>;
+	}>(
 		{
-			resolveFile: (file) => resolveDiagnosticFile(project, file),
+			apply: async () => {
+				const importerFiles = new Set<string>();
+				const errors: string[] = [];
+				for (const { from: oldAbs, to: newAbs } of computedRenames) {
+					const result = await moveModule(
+						oldAbs,
+						newAbs,
+						project,
+						false,
+						false
+					);
+					if (!result.success) {
+						for (const e of result.errors) {
+							errors.push(
+								`${path.relative(reportDirectory, oldAbs)}: ${e.message}`
+							);
+						}
+					}
+					for (const ref of result.updatedReferences) {
+						if (ref.file !== oldAbs && ref.file !== newAbs) {
+							importerFiles.add(ref.file);
+						}
+					}
+				}
+				return { errors, importerFiles };
+			},
+			dryRun: false,
+			force: options.force ?? false,
+			guardDir: reportDirectory,
+			journalEnabled: false,
+			operation: "naming",
+			project,
+			rollbackStrategy: async ({ importerFiles }) => {
+				await rollbackMoves(project.rootDir, computedRenames, importerFiles);
+				return true;
+			},
 			translateBeforeFile: (file) =>
 				renameTargets.get(normalizePath(file)) ?? file,
-		}
+			verify: "rollback",
+		},
+		{ checkRollbackSafeWorktree: async () => Promise.resolve(guard) }
 	);
-	const shouldRollback = after.incomplete || newTypeErrors.length > 0;
 
-	if (shouldRollback) {
-		if (rollbackSafety.rollbackEnabled) {
-			await rollbackMoves(project.rootDir, computedRenames, importerFiles);
-		}
-		const reason = after.incomplete
+	const delta = outcome.delta;
+	if (delta && !delta.success) {
+		const reason = delta.verificationIncomplete
 			? "type checking did not complete"
 			: "type checking introduced new errors";
 		return {
@@ -902,14 +926,13 @@ export async function applyNamingFix(
 			success: false,
 			report,
 			renames: computedRenames,
-			rolledBack: rollbackSafety.rollbackEnabled,
-			worktreeDirtyRollbackDisabled:
-				rollbackSafety.worktreeDirtyRollbackDisabled,
+			rolledBack: outcome.rolledBack,
+			worktreeDirtyRollbackDisabled: outcome.worktreeDirtyRollbackDisabled,
 			errors: [
-				rollbackSafety.rollbackEnabled
+				outcome.rolledBack
 					? `naming --fix rolled back because ${reason}.`
 					: `naming --fix failed because ${reason}; changes remain applied because rollback was disabled (--force on dirty tree).`,
-				...newTypeErrors,
+				...delta.newErrors,
 			],
 		};
 	}
@@ -925,8 +948,8 @@ export async function applyNamingFix(
 		report: updatedReport,
 		renames: computedRenames,
 		rolledBack: false,
-		worktreeDirtyRollbackDisabled: rollbackSafety.worktreeDirtyRollbackDisabled,
-		errors,
+		worktreeDirtyRollbackDisabled: outcome.worktreeDirtyRollbackDisabled,
+		errors: outcome.result?.errors ?? [],
 	};
 }
 

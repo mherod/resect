@@ -2,8 +2,8 @@ import path from "node:path";
 import ts from "typescript";
 import { mapConcurrent } from "../core/concurrency.ts";
 import { removeExtension } from "../core/constants.ts";
-import { diffDiagnostics } from "../core/diagnostics.ts";
-import { ensureCleanWorktree } from "../core/git.ts";
+import { checkRollbackSafeWorktree } from "../core/git.ts";
+import { runMutation } from "../core/mutation-pipeline.ts";
 import {
 	createProgram,
 	loadProject,
@@ -13,9 +13,9 @@ import { calculateRelativeSpecifier } from "../core/resolver.ts";
 import {
 	createFileContentsRollbackStrategy,
 	createRollbackCheckpoint,
+	type RollbackCheckpoint,
 } from "../core/rollback.ts";
 import { applyTextChanges, type TextChange } from "../core/text-changes.ts";
-import { resolveDiagnosticFile, runTypeCheckDetailed } from "../core/verify.ts";
 import { getRuntime } from "../runtime/index.ts";
 import {
 	classifyFreeVariables,
@@ -567,43 +567,73 @@ export async function executeExtractComponent(
 		return { ...planned, success: true, errors: [] };
 	}
 
-	await ensureCleanWorktree(path.dirname(absolutePath), force, dryRun);
-
-	const rollback = await createRollbackCheckpoint(
-		createFileContentsRollbackStrategy(plan.writes.map((write) => write.file))
-	);
-
-	const before = await runTypeCheckDetailed(project);
-	await mapConcurrent(plan.writes, async (write) =>
-		rt.fs.writeFile(write.file, write.content)
-	);
-	const modifiedFiles = plan.writes.map((write) => write.file).sort();
-	const after = await runTypeCheckDetailed(project);
-
-	const errorsBefore = before.errors;
-	// Compare by normalized diagnostic identity, not raw string equality, so a
-	// pre-existing error whose line/col shifted isn't misreported as new (#128).
-	const { newErrors } = diffDiagnostics(errorsBefore, after.errors, {
-		resolveFile: (file) => resolveDiagnosticFile(project, file),
+	const guard = await checkRollbackSafeWorktree(path.dirname(absolutePath), {
+		force,
+		dryRun,
 	});
-	const verificationIncomplete = before.incomplete || after.incomplete;
-	const typecheck: ExtractComponentTypecheck = {
-		errorsBefore,
-		errorsAfter: after.errors,
-		newErrors,
-		verificationIncomplete,
-	};
+	if (guard.blocked) {
+		return {
+			...planned,
+			success: false,
+			modifiedFiles: [],
+			errors: [
+				"Error: working tree has uncommitted changes. Commit or stash your changes first, or rerun with --force to proceed anyway.",
+			],
+		};
+	}
 
-	if (newErrors.length > 0 || verificationIncomplete) {
-		await rollback.restore();
+	const modifiedFiles = plan.writes.map((write) => write.file).sort();
+	// The in-memory checkpoint must be taken right before the writes (there is
+	// no committed git state to restore to for a brand-new file); captured here
+	// and read back by rollbackStrategy once verification runs.
+	let checkpoint: RollbackCheckpoint<unknown> | undefined;
+	const outcome = await runMutation<void>(
+		{
+			apply: async () => {
+				checkpoint = await createRollbackCheckpoint(
+					createFileContentsRollbackStrategy(modifiedFiles)
+				);
+				await mapConcurrent(plan.writes, async (write) =>
+					rt.fs.writeFile(write.file, write.content)
+				);
+			},
+			dryRun: false,
+			force,
+			guardDir: path.dirname(absolutePath),
+			journalEnabled: false,
+			operation: "extract-component",
+			project,
+			rollbackStrategy: async () => {
+				if (!checkpoint) {
+					return false;
+				}
+				await checkpoint.restore();
+				return true;
+			},
+			verify: "rollback",
+		},
+		{ checkRollbackSafeWorktree: async () => Promise.resolve(guard) }
+	);
+
+	const delta = outcome.delta;
+	const typecheck: ExtractComponentTypecheck | undefined = delta
+		? {
+				errorsBefore: delta.errorsBefore,
+				errorsAfter: delta.errorsAfter,
+				newErrors: delta.newErrors,
+				verificationIncomplete: delta.verificationIncomplete,
+			}
+		: undefined;
+
+	if (delta && !delta.success) {
 		return {
 			...planned,
 			success: false,
 			modifiedFiles,
-			rolledBack: true,
-			errors: verificationIncomplete
+			rolledBack: outcome.rolledBack,
+			errors: delta.verificationIncomplete
 				? ["Type checking did not complete after extract-component."]
-				: newErrors,
+				: delta.newErrors,
 			typecheck,
 		};
 	}

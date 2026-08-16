@@ -1,19 +1,15 @@
 import path from "node:path";
 import { mapConcurrent } from "../core/concurrency.ts";
-import { diffDiagnostics } from "../core/diagnostics.ts";
 import {
-	ensureRollbackSafeWorktree,
+	checkRollbackSafeWorktree,
 	type MoveRename,
 	rollbackFiles,
 	rollbackMoves,
 } from "../core/git.ts";
-import {
-	completeOperationJournal,
-	prepareOperationJournal,
-} from "../core/journal.ts";
+import { runMutation } from "../core/mutation-pipeline.ts";
 import { toRelativePath } from "../core/path-utils.ts";
 import { applyTextChanges, deduplicateChanges } from "../core/text-changes.ts";
-import { runTypeCheckDetailed } from "../core/verify.ts";
+import type { VerificationResult } from "../core/verify.ts";
 import type {
 	TidyAppliedFix,
 	TidyFixCategory,
@@ -35,30 +31,35 @@ import {
 	type TidyProjectContext,
 } from "./tidy-plans.ts";
 
-function typecheckDelta(options: {
-	before: Awaited<ReturnType<typeof runTypeCheckDetailed>>;
-	after: Awaited<ReturnType<typeof runTypeCheckDetailed>>;
-}): TypecheckDelta {
-	// Compare by normalized diagnostic identity, not raw string equality, so a
-	// pre-existing error whose line/col shifted isn't misreported as new (#128).
-	const { newErrors, fixedErrors } = diffDiagnostics(
-		options.before.errors,
-		options.after.errors
-	);
-	const verificationIncomplete =
-		options.before.incomplete || options.after.incomplete;
-	const incompleteReason = verificationIncomplete
-		? options.after.errors.slice(0, 5)
-		: undefined;
+/** Adapt the pipeline's generic VerificationResult into tidy's own report shape. */
+function typecheckDeltaFromVerification(
+	delta: VerificationResult
+): TypecheckDelta {
+	let incompleteReason: string[] | undefined;
+	if (delta.verificationIncomplete) {
+		incompleteReason = delta.verificationException
+			? [delta.verificationException]
+			: delta.errorsAfter.slice(0, 5);
+	}
 
 	return {
-		errorsBefore: options.before.errors.length,
-		errorsAfter: options.after.errors.length,
-		newErrors,
-		fixedCount: fixedErrors.length,
-		verificationIncomplete,
+		errorsBefore: delta.errorsBefore.length,
+		errorsAfter: delta.errorsAfter.length,
+		newErrors: delta.newErrors,
+		fixedCount: delta.fixedErrors.length,
+		verificationIncomplete: delta.verificationIncomplete,
 		incompleteReason,
 	};
+}
+
+/** Mirrors the three original failure reasons, now derived from one shared VerificationResult. */
+function tidyVerificationFailureReason(delta: VerificationResult): string {
+	if (delta.verificationException) {
+		return `type checking failed: ${delta.verificationException}`;
+	}
+	return delta.verificationIncomplete
+		? "type checking did not complete"
+		: "type checking introduced new errors";
 }
 
 const MUTATION_KIND_BY_CATEGORY: Partial<
@@ -220,47 +221,6 @@ async function rollbackAppliedTidyChanges(options: {
 	}
 }
 
-async function failedTidyVerificationResult(options: {
-	applyResult: AppliedTidyChanges;
-	delta: TypecheckDelta;
-	planned: PlannedTidyChange[];
-	projectRoot: string;
-	reason: string;
-	report: TidyReport;
-	rollbackEnabled: boolean;
-}): Promise<TidyApplyResult> {
-	let applied = options.applyResult.applied;
-	if (options.rollbackEnabled) {
-		await rollbackAppliedTidyChanges(options);
-		applied = markRolledBack(applied);
-	}
-	const error = options.rollbackEnabled
-		? `tidy rolled back because ${options.reason}.`
-		: `tidy verification failed; rollback was disabled (--force on dirty tree) — ${applied.length} change(s) remain applied. Reason: ${options.reason}.`;
-
-	return {
-		report: applyReportMutation(options.report, applied, options.delta),
-		success: false,
-		errors: [error],
-		worktreeDirtyRollbackDisabled: !options.rollbackEnabled,
-	};
-}
-
-function typecheckExceptionDelta(
-	before: Awaited<ReturnType<typeof runTypeCheckDetailed>>,
-	error: unknown
-): TypecheckDelta {
-	const message = error instanceof Error ? error.message : String(error);
-	return {
-		errorsBefore: before.errors.length,
-		errorsAfter: before.errors.length,
-		newErrors: [],
-		fixedCount: 0,
-		verificationIncomplete: true,
-		incompleteReason: [message],
-	};
-}
-
 function applyReportMutation(
 	report: TidyReport,
 	applied: TidyAppliedFix[],
@@ -287,17 +247,24 @@ export async function applyTidyFixes(
 ): Promise<TidyApplyResult> {
 	const context = providedContext ?? (await resolveTidyProjectContext(options));
 	const maxChanges = options.maxChanges ?? DEFAULT_MAX_CHANGES;
-	const { rollbackEnabled } = await ensureRollbackSafeWorktree(
-		context.project.rootDir,
-		{
-			force: options.force,
-			operation: "tidy",
-		}
-	);
-	const journalContext = await prepareOperationJournal(
-		context.project.rootDir,
-		options.journal ?? false
-	);
+
+	// applyTidyFixes is only ever called for a real apply — dry-run preview is
+	// the separate previewTidyFixes path — so this guard is never a no-op.
+	const guard = await checkRollbackSafeWorktree(context.project.rootDir, {
+		force: options.force,
+		dryRun: false,
+	});
+	if (guard.blocked) {
+		return {
+			report,
+			success: false,
+			errors: [
+				"Error: working tree has uncommitted changes. Commit or stash your changes first, or rerun with --force to proceed anyway.",
+			],
+			worktreeDirtyRollbackDisabled: false,
+		};
+	}
+
 	const planned = await planTidyFixes(
 		report,
 		options,
@@ -317,7 +284,7 @@ export async function applyTidyFixes(
 			errors: [
 				`tidy planned ${planned.length} change(s), which exceeds --max-changes ${maxChanges}. Re-run with a larger limit to apply.`,
 			],
-			worktreeDirtyRollbackDisabled: !rollbackEnabled,
+			worktreeDirtyRollbackDisabled: guard.worktreeDirtyRollbackDisabled,
 		};
 	}
 	if (planned.length === 0) {
@@ -325,67 +292,90 @@ export async function applyTidyFixes(
 			report: applyReportMutation(reportWithEdits, [], null),
 			success: true,
 			errors: [],
-			worktreeDirtyRollbackDisabled: !rollbackEnabled,
+			worktreeDirtyRollbackDisabled: guard.worktreeDirtyRollbackDisabled,
 		};
 	}
 
-	const before = await runTypeCheckDetailed(context.project);
-	const applyResult = await applyPlannedTidyFixes(
-		planned,
-		context.reportDirectory,
-		context.project
+	const outcome = await runMutation<AppliedTidyChanges>(
+		{
+			apply: async () =>
+				applyPlannedTidyFixes(
+					planned,
+					context.reportDirectory,
+					context.project
+				),
+			dryRun: false,
+			force: options.force ?? false,
+			guardDir: context.project.rootDir,
+			journalDetails: (applyResult) => ({
+				args: {
+					directory: path.relative(
+						context.project.rootDir,
+						context.reportDirectory
+					),
+					fixCategories: options.fixCategories ?? [],
+				},
+				command: "tidy",
+				movedFiles: applyResult.moveRenames,
+			}),
+			journalEnabled: options.journal ?? false,
+			operation: "tidy",
+			project: context.project,
+			rollbackStrategy: async (applyResult) => {
+				await rollbackAppliedTidyChanges({
+					applyResult,
+					planned,
+					projectRoot: context.project.rootDir,
+				});
+				return true;
+			},
+			verify: "rollback",
+		},
+		{ checkRollbackSafeWorktree: async () => Promise.resolve(guard) }
 	);
-	let after: Awaited<ReturnType<typeof runTypeCheckDetailed>>;
-	try {
-		after = await runTypeCheckDetailed(context.project);
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		return failedTidyVerificationResult({
-			applyResult,
-			delta: typecheckExceptionDelta(before, error),
-			planned,
-			projectRoot: context.project.rootDir,
-			reason: `type checking failed: ${message}`,
-			report: reportWithEdits,
-			rollbackEnabled,
-		});
-	}
-	const delta = typecheckDelta({ before, after });
-	const shouldRollback =
-		delta.verificationIncomplete || delta.newErrors.length > 0;
-	if (shouldRollback) {
-		const reason = delta.verificationIncomplete
-			? "type checking did not complete"
-			: "type checking introduced new errors";
-		return failedTidyVerificationResult({
-			applyResult,
-			delta,
-			planned,
-			projectRoot: context.project.rootDir,
-			reason,
-			report: reportWithEdits,
-			rollbackEnabled,
-		});
+
+	// Unreachable: the guard above already confirmed an unblocked worktree, and
+	// the pipeline always calls apply() on that path.
+	const applyResult =
+		outcome.result ??
+		(() => {
+			throw new Error("tidy: apply did not run");
+		})();
+	const delta = outcome.delta;
+
+	if (delta && !delta.success) {
+		const reason = tidyVerificationFailureReason(delta);
+		const applied = outcome.rolledBack
+			? markRolledBack(applyResult.applied)
+			: applyResult.applied;
+		const error = outcome.rolledBack
+			? `tidy rolled back because ${reason}.`
+			: `tidy verification failed; rollback was disabled (--force on dirty tree) — ${applied.length} change(s) remain applied. Reason: ${reason}.`;
+		return {
+			report: applyReportMutation(
+				reportWithEdits,
+				applied,
+				typecheckDeltaFromVerification(delta)
+			),
+			success: false,
+			errors: [error],
+			worktreeDirtyRollbackDisabled: outcome.worktreeDirtyRollbackDisabled,
+		};
 	}
 
-	const journalEntry = await completeOperationJournal(journalContext, {
-		args: {
-			directory: path.relative(
-				context.project.rootDir,
-				context.reportDirectory
-			),
-			fixCategories: options.fixCategories ?? [],
-		},
-		command: "tidy",
-		movedFiles: applyResult.moveRenames,
-	});
 	return {
 		report: {
-			...applyReportMutation(reportWithEdits, applyResult.applied, delta),
-			...(journalEntry ? { journalEntryId: journalEntry.id } : {}),
+			...applyReportMutation(
+				reportWithEdits,
+				applyResult.applied,
+				delta ? typecheckDeltaFromVerification(delta) : null
+			),
+			...(outcome.journalEntry
+				? { journalEntryId: outcome.journalEntry.id }
+				: {}),
 		},
 		success: true,
 		errors: [],
-		worktreeDirtyRollbackDisabled: !rollbackEnabled,
+		worktreeDirtyRollbackDisabled: outcome.worktreeDirtyRollbackDisabled,
 	};
 }

@@ -40,6 +40,7 @@ import {
 	previewTidyFixes,
 } from "../commands/tidy.ts";
 import { findUnusedExports } from "../commands/unused.ts";
+import { checkRollbackSafeWorktree } from "../core/git.ts";
 import { loadProject, resolveTsConfig } from "../core/project.ts";
 import { analyzeSimilarity } from "../core/similarity.ts";
 import { serializeStructuredEdits } from "../core/text-changes.ts";
@@ -611,8 +612,11 @@ export async function testRelocationTool(
 	}
 	const project = loadProject(tsconfigPath, absoluteDir);
 	const dryRun = options.dryRun ?? true;
-	const wt = await checkWorktree(project.rootDir, options.force ?? false);
-	if (wt.blocked && !dryRun) {
+	const guard = await checkRollbackSafeWorktree(project.rootDir, {
+		dryRun,
+		force: options.force ?? false,
+	});
+	if (guard.blocked && !dryRun) {
 		return errorText(WORKTREE_BLOCKED_MESSAGE);
 	}
 	const report = await buildTestRelocationReport({
@@ -623,15 +627,20 @@ export async function testRelocationTool(
 	if (dryRun) {
 		return jsonText({ dryRun, force: options.force ?? false, report });
 	}
-	const result = await applyRelocations(report, {
-		project,
-		reportDirectory: absoluteDir,
-		dryRun,
-		verbose: options.verbose,
-	});
+	const result = await applyRelocations(
+		report,
+		{
+			project,
+			reportDirectory: absoluteDir,
+			dryRun,
+			force: options.force,
+			verbose: options.verbose,
+		},
+		guard
+	);
 	return jsonText({
 		force: options.force ?? false,
-		worktreeDirty: wt.dirty,
+		worktreeDirty: guard.dirty,
 		...result,
 	});
 }
@@ -652,8 +661,11 @@ export async function mockCleanupTool(
 	}
 	const project = loadProject(tsconfigPath, absoluteDir);
 	const dryRun = options.dryRun ?? true;
-	const wt = await checkWorktree(project.rootDir, options.force ?? false);
-	if (wt.blocked && !dryRun) {
+	const guard = await checkRollbackSafeWorktree(project.rootDir, {
+		dryRun,
+		force: options.force ?? false,
+	});
+	if (guard.blocked && !dryRun) {
 		return errorText(WORKTREE_BLOCKED_MESSAGE);
 	}
 
@@ -665,15 +677,20 @@ export async function mockCleanupTool(
 		return jsonText({ dryRun, force: options.force ?? false, report });
 	}
 
-	const result = await applyMockCleanup(report, {
-		project,
-		reportDirectory: absoluteDir,
-		dryRun,
-		verify: options.verify ?? true,
-	});
+	const result = await applyMockCleanup(
+		report,
+		{
+			project,
+			reportDirectory: absoluteDir,
+			dryRun,
+			force: options.force,
+			verify: options.verify ?? true,
+		},
+		guard
+	);
 	return jsonText({
 		force: options.force ?? false,
-		worktreeDirty: wt.dirty,
+		worktreeDirty: guard.dirty,
 		...result,
 		modifiedFiles: result.modifiedFiles.map((file) =>
 			path.relative(project.rootDir, file)

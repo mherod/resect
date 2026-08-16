@@ -3,13 +3,16 @@ import path from "node:path";
 import { logger } from "../cli-logger.ts";
 import { mapConcurrent } from "../core/concurrency.ts";
 import { TS_JS_VUE_EXTENSIONS } from "../core/constants.ts";
-import { diffDiagnostics } from "../core/diagnostics.ts";
-import { ensureCleanWorktree } from "../core/git.ts";
+import {
+	checkRollbackSafeWorktree,
+	type WorktreeGuardOutcome,
+} from "../core/git.ts";
 import {
 	buildProjectGraphs,
 	type DependencyGraph,
 	mergeDependencyGraphs,
 } from "../core/graph.ts";
+import { runMutation } from "../core/mutation-pipeline.ts";
 import { isWithinPath, toRelativePath } from "../core/path-utils.ts";
 import { loadProject, resolveTsConfig } from "../core/project.ts";
 import { normalizePath } from "../core/resolver.ts";
@@ -18,7 +21,6 @@ import {
 	createRollbackCheckpoint,
 } from "../core/rollback.ts";
 import { isTestFile } from "../core/test-files.ts";
-import { resolveDiagnosticFile, runTypeCheckDetailed } from "../core/verify.ts";
 import { discoverWorkspace } from "../core/workspace.ts";
 import type { MoveResult } from "../types/move.ts";
 import type {
@@ -346,14 +348,35 @@ async function ensureTargetDirectories(
 	}
 }
 
+function relocationErrors(moves: MoveResult[]): string[] {
+	return moves.flatMap((move) =>
+		move.errors
+			.filter((error) => !error.recoverable)
+			.map((error) => `${error.file}: ${error.message}`)
+	);
+}
+
+function relocationFilesTouched(moves: MoveResult[]): number {
+	return new Set(
+		moves.flatMap((move) => [
+			move.movedFile.from,
+			move.movedFile.to,
+			...move.updatedReferences.map((ref) => ref.file),
+		])
+	).size;
+}
+
 export async function applyRelocations(
 	report: TestRelocationReport,
 	options: {
 		project: ProjectConfig;
 		reportDirectory: string;
 		dryRun: boolean;
+		force?: boolean;
 		verbose?: boolean;
-	}
+	},
+	/** Pre-computed guard, when the caller already checked it for reporting/exit purposes (avoids a redundant git-status call). */
+	precomputedGuard?: WorktreeGuardOutcome
 ): Promise<TestRelocationApplyResult> {
 	if (report.findings.length === 0) {
 		return {
@@ -366,134 +389,155 @@ export async function applyRelocations(
 		};
 	}
 
-	if (!options.dryRun) {
-		await ensureTargetDirectories(options.reportDirectory, report.findings);
-	}
 	const workspace =
 		(await discoverWorkspace(options.project.rootDir)) ?? undefined;
-	const before = options.dryRun
-		? undefined
-		: await runTypeCheckDetailed(options.project);
-	const moves = await mapConcurrent(
-		report.findings,
-		async (relocation): Promise<MoveResult> => {
-			const { source, target } = absoluteRelocation(
-				relocation,
-				options.reportDirectory
-			);
-			return moveModule(
-				source,
-				target,
-				options.project,
-				options.dryRun,
-				options.verbose ?? false,
-				workspace
-			);
-		},
-		{ concurrency: FIX_CONCURRENCY }
+	const relocationPairs = report.findings.map((relocation) =>
+		absoluteRelocation(relocation, options.reportDirectory)
 	);
 
-	const errors = moves.flatMap((move) =>
-		move.errors
-			.filter((error) => !error.recoverable)
-			.map((error) => `${error.file}: ${error.message}`)
-	);
-
-	if (options.dryRun || errors.length > 0) {
+	if (options.dryRun) {
+		const moves = await mapConcurrent(
+			relocationPairs,
+			async ({ source, target }) =>
+				moveModule(
+					source,
+					target,
+					options.project,
+					true,
+					options.verbose ?? false,
+					workspace
+				),
+			{ concurrency: FIX_CONCURRENCY }
+		);
+		const errors = relocationErrors(moves);
 		return {
-			dryRun: options.dryRun,
+			dryRun: true,
 			success: errors.length === 0,
-			report: {
-				...report,
-				summary: { ...report.summary, filesTouched: 0 },
-			},
+			report: { ...report, summary: { ...report.summary, filesTouched: 0 } },
 			moves,
 			rolledBack: false,
 			errors,
 		};
 	}
 
-	const after = await runTypeCheckDetailed(options.project);
-	const errorsBefore = before?.errors ?? [];
-	// Compare by normalized diagnostic identity, not raw string equality (#128).
-	// Relocated test files re-report their pre-existing errors at the new path,
-	// so translate each before-side path to its relocation target.
-	const relocationTargets = new Map(
-		report.findings.map((relocation) => {
-			const { source, target } = absoluteRelocation(
-				relocation,
-				options.reportDirectory
-			);
-			return [normalizePath(source), normalizePath(target)];
-		})
-	);
-	const { newErrors } = diffDiagnostics(errorsBefore, after.errors, {
-		resolveFile: (file) => resolveDiagnosticFile(options.project, file),
-		translateBeforeFile: (file) =>
-			relocationTargets.get(normalizePath(file)) ?? file,
-	});
-	const verificationIncomplete =
-		before?.incomplete === true || after.incomplete;
-	if (newErrors.length > 0 || verificationIncomplete) {
-		const rollback = await createRollbackCheckpoint(
-			createMoveRollbackStrategy(
-				options.project.rootDir,
-				report.findings.map((relocation) => {
-					const { source, target } = absoluteRelocation(
-						relocation,
-						options.reportDirectory
-					);
-					return { from: source, to: target };
-				}),
-				moves.flatMap((move) =>
-					move.updatedReferences.map((reference) => reference.file)
-				)
-			)
-		);
-		await rollback.restore();
+	// One guard for the real-apply path, owned entirely here — callers (CLI,
+	// MCP) pre-compute it only when they need the result before calling in
+	// (e.g. to skip building the report at all on a blocked worktree).
+	const guard =
+		precomputedGuard ??
+		(await checkRollbackSafeWorktree(options.reportDirectory, {
+			force: options.force,
+			dryRun: false,
+		}));
+	if (guard.blocked) {
 		return {
 			dryRun: false,
 			success: false,
 			report,
-			moves,
-			typecheck: {
-				errorsBefore,
-				errorsAfter: after.errors,
-				newErrors,
-				verificationIncomplete,
-			},
-			rolledBack: true,
-			errors: verificationIncomplete
-				? ["Type checking did not complete after relocation"]
-				: newErrors,
+			moves: [],
+			rolledBack: false,
+			errors: [
+				"Error: working tree has uncommitted changes. Commit or stash your changes first, or rerun with --force to proceed anyway.",
+			],
 		};
+	}
+
+	await ensureTargetDirectories(options.reportDirectory, report.findings);
+
+	// Compare by normalized diagnostic identity, not raw string equality (#128).
+	// Relocated test files re-report their pre-existing errors at the new path,
+	// so translate each before-side path to its relocation target.
+	const relocationTargets = new Map(
+		relocationPairs.map(({ source, target }) => [
+			normalizePath(source),
+			normalizePath(target),
+		])
+	);
+
+	const outcome = await runMutation<MoveResult[]>(
+		{
+			apply: async () =>
+				mapConcurrent(
+					relocationPairs,
+					async ({ source, target }) =>
+						moveModule(
+							source,
+							target,
+							options.project,
+							false,
+							options.verbose ?? false,
+							workspace
+						),
+					{ concurrency: FIX_CONCURRENCY }
+				),
+			dryRun: false,
+			force: options.force ?? false,
+			guardDir: options.reportDirectory,
+			isApplySuccessful: (moves) => relocationErrors(moves).length === 0,
+			journalEnabled: false,
+			operation: "test-relocation",
+			project: options.project,
+			// A batch with one failed and one successful relocation must still roll
+			// back the successful one when verification fails afterward (matches
+			// move-batch, #225) — the currently-shipped behavior leaves it
+			// unverified instead, which this migration corrects.
+			rollbackRequiresApplySuccess: false,
+			rollbackStrategy: async (moves) => {
+				const checkpoint = await createRollbackCheckpoint(
+					createMoveRollbackStrategy(
+						options.project.rootDir,
+						relocationPairs.map(({ source, target }) => ({
+							from: source,
+							to: target,
+						})),
+						moves.flatMap((move) =>
+							move.updatedReferences.map((reference) => reference.file)
+						)
+					)
+				);
+				await checkpoint.restore();
+				return true;
+			},
+			translateBeforeFile: (file) =>
+				relocationTargets.get(normalizePath(file)) ?? file,
+			verify: "rollback",
+		},
+		{ checkRollbackSafeWorktree: async () => Promise.resolve(guard) }
+	);
+
+	const moves = outcome.result ?? [];
+	const applyErrors = relocationErrors(moves);
+	const delta = outcome.delta;
+	let errors = applyErrors;
+	if (delta && !delta.success) {
+		errors = delta.verificationIncomplete
+			? ["Type checking did not complete after relocation"]
+			: delta.newErrors;
 	}
 
 	return {
 		dryRun: false,
-		success: true,
+		success: outcome.success,
 		report: {
 			...report,
 			summary: {
 				...report.summary,
-				filesTouched: new Set(
-					moves.flatMap((move) => [
-						move.movedFile.from,
-						move.movedFile.to,
-						...move.updatedReferences.map((ref) => ref.file),
-					])
-				).size,
+				filesTouched: outcome.rolledBack ? 0 : relocationFilesTouched(moves),
 			},
 		},
 		moves,
-		typecheck: {
-			errorsBefore,
-			errorsAfter: after.errors,
-			newErrors,
-			verificationIncomplete,
-		},
-		rolledBack: false,
-		errors: [],
+		...(delta
+			? {
+					typecheck: {
+						errorsBefore: delta.errorsBefore,
+						errorsAfter: delta.errorsAfter,
+						newErrors: delta.newErrors,
+						verificationIncomplete: delta.verificationIncomplete,
+					},
+				}
+			: {}),
+		rolledBack: outcome.rolledBack,
+		errors,
 	};
 }
 
@@ -526,8 +570,20 @@ export async function testRelocationCommand(
 ): Promise<void> {
 	const reportDirectory = path.resolve(options.directory);
 	const dryRun = options.fix ? (options.dryRun ?? false) : true;
+
+	let guard: WorktreeGuardOutcome | undefined;
 	if (!dryRun) {
-		await ensureCleanWorktree(reportDirectory, options.force);
+		guard = await checkRollbackSafeWorktree(reportDirectory, {
+			force: options.force,
+			dryRun: false,
+		});
+		if (guard.blocked) {
+			logger.error(
+				"Error: working tree has uncommitted changes. " +
+					"Commit or stash your changes first, or rerun with --force to proceed anyway."
+			);
+			process.exit(1);
+		}
 	}
 
 	const report = await buildTestRelocationReport(options);
@@ -544,12 +600,17 @@ export async function testRelocationCommand(
 		throw new Error(`Could not find tsconfig.json for ${reportDirectory}`);
 	}
 	const project = loadProject(tsconfigPath, reportDirectory);
-	const result = await applyRelocations(report, {
-		project,
-		reportDirectory,
-		dryRun,
-		verbose: options.verbose,
-	});
+	const result = await applyRelocations(
+		report,
+		{
+			project,
+			reportDirectory,
+			dryRun,
+			force: options.force,
+			verbose: options.verbose,
+		},
+		guard
+	);
 	const output = options.json
 		? `${JSON.stringify(result, null, 2)}\n`
 		: formatTestRelocationReport(result.report);

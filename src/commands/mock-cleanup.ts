@@ -1,11 +1,9 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
-import { diffDiagnostics } from "../core/diagnostics.ts";
 import {
-	ensureCleanWorktree,
-	ensureRollbackSafeWorktree,
-	type RollbackSafety,
+	checkRollbackSafeWorktree,
 	rollbackFiles,
+	type WorktreeGuardOutcome,
 } from "../core/git.ts";
 import {
 	buildProjectGraphs,
@@ -13,6 +11,7 @@ import {
 	mergeDependencyGraphs,
 	withGraphSourceFile,
 } from "../core/graph.ts";
+import { runMutation } from "../core/mutation-pipeline.ts";
 import { isWithinPath, toRelativePath } from "../core/path-utils.ts";
 import { loadProject, resolveTsConfig } from "../core/project.ts";
 import { normalizePath } from "../core/resolver.ts";
@@ -26,7 +25,6 @@ import {
 	deduplicateChanges,
 	type TextChange,
 } from "../core/text-changes.ts";
-import { resolveDiagnosticFile, runTypeCheckDetailed } from "../core/verify.ts";
 import { getRuntime } from "../runtime/index.ts";
 import type { ModuleReference } from "../types/graph.ts";
 import type {
@@ -332,9 +330,11 @@ export async function applyMockCleanup(
 		project: ProjectConfig;
 		reportDirectory: string;
 		dryRun: boolean;
+		force?: boolean;
 		verify?: boolean;
-		rollbackSafety?: RollbackSafety;
-	}
+	},
+	/** Pre-computed guard from the caller (both callers check it before this point). */
+	guard: WorktreeGuardOutcome
 ): Promise<MockCleanupApplyResult> {
 	if (report.orphans.length === 0 || options.dryRun) {
 		return {
@@ -343,64 +343,51 @@ export async function applyMockCleanup(
 			report,
 			modifiedFiles: [],
 			rolledBack: false,
-			worktreeDirtyRollbackDisabled:
-				options.rollbackSafety?.worktreeDirtyRollbackDisabled ?? false,
+			worktreeDirtyRollbackDisabled: guard.worktreeDirtyRollbackDisabled,
 			errors: [],
 		};
 	}
 
-	const before =
-		options.verify === false
-			? undefined
-			: await runTypeCheckDetailed(options.project);
-	const modifiedFiles = await writeMockCleanupChanges(report.orphans);
-
-	if (options.verify === false) {
-		return {
+	const outcome = await runMutation<string[]>(
+		{
+			apply: async () => writeMockCleanupChanges(report.orphans),
 			dryRun: false,
-			success: true,
-			report: {
-				...report,
-				summary: { ...report.summary, filesTouched: modifiedFiles.length },
-			},
-			modifiedFiles,
-			rolledBack: false,
-			worktreeDirtyRollbackDisabled:
-				options.rollbackSafety?.worktreeDirtyRollbackDisabled ?? false,
-			errors: [],
-		};
-	}
+			force: options.force ?? false,
+			guardDir: options.reportDirectory,
+			journalEnabled: false,
+			operation: "mock-cleanup",
+			project: options.project,
+			rollbackStrategy: async (modifiedFiles) =>
+				rollbackFiles(options.reportDirectory, modifiedFiles).then(() => true),
+			verify: options.verify === false ? "none" : "rollback",
+		},
+		{ checkRollbackSafeWorktree: async () => Promise.resolve(guard) }
+	);
 
-	const after = await runTypeCheckDetailed(options.project);
-	const errorsBefore = before?.errors ?? [];
-	// Compare by normalized diagnostic identity, not raw string equality, so a
-	// pre-existing error whose line/col shifted isn't misreported as new (#128).
-	const { newErrors } = diffDiagnostics(errorsBefore, after.errors, {
-		resolveFile: (file) => resolveDiagnosticFile(options.project, file),
-	});
-	const verificationIncomplete =
-		before?.incomplete === true || after.incomplete;
-	if (newErrors.length > 0 || verificationIncomplete) {
-		const rollbackEnabled = options.rollbackSafety?.rollbackEnabled ?? true;
-		if (rollbackEnabled) {
-			await rollbackFiles(options.reportDirectory, modifiedFiles);
-		}
+	const modifiedFiles = outcome.result ?? [];
+	const delta = outcome.delta;
+
+	if (delta && !delta.success) {
 		return {
 			dryRun: false,
 			success: false,
 			report,
 			modifiedFiles,
-			rolledBack: rollbackEnabled,
-			worktreeDirtyRollbackDisabled:
-				options.rollbackSafety?.worktreeDirtyRollbackDisabled ?? false,
-			errors: verificationIncomplete
-				? [mockCleanupVerificationFailure("did not complete", rollbackEnabled)]
-				: newErrors,
+			rolledBack: outcome.rolledBack,
+			worktreeDirtyRollbackDisabled: outcome.worktreeDirtyRollbackDisabled,
+			errors: delta.verificationIncomplete
+				? [
+						mockCleanupVerificationFailure(
+							"did not complete",
+							outcome.rolledBack
+						),
+					]
+				: delta.newErrors,
 			typecheck: {
-				errorsBefore,
-				errorsAfter: after.errors,
-				newErrors,
-				verificationIncomplete,
+				errorsBefore: delta.errorsBefore,
+				errorsAfter: delta.errorsAfter,
+				newErrors: delta.newErrors,
+				verificationIncomplete: delta.verificationIncomplete,
 			},
 		};
 	}
@@ -414,15 +401,18 @@ export async function applyMockCleanup(
 		},
 		modifiedFiles,
 		rolledBack: false,
-		worktreeDirtyRollbackDisabled:
-			options.rollbackSafety?.worktreeDirtyRollbackDisabled ?? false,
+		worktreeDirtyRollbackDisabled: outcome.worktreeDirtyRollbackDisabled,
 		errors: [],
-		typecheck: {
-			errorsBefore,
-			errorsAfter: after.errors,
-			newErrors,
-			verificationIncomplete,
-		},
+		...(delta
+			? {
+					typecheck: {
+						errorsBefore: delta.errorsBefore,
+						errorsAfter: delta.errorsAfter,
+						newErrors: delta.newErrors,
+						verificationIncomplete: delta.verificationIncomplete,
+					},
+				}
+			: {}),
 	};
 }
 
@@ -475,17 +465,18 @@ export async function mockCleanupCommand(
 ): Promise<void> {
 	const reportDirectory = path.resolve(options.directory);
 	const shouldApply = options.fix === true && options.dryRun !== true;
-	let rollbackSafety: RollbackSafety | undefined;
+	let guard: WorktreeGuardOutcome | undefined;
 	if (shouldApply) {
-		rollbackSafety =
-			options.verify === false
-				? undefined
-				: await ensureRollbackSafeWorktree(reportDirectory, {
-						force: options.force,
-						operation: "mock-cleanup",
-					});
-		if (!rollbackSafety) {
-			await ensureCleanWorktree(reportDirectory, options.force);
+		guard = await checkRollbackSafeWorktree(reportDirectory, {
+			force: options.force,
+			dryRun: false,
+		});
+		if (guard.blocked) {
+			logger.error(
+				"Error: working tree has uncommitted changes. " +
+					"Commit or stash your changes first, or rerun with --force to proceed anyway."
+			);
+			process.exit(1);
 		}
 	}
 
@@ -494,19 +485,23 @@ export async function mockCleanupCommand(
 		project: options.project,
 	});
 
-	if (!shouldApply) {
+	if (!(shouldApply && guard)) {
 		writeMockCleanupOutput(report, options.json, reportDirectory);
 		return;
 	}
 
 	const project = loadMockCleanupProject(options.project, reportDirectory);
-	const result = await applyMockCleanup(report, {
-		project,
-		reportDirectory,
-		dryRun: false,
-		verify: options.verify,
-		rollbackSafety,
-	});
+	const result = await applyMockCleanup(
+		report,
+		{
+			project,
+			reportDirectory,
+			dryRun: false,
+			force: options.force,
+			verify: options.verify,
+		},
+		guard
+	);
 	writeMockCleanupOutput(result, options.json, reportDirectory);
 	exitOnMockCleanupErrors(result.errors, result.success);
 }
