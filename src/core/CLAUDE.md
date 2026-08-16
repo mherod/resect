@@ -17,7 +17,10 @@ Use Bun for runtime file I/O. Prefer `Bun.file()` for files; `Bun.file().exists(
 - `workspace.ts`: pnpm/yarn/npm workspaces, packages, barrels, configs.
 - `text-changes.ts`: `TextChange`, `applyTextChanges()`, `deduplicateChanges()`.
 - `constants.ts`: extension/export/diagnostic constants.
-- `git.ts`: `isWorktreeDirty()` and `ensureCleanWorktree()`.
+- `git.ts`: `isWorktreeDirty()`, the structured non-exiting `checkRollbackSafeWorktree()`, and the exiting `ensureCleanWorktree()`/`ensureRollbackSafeWorktree()`.
+- `journal.ts`: the `prepareOperationJournal()`/`completeOperationJournal()` pair, plus `undoJournalOperation()`, which applies undo's own stricter guard internally.
+- `rollback.ts`: `createRollbackCheckpoint()`/`tryRestoreRollback()` and the git-files, move, and file-contents strategies.
+- `mutation-pipeline.ts`: `runMutation()`, the sole composer of the mutation sequence.
 - `similarity-algorithms.ts`: synchronous, stateless normalization and scoring; no I/O.
 
 ## Type boundaries
@@ -119,6 +122,22 @@ DON'T use `TS_JS_EXTENSION_PATTERN` in new code; `/\.[tj]sx?$/` misses `.mts/.ct
 `runTypeCheck(project)` and `collectUnresolvableDiagnostics(project)` are shared from `verify.ts`. Verification runs `tsc --noEmit -p <tsconfig>` before and after, reports fixed diagnostics, and fails only on newly introduced errors. `VerificationResult.unresolvableDiagnostics` contains `UnresolvableDiagnosticWithFile[]`.
 
 DON'T duplicate typecheck or unresolved-import scanning in command files.
+
+## Mutation sequence ownership
+
+`mutation-pipeline.ts` owns one ordering for every mutating path: worktree guard, journal prepare, apply under the typecheck guard, then rollback-or-journal-complete, returning a `MutationOutcome<TResult>`. It returns results and never calls `process.exit`, so the `resect-mcp` stdio server cannot be killed from the data layer.
+
+[`../commands/CLAUDE.md`](../commands/CLAUDE.md) owns the caller-side rules: route through `runMutation`, express variance as config, and never import the primitives it composes. The contracts below belong to the core modules themselves.
+
+DO keep every seam in `MutationPipelineDependencies` — `checkRollbackSafeWorktree`, `prepareOperationJournal`, `completeOperationJournal`, `runWithTypecheckGuard` — injectable. Commands with a different verification shape override them rather than rebuilding the sequence: `alias --workspace` injects `runWithWorkspaceTypecheckGuard()`, and `undo` injects a guard over `runTypeCheckDetailed()` so it reads `TypeCheckOutcome.incomplete` directly instead of re-deriving incompleteness from diagnostic strings.
+
+DO let an injected `checkRollbackSafeWorktree` stand as already-decided. When a caller computes the guard to own its own refusal message and exit code, the pipeline must not re-check; that is what keeps one guard per command.
+
+DO keep `ensureCleanWorktree()` and `ensureRollbackSafeWorktree()` exiting only as CLI-renderer conveniences, and keep `checkRollbackSafeWorktree()` free of `process.exit`. A data-layer exit kills the `resect-mcp` stdio server.
+
+DON'T weaken the stricter guard inside `undoJournalOperation()` (`assertUndoState`, `journal.ts:439`) into the generic dirty-worktree check. It permits its journal entry's own files while refusing unrelated changes and sha256 divergence; the generic guard would refuse every legitimate undo.
+
+DON'T let `createGitFilesRollbackStrategy()` become the default for new callers. `git restore` cannot recreate a file the command created and does not work outside a git repository, which is why `createFileContentsRollbackStrategy()` exists.
 
 ## Workspace and package resolution
 
