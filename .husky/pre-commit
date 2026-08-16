@@ -4,7 +4,15 @@ set -e
 
 # Run only affected tests using resect's graph analysis to speed up commit times.
 # Falls back to the full suite under config changes or errors.
-bun scripts/run-affected-tests.ts
+#
+# Git exports repository-local GIT_* variables into hooks. Clear them only
+# around tests so temporary fixture repositories resolve their own .git state.
+(
+	for git_local_env_var in $(git rev-parse --local-env-vars); do
+		unset "$git_local_env_var"
+	done
+	bun scripts/run-affected-tests.ts
+)
 
 
 # Check for duplicate/similar functions (skip if CLI not available)

@@ -55,6 +55,14 @@ describe("pre-commit hook", () => {
 		).toEqual(["pnpm exec biome check --write --no-errors-on-unmatched"]);
 	});
 
+	test("clears hook-local Git state before fixture tests", async () => {
+		const hook = await Bun.file(PRE_COMMIT_HOOK).text();
+
+		expect(hook).toMatch(
+			/for git_local_env_var in \$\(git rev-parse --local-env-vars\); do\s+unset "\$git_local_env_var"\s+done\s+bun scripts\/run-affected-tests\.ts/
+		);
+	});
+
 	test("uses Git-native staged hashes that detect formatting changes (#154)", async () => {
 		const hook = await Bun.file(PRE_COMMIT_HOOK).text();
 		expect(hook).not.toContain("sha256sum");
