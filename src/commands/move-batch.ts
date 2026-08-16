@@ -5,10 +5,7 @@ import {
 	type RollbackSafety,
 } from "../core/git.ts";
 import { buildDependencyGraph, type DependencyGraph } from "../core/graph.ts";
-import {
-	completeOperationJournal,
-	prepareOperationJournal,
-} from "../core/journal.ts";
+import { runMutation } from "../core/mutation-pipeline.ts";
 import { isCrossPackageMove, normalizePath } from "../core/resolver.ts";
 import {
 	createMoveRollbackStrategy,
@@ -237,15 +234,6 @@ export async function moveBatchWithDependencies(
 	}
 	const { project, workspace } = context;
 	validateWorkspaceBoundaries(moves, workspace?.root);
-	const rollbackSafety = await dependencies.ensureRollbackSafeWorktree(
-		project.rootDir,
-		force,
-		dryRun
-	);
-	const journalContext = await prepareOperationJournal(
-		project.rootDir,
-		(options.journal ?? false) && !dryRun
-	);
 
 	const graph = await dependencies.buildDependencyGraph(project);
 	const fileState = new BatchFileState(dryRun);
@@ -301,59 +289,80 @@ export async function moveBatchWithDependencies(
 		return items;
 	};
 
-	const guarded =
-		verify && !dryRun
-			? await dependencies.runWithTypecheckGuard(project, applyMoves, {
-					translateBeforeFile: createBatchPathTranslator(successfulMoves),
-				})
-			: { result: await applyMoves(), delta: undefined };
-	const items = guarded.result;
+	const outcome = await runMutation<MoveBatchItemResult[]>(
+		{
+			apply: applyMoves,
+			dryRun,
+			force,
+			guardDir: project.rootDir,
+			// A batch has per-item success; "apply succeeded" gates the overall
+			// success/journal (matches the original `failed.length === 0`), while
+			// `rollbackRequiresApplySuccess: false` lets a partially-failed batch
+			// still roll back whichever items *did* apply.
+			isApplySuccessful: (items) => items.every(({ result }) => result.success),
+			journalDetails: (items) => {
+				const appliedMoves = items
+					.filter(({ result }) => result.success)
+					.map(({ move }) => move);
+				return {
+					args: {
+						moves: appliedMoves.map((move) => ({
+							source: path.relative(project.rootDir, move.source),
+							target: path.relative(project.rootDir, move.target),
+						})),
+						prefer: options.prefer ?? null,
+						transform: options.transform ?? null,
+					},
+					command: "move",
+					movedFiles: appliedMoves.map((move) => ({
+						from: move.source,
+						to: move.target,
+					})),
+				};
+			},
+			journalEnabled: options.journal ?? false,
+			operation: "move-batch",
+			project,
+			rollbackRequiresApplySuccess: false,
+			rollbackStrategy: async (items) => {
+				const attemptedApplied = items.filter(({ result }) => result.success);
+				return attemptedApplied.length > 0
+					? rollbackMoveBatch(project.rootDir, attemptedApplied)
+					: Promise.resolve(false);
+			},
+			translateBeforeFile: createBatchPathTranslator(successfulMoves),
+			verify: verify ? "rollback" : "none",
+		},
+		{
+			checkRollbackSafeWorktree: async (dir, guardOptions) => {
+				const safety = await dependencies.ensureRollbackSafeWorktree(
+					dir,
+					guardOptions.force ?? false,
+					guardOptions.dryRun ?? false
+				);
+				return { blocked: false, dirty: false, ...safety };
+			},
+			runWithTypecheckGuard: dependencies.runWithTypecheckGuard,
+		}
+	);
+	if (!outcome.result) {
+		throw new Error("Move batch was blocked by the dirty-worktree guard.");
+	}
+	const items = outcome.result;
 	const attemptedApplied = items.filter(({ result }) => result.success);
 	const failed = items.filter(({ result }) => !result.success);
-	let rolledBack = false;
-	if (
-		guarded.delta &&
-		!guarded.delta.success &&
-		attemptedApplied.length > 0 &&
-		rollbackSafety.rollbackEnabled
-	) {
-		rolledBack = await rollbackMoveBatch(project.rootDir, attemptedApplied);
-	}
-	if (guarded.delta) {
-		guarded.delta.rolledBack = rolledBack;
-		guarded.delta.worktreeDirtyRollbackDisabled =
-			rollbackSafety.worktreeDirtyRollbackDisabled;
-	}
-	const applied = rolledBack ? [] : attemptedApplied;
-	const success = failed.length === 0 && (guarded.delta?.success ?? true);
-	const journalEntry = success
-		? await completeOperationJournal(journalContext, {
-				args: {
-					moves: applied.map(({ move }) => ({
-						source: path.relative(project.rootDir, move.source),
-						target: path.relative(project.rootDir, move.target),
-					})),
-					prefer: options.prefer ?? null,
-					transform: options.transform ?? null,
-				},
-				command: "move",
-				movedFiles: applied.map(({ move }) => ({
-					from: move.source,
-					to: move.target,
-				})),
-			})
-		: null;
+	const applied = outcome.rolledBack ? [] : attemptedApplied;
 	return {
-		success,
+		success: outcome.success,
 		dryRun,
 		items,
 		applied,
 		failed,
-		rolledBack,
-		worktreeDirtyRollbackDisabled: rollbackSafety.worktreeDirtyRollbackDisabled,
-		typecheck: guarded.delta,
+		rolledBack: outcome.rolledBack,
+		worktreeDirtyRollbackDisabled: outcome.worktreeDirtyRollbackDisabled,
+		typecheck: outcome.delta,
 		projectRoot: project.rootDir,
-		journalEntryId: journalEntry?.id,
+		journalEntryId: outcome.journalEntry?.id,
 	};
 }
 

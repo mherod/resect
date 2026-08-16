@@ -7,7 +7,26 @@ import {
 	type OperationJournalEntry,
 	prepareOperationJournal,
 } from "./journal.ts";
+import { normalizePath } from "./resolver.ts";
 import { runWithTypecheckGuard, type VerificationResult } from "./verify.ts";
+
+/**
+ * Build a `translateBeforeFile` mapper for a single moved/renamed file (#128,
+ * #209, #210): a pre-existing error on `source` re-reports at `target` after
+ * the move, so map the before-side path there instead of counting it as new.
+ * Shared by every command that moves exactly one file (move.ts, mutating.ts
+ * moveTool); commands that move many files (naming, test-relocation) build
+ * their own map from a source->target list and don't need this helper.
+ */
+export function translateMovedFile(
+	source: string,
+	target: string
+): (file: string) => string {
+	const normalizedSource = normalizePath(source);
+	const normalizedTarget = normalizePath(target);
+	return (file: string) =>
+		normalizePath(file) === normalizedSource ? normalizedTarget : file;
+}
 
 /**
  * How the pipeline uses post-apply typecheck verification:
@@ -51,8 +70,14 @@ export interface MutationPipelineOptions<TResult> {
 	verify: MutationVerifyPolicy;
 	/** Enables the operation journal: prepare before writes, complete on success. */
 	journalEnabled: boolean;
-	/** Entry recorded on verified success; ignored while `journalEnabled` is false. */
-	journalDetails?: JournalOperationDetails;
+	/**
+	 * Entry recorded on verified success; ignored while `journalEnabled` is
+	 * false. A function receives the apply result so batch commands can record
+	 * only the items that actually landed (e.g. excluding per-item failures).
+	 */
+	journalDetails?:
+		| JournalOperationDetails
+		| ((result: TResult) => JournalOperationDetails);
 	/**
 	 * Restores applied changes when verification finds new errors. Receives the
 	 * apply result so it can target exactly the files that changed; resolves to
@@ -60,6 +85,15 @@ export interface MutationPipelineOptions<TResult> {
 	 * (e.g. plain moves) and is recorded as such by the caller.
 	 */
 	rollbackStrategy?: ((result: TResult) => Promise<boolean>) | null;
+	/**
+	 * Whether rollback candidacy requires `isApplySuccessful` to be true.
+	 * Defaults to true (rename/move: nothing to roll back if the single apply
+	 * itself failed). Batch commands with per-item success (move-batch) set
+	 * this false so a partially-failed batch still rolls back the items that
+	 * did apply when verification fails; `isApplySuccessful` still gates the
+	 * overall `success` and journal-completion independently.
+	 */
+	rollbackRequiresApplySuccess?: boolean;
 	/** Maps a before-side diagnostic's path to its expected post-change path (#128). */
 	translateBeforeFile?: (file: string) => string;
 	/** Whether the apply itself succeeded; defaults to true. Verification only narrows success. */
@@ -139,12 +173,14 @@ export async function runMutation<TResult>(
 		: { delta: undefined, result: await options.apply() };
 
 	const applySucceeded = options.isApplySuccessful?.(result) ?? true;
+	const rollbackEligible =
+		options.rollbackRequiresApplySuccess === false || applySucceeded;
 	let rolledBack = false;
 	if (delta) {
 		delta.worktreeDirtyRollbackDisabled = guard.worktreeDirtyRollbackDisabled;
 		const shouldRollback =
 			options.verify === "rollback" &&
-			applySucceeded &&
+			rollbackEligible &&
 			!delta.success &&
 			guard.rollbackEnabled &&
 			options.rollbackStrategy != null;
@@ -159,7 +195,9 @@ export async function runMutation<TResult>(
 		success && !options.dryRun && options.journalDetails
 			? await deps.completeOperationJournal(
 					journalContext,
-					options.journalDetails
+					typeof options.journalDetails === "function"
+						? options.journalDetails(result)
+						: options.journalDetails
 				)
 			: null;
 

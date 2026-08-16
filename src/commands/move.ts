@@ -1,18 +1,11 @@
 import path from "node:path";
 import { logger, printCommandResult } from "../cli-logger.ts";
 import { shouldUseSafeCaseRename } from "../core/filesystem-case.ts";
-import { ensureCleanWorktree } from "../core/git.ts";
-import {
-	completeOperationJournal,
-	prepareOperationJournal,
-} from "../core/journal.ts";
-import { isCrossPackageMove, normalizePath } from "../core/resolver.ts";
+import { runMutation, translateMovedFile } from "../core/mutation-pipeline.ts";
+import { isCrossPackageMove } from "../core/resolver.ts";
 import { serializeStructuredEdits } from "../core/text-changes.ts";
 import { loadTransformConfig } from "../core/transform-config.ts";
-import {
-	printVerificationResults,
-	runWithTypecheckGuard,
-} from "../core/verify.ts";
+import { printVerificationResults } from "../core/verify.ts";
 import { filterToWorkspaceBoundary } from "../core/workspace.ts";
 import type { TransformRule } from "../types/transform.ts";
 import type { MutatingCommandOptions } from "../types.ts";
@@ -76,9 +69,6 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 	const absoluteSource = path.resolve(source);
 	const absoluteTarget = path.resolve(target);
 
-	// Guard: refuse to mutate a dirty worktree unless --force
-	await ensureCleanWorktree(path.dirname(absoluteSource), force, dryRun);
-
 	const context = await setupCommandContext({
 		project: projectArg,
 		searchPath: path.dirname(absoluteSource),
@@ -135,11 +125,6 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 			process.exit(1);
 		}
 	}
-	const journalContext = await prepareOperationJournal(
-		project.rootDir,
-		journal && !dryRun
-	);
-
 	if (!json) {
 		logger.info(`\n${dryRun ? "🔍 Dry run:" : "🚀"} Moving module...`);
 		logger.info(`   From: ${absoluteSource}`);
@@ -153,64 +138,84 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 		logger.empty();
 	}
 
-	const runMove = async () => {
-		const moveResult = await executeMoveModule(
-			absoluteSource,
-			absoluteTarget,
-			project,
-			dryRun,
-			json ? false : verbose,
-			workspace ?? undefined,
-			force,
-			transformRules,
-			prefer,
-			extensions
-		);
-
-		// For cross-package moves, run build scripts to update dist/. Keep this
-		// inside the verification guard so the after-check sees the final state.
-		if (!dryRun && moveResult.success && workspace) {
-			const isCrossPackage = isCrossPackageMove(
+	const outcome = await runMutation({
+		apply: async () => {
+			const moveResult = await executeMoveModule(
 				absoluteSource,
 				absoluteTarget,
-				workspace
+				project,
+				dryRun,
+				json ? false : verbose,
+				workspace ?? undefined,
+				force,
+				transformRules,
+				prefer,
+				extensions
 			);
-			if (isCrossPackage) {
-				await rebuildMovedPackages(
+
+			// For cross-package moves, run build scripts to update dist/. Keep this
+			// inside the verification guard so the after-check sees the final state.
+			if (!dryRun && moveResult.success && workspace) {
+				const isCrossPackage = isCrossPackageMove(
 					absoluteSource,
 					absoluteTarget,
-					workspace,
-					json ? false : verbose
+					workspace
 				);
+				if (isCrossPackage) {
+					await rebuildMovedPackages(
+						absoluteSource,
+						absoluteTarget,
+						workspace,
+						json ? false : verbose
+					);
+				}
 			}
-		}
 
-		return moveResult;
-	};
-	const { result, delta } =
-		verify && !dryRun
-			? await runWithTypecheckGuard(project, runMove, {
-					// Errors pre-existing on the source file re-report at the
-					// destination path after the move; translate so they match
-					// the "before" snapshot instead of counting as new (#128).
-					translateBeforeFile: (file) =>
-						normalizePath(file) === normalizePath(absoluteSource)
-							? normalizePath(absoluteTarget)
-							: file,
-				})
-			: { result: await runMove(), delta: undefined };
+			return moveResult;
+		},
+		dryRun,
+		force,
+		guardDir: path.dirname(absoluteSource),
+		isApplySuccessful: (moveResult) => moveResult.success,
+		journalDetails: {
+			args: {
+				prefer: prefer ?? null,
+				source: path.relative(project.rootDir, absoluteSource),
+				target: path.relative(project.rootDir, absoluteTarget),
+				transform: options.transform ?? null,
+			},
+			command: "move",
+			movedFiles: [{ from: absoluteSource, to: absoluteTarget }],
+		},
+		journalEnabled: journal,
+		operation: "move",
+		project,
+		// Transform moves roll back on verification failure; plain moves are a
+		// deliberate leave-applied policy so the user can inspect or revert them
+		// explicitly (move.ts historical behaviour, now pipeline config).
+		rollbackStrategy: async (moveResult) =>
+			(moveResult.transformRewrites?.length ?? 0) > 0
+				? rollbackFailedMove(project, moveResult)
+				: Promise.resolve(false),
+		translateBeforeFile: translateMovedFile(absoluteSource, absoluteTarget),
+		verify: verify ? "rollback" : "none",
+	});
+	if (outcome.blocked || !outcome.result) {
+		logger.error(
+			"Error: working tree has uncommitted changes. " +
+				"Commit or stash your changes first, or rerun with --force to proceed anyway."
+		);
+		process.exit(1);
+	}
+	const { delta, journalEntry, rolledBack, success } = outcome;
+	const result = outcome.result;
 
-	let verificationFailed = false;
 	if (delta && result.success) {
 		if (!json) {
 			printVerificationResults(delta);
 		}
 		if (!delta.success) {
-			verificationFailed = true;
 			const transformed = (result.transformRewrites?.length ?? 0) > 0;
-			const rolledBack = transformed
-				? await rollbackFailedMove(project, result)
-				: false;
 			let verificationFailureMessage =
 				"\n⚠️  Move completed but introduced new type errors. Plain moves are left in place so you can inspect or revert them explicitly.";
 			if (delta.verificationIncomplete) {
@@ -228,19 +233,6 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 			}
 		}
 	}
-	const journalEntry =
-		result.success && !verificationFailed && !dryRun
-			? await completeOperationJournal(journalContext, {
-					args: {
-						prefer: prefer ?? null,
-						source: path.relative(project.rootDir, absoluteSource),
-						target: path.relative(project.rootDir, absoluteTarget),
-						transform: options.transform ?? null,
-					},
-					command: "move",
-					movedFiles: [{ from: absoluteSource, to: absoluteTarget }],
-				})
-			: null;
 
 	if (json) {
 		const root = project.rootDir;
@@ -270,7 +262,7 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 				2
 			)
 		);
-		if (!(result.success && !verificationFailed)) {
+		if (!success) {
 			process.exit(1);
 		}
 		return;

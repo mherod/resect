@@ -47,9 +47,8 @@ import {
 	completeOperationJournal,
 	prepareOperationJournal,
 } from "../core/journal.ts";
-import { runMutation } from "../core/mutation-pipeline.ts";
+import { runMutation, translateMovedFile } from "../core/mutation-pipeline.ts";
 import { loadProject, resolveTsConfig } from "../core/project.ts";
-import { normalizePath } from "../core/resolver.ts";
 import { serializeStructuredEdits } from "../core/text-changes.ts";
 import { loadTransformConfig } from "../core/transform-config.ts";
 import {
@@ -58,6 +57,7 @@ import {
 } from "../core/verify.ts";
 import { discoverWorkspace } from "../core/workspace.ts";
 import type { InlineConflict, InlineRewrite } from "../types/inline.ts";
+import type { MoveResult } from "../types/move.ts";
 import type { TransformRule } from "../types/transform.ts";
 import {
 	checkWorktree,
@@ -135,17 +135,7 @@ export async function moveTool(args: {
 		return tsconfigNotFound(absoluteSource);
 	}
 	const project = loadProject(tsconfigPath, absoluteSource);
-
-	const wt = await checkWorktree(project.rootDir, args.force);
-	if (wt.blocked) {
-		return errorText(WORKTREE_BLOCKED_MESSAGE);
-	}
-
 	const workspace = (await discoverWorkspace(project.rootDir)) ?? undefined;
-	const journalContext = await prepareOperationJournal(
-		project.rootDir,
-		(args.journal ?? false) && !args.dryRun
-	);
 
 	// Load the declarative transform config (epic #103, slice A) before the move
 	// runs so a missing/malformed config fails fast and writes nothing.
@@ -179,52 +169,47 @@ export async function moveTool(args: {
 			args.extensions
 		);
 
-	const shouldVerify = args.verify && !args.dryRun;
-	const { result, delta } = shouldVerify
-		? await runWithTypecheckGuard(project, runMove, {
-				// Errors pre-existing on the source file re-report at the
-				// destination path after the move; match the CLI's translation so
-				// MCP verification compares the same diagnostic identity (#210).
-				translateBeforeFile: (file) =>
-					normalizePath(file) === normalizePath(absoluteSource)
-						? normalizePath(absoluteTarget)
-						: file,
-			})
-		: { result: await runMove(), delta: undefined };
-
-	// #103 C: a transform move whose post-move verify introduced new type errors
-	// is rolled back, mirroring the CLI. Plain moves keep the report-only delta.
-	let transformRolledBack = false;
-	if (
-		shouldVerify &&
-		delta &&
-		(result.transformRewrites?.length ?? 0) > 0 &&
-		(delta.newErrors.length > 0 || delta.verificationIncomplete)
-	) {
-		transformRolledBack = await rollbackTransformMove(project, result);
+	const outcome = await runMutation<MoveResult>({
+		apply: runMove,
+		blockDirtyDryRun: true,
+		dryRun: args.dryRun,
+		force: args.force,
+		guardDir: project.rootDir,
+		isApplySuccessful: (moveResult) => moveResult.success,
+		journalDetails: {
+			args: {
+				prefer: args.prefer ?? null,
+				source: path.relative(project.rootDir, absoluteSource),
+				target: path.relative(project.rootDir, absoluteTarget),
+				transform: args.transform ?? null,
+			},
+			command: "move",
+			movedFiles: [{ from: absoluteSource, to: absoluteTarget }],
+		},
+		journalEnabled: args.journal ?? false,
+		operation: "move",
+		project,
+		// #103 C: a transform move whose post-move verify introduced new type
+		// errors is rolled back, mirroring the CLI. Plain moves keep the
+		// report-only delta (leave-applied), expressed here as a no-op strategy.
+		rollbackStrategy: async (moveResult) =>
+			(moveResult.transformRewrites?.length ?? 0) > 0
+				? rollbackTransformMove(project, moveResult)
+				: Promise.resolve(false),
+		translateBeforeFile: translateMovedFile(absoluteSource, absoluteTarget),
+		verify: args.verify ? "rollback" : "none",
+	});
+	if (outcome.blocked || !outcome.result) {
+		return errorText(WORKTREE_BLOCKED_MESSAGE);
 	}
-	const journalEntry =
-		result.success &&
-		!args.dryRun &&
-		!transformRolledBack &&
-		(delta?.success ?? true)
-			? await completeOperationJournal(journalContext, {
-					args: {
-						prefer: args.prefer ?? null,
-						source: path.relative(project.rootDir, absoluteSource),
-						target: path.relative(project.rootDir, absoluteTarget),
-						transform: args.transform ?? null,
-					},
-					command: "move",
-					movedFiles: [{ from: absoluteSource, to: absoluteTarget }],
-				})
-			: null;
+	const { delta, journalEntry, rolledBack: transformRolledBack } = outcome;
+	const result = outcome.result;
 
 	const root = project.rootDir;
 	return jsonText({
 		dryRun: args.dryRun,
 		force: args.force,
-		worktreeDirty: wt.dirty,
+		worktreeDirty: outcome.dirty,
 		success: result.success,
 		movedFile: {
 			from: path.relative(root, result.movedFile.from),

@@ -287,6 +287,66 @@ describe("runMutation contract", () => {
 		expect(events).toEqual(["guard:/fake/project/src"]);
 	});
 
+	test("rollbackRequiresApplySuccess:false rolls back even when isApplySuccessful is false", async () => {
+		// move-batch: a partially-failed batch still rolls back the items that
+		// did apply when verification finds new errors (#225).
+		const { baseOptions, dependencies, events } = makeRig({
+			delta: {
+				newErrors: ["src/a.ts(1,1): error TS2322: boom"],
+				success: false,
+			},
+		});
+
+		const outcome = await runMutation(
+			{
+				...baseOptions,
+				isApplySuccessful: () => false,
+				rollbackRequiresApplySuccess: false,
+			},
+			dependencies
+		);
+
+		expect(events).toContain("rollback");
+		expect(outcome.rolledBack).toBe(true);
+		expect(outcome.success).toBe(false);
+	});
+
+	test("rollbackRequiresApplySuccess defaults to true: no rollback when apply itself failed", async () => {
+		const { baseOptions, dependencies, events } = makeRig({
+			delta: {
+				newErrors: ["src/a.ts(1,1): error TS2322: boom"],
+				success: false,
+			},
+		});
+
+		const outcome = await runMutation(
+			{ ...baseOptions, isApplySuccessful: () => false },
+			dependencies
+		);
+
+		expect(events).not.toContain("rollback");
+		expect(outcome.rolledBack).toBe(false);
+	});
+
+	test("a function journalDetails receives the apply result", async () => {
+		const { baseOptions, dependencies } = makeRig();
+		let receivedResult: unknown;
+
+		const outcome = await runMutation(
+			{
+				...baseOptions,
+				journalDetails: (result) => {
+					receivedResult = result;
+					return { args: {}, command: "test-op" };
+				},
+			},
+			dependencies
+		);
+
+		expect(outcome.success).toBe(true);
+		expect(receivedResult).toEqual({ success: true });
+	});
+
 	test("a null rollback strategy leaves changes applied on failed verification", async () => {
 		const { baseOptions, dependencies, events } = makeRig({
 			delta: {
