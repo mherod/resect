@@ -1,15 +1,13 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
 import ts from "../core/ast-utils.ts";
-import {
-	ensureCleanWorktree,
-	ensureRollbackSafeWorktree,
-} from "../core/git.ts";
+import { checkRollbackSafeWorktree } from "../core/git.ts";
 import {
 	buildProjectGraphs,
 	mergeDependencyGraphs,
 	withGraphSourceFile,
 } from "../core/graph.ts";
+import { runMutation } from "../core/mutation-pipeline.ts";
 import {
 	calculateRelativeSpecifier,
 	findAliasForPath,
@@ -28,7 +26,7 @@ import type { ProjectConfig } from "../types.ts";
 import {
 	type AliasChange,
 	applyChanges,
-	applyChangesWithVerification,
+	rollbackAliasChanges,
 } from "./alias.ts";
 import { setupCommandContext } from "./command-context.ts";
 
@@ -179,8 +177,9 @@ function getCanonicalResolvedPathForRef(
 
 /**
  * Pure compute seam: analyses the barrel and builds the rewrite plan.
- * No file I/O is performed; call `applyChanges` / `applyChangesWithVerification`
- * to materialise the rewrites.
+ * No file I/O is performed; call `applyChanges` directly, or route through
+ * `runMutation` (as `inlineCommand`/`inlineTool` do) to materialise the
+ * rewrites with the guard/journal/verify/rollback sequence applied.
  */
 export async function inlineBarrel(
 	barrelFile: string,
@@ -514,20 +513,22 @@ export async function inlineCommand(options: InlineOptions): Promise<void> {
 		verbose = false,
 		verify = true,
 		json = false,
+		journal = false,
 		project: projectArg,
 	} = options;
 
 	const absolute = path.resolve(barrelFile);
 
-	const rollbackSafety = verify
-		? await ensureRollbackSafeWorktree(path.dirname(absolute), {
-				force,
-				dryRun,
-				operation: "inline",
-			})
-		: undefined;
-	if (!rollbackSafety) {
-		await ensureCleanWorktree(path.dirname(absolute), force, dryRun);
+	const guard = await checkRollbackSafeWorktree(path.dirname(absolute), {
+		force,
+		dryRun,
+	});
+	if (guard.blocked) {
+		logger.error(
+			"Error: working tree has uncommitted changes. " +
+				"Commit or stash your changes first, or rerun with --force to proceed anyway."
+		);
+		process.exit(1);
 	}
 
 	const context = await setupCommandContext({
@@ -598,28 +599,47 @@ export async function inlineCommand(options: InlineOptions): Promise<void> {
 		return;
 	}
 
-	if (verify) {
-		const verifyResult = await applyChangesWithVerification(
-			changes,
+	const outcome = await runMutation<void>(
+		{
+			apply: async () => {
+				await applyChanges(changes);
+			},
+			dryRun,
+			force,
+			guardDir: path.dirname(absolute),
+			journalDetails: {
+				args: { barrelFile: path.relative(project.rootDir, absolute) },
+				command: "inline",
+			},
+			journalEnabled: journal,
+			operation: "inline",
 			project,
-			rollbackSafety
-		);
-		// Update filesChanged after actual apply
-		result.filesChanged = new Set(changes.map((c) => c.file)).size;
-		printInlineResults(result, verbose, project.rootDir);
+			rollbackStrategy: async () =>
+				rollbackAliasChanges(
+					project.rootDir,
+					changes.map((c) => c.file)
+				),
+			verify: verify ? "rollback" : "none",
+		},
+		{ checkRollbackSafeWorktree: async () => Promise.resolve(guard) }
+	);
+
+	// Update filesChanged after actual apply
+	result.filesChanged = new Set(changes.map((c) => c.file)).size;
+	printInlineResults(result, verbose, project.rootDir);
+	if (outcome.delta) {
 		logger.empty();
-		printVerificationResults(verifyResult);
-		if (!verifyResult.success) {
+		printVerificationResults(outcome.delta);
+		if (!outcome.delta.success) {
 			logger.error(
-				verifyResult.rolledBack
+				outcome.rolledBack
 					? "\nType checking failed. Inline changes were rolled back."
 					: "\nType checking failed. Inline changes remain applied because rollback was disabled (--force on dirty tree)."
 			);
 			process.exit(1);
 		}
-	} else {
-		await applyChanges(changes);
-		result.filesChanged = new Set(changes.map((c) => c.file)).size;
-		printInlineResults(result, verbose, project.rootDir);
+	}
+	if (outcome.journalEntry) {
+		logger.info(`Journaled operation ${outcome.journalEntry.id}`);
 	}
 }

@@ -709,6 +709,7 @@ Arguments:
 Options:
   -n, --dry-run   Preview changes without modifying files
   --force         Allow operation when git worktree has uncommitted changes
+  --journal       Record the applied operation for a later resect undo
   --verify        Enable type checking verification, overriding project config
   --no-verify     Disable type checking verification (enabled by default)
   --verbose       Show detailed information about each change
@@ -731,7 +732,7 @@ Examples:
   ${CLI_NAME} inline src/api/index.ts --no-verify
 `,
 		mcpDescription:
-			"Inline a pure re-export barrel: rewrite all importers to import directly from the canonical source(s), removing the barrel indirection at call sites. The barrel file itself is left in place. The barrel must be a 'pure re-export barrel' — every top-level statement must be an `export … from '…'` statement. Namespace imports (`import * as x`), dynamic imports, and multi-source barrels (re-exports from >1 canonical source) are skipped with a warning. Defaults to `dryRun: true` so callers preview the change first; when `dryRun: false` and `verify: true` (both default) runs `tsc --noEmit` before AND after and returns the diagnostic delta. A dirty worktree is returned as an error unless `force: true`.",
+			"Inline a pure re-export barrel: rewrite all importers to import directly from the canonical source(s), removing the barrel indirection at call sites. The barrel file itself is left in place. The barrel must be a 'pure re-export barrel' — every top-level statement must be an `export … from '…'` statement. Namespace imports (`import * as x`), dynamic imports, and multi-source barrels (re-exports from >1 canonical source) are skipped with a warning. Defaults to `dryRun: true` so callers preview the change first; when `dryRun: false` and `verify: true` (both default) runs `tsc --noEmit` before AND after and returns the diagnostic delta. A dirty worktree is returned as an error unless `force: true`. Set `journal: true` to record the applied operation for a later resect undo.",
 	},
 	{
 		name: "unused",

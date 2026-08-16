@@ -623,6 +623,12 @@ export function registerMutationTools(server: McpServer): void {
 					.describe(
 						"Override the dirty-worktree guard (default false). Use with care — the guard prevents data loss on a clean commit boundary"
 					),
+				journal: z
+					.boolean()
+					.optional()
+					.describe(
+						"Record an applied inline in `.resect/history.json` for a later undo"
+					),
 				verify: z
 					.boolean()
 					.optional()
@@ -631,7 +637,7 @@ export function registerMutationTools(server: McpServer): void {
 					),
 			},
 		},
-		async ({ barrelFile, project, dryRun, force, verify }) => {
+		async ({ barrelFile, project, dryRun, force, journal, verify }) => {
 			return withErrorHandling(async () => {
 				const defaults = await mcpConfig("inline");
 				return inlineTool({
@@ -639,6 +645,7 @@ export function registerMutationTools(server: McpServer): void {
 					project,
 					dryRun: dryRun ?? true,
 					force: force ?? false,
+					journal: journal ?? false,
 					verify: verify ?? defaults.verify ?? true,
 				});
 			});

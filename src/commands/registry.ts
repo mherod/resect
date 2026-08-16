@@ -929,6 +929,7 @@ export const COMMANDS: CommandDef[] = [
 		options: [
 			"dry-run",
 			"force",
+			"journal",
 			"verbose",
 			"verify",
 			"no-verify",
@@ -941,6 +942,7 @@ export const COMMANDS: CommandDef[] = [
 				barrelFile,
 				dryRun: values["dry-run"],
 				force: values.force,
+				journal: values.journal,
 				verbose: values.verbose,
 				verify: !values["no-verify"],
 				project: values.project,

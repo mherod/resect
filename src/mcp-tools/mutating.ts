@@ -1,9 +1,12 @@
 /**
  * Mutating resect MCP tool implementations.
  *
- * Every tool here can write to the worktree, so each one goes through the
- * shared `checkWorktree` guard before applying changes and honours the
- * `dryRun: true` default enforced by its registration. Registrations live in
+ * Every tool here can write to the worktree, so each one goes through a
+ * dirty-worktree guard before applying changes and honours the `dryRun: true`
+ * default enforced by its registration. `moveTool`, `renameTool`, `aliasTool`,
+ * and `inlineTool` route guard/journal/verify/rollback through the shared
+ * `runMutation` pipeline (#221, #226); `moveBatchTool` and `extractCommonTool`
+ * still compose their own primitives (#227/#228). Registrations live in
  * `src/mcp-server.ts`; this module must not import it (#186), keeping the
  * dependency direction one-way exactly as `./read-only.ts` does.
  *
@@ -18,11 +21,11 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
 	type AliasResult,
 	applyChanges as applyAliasChanges,
-	applyChangesWithVerification as applyAliasChangesWithVerification,
 	normalizeImports,
 	parseSpecifierRenames,
 	planAliasEdits,
 	renameImportSpecifiers,
+	rollbackAliasChanges,
 } from "../commands/alias.ts";
 import { setupCommandContext } from "../commands/command-context.ts";
 import { runExtractCommon } from "../commands/extract-common.ts";
@@ -42,12 +45,17 @@ import {
 	renameSymbol,
 	rollbackRenameChanges,
 } from "../commands/rename.ts";
-import { getRollbackSafety, isWorktreeDirty } from "../core/git.ts";
 import {
-	completeOperationJournal,
-	prepareOperationJournal,
-} from "../core/journal.ts";
-import { runMutation, translateMovedFile } from "../core/mutation-pipeline.ts";
+	checkRollbackSafeWorktree,
+	getRollbackSafety,
+	isWorktreeDirty,
+} from "../core/git.ts";
+import {
+	type MutationOutcome,
+	type MutationVerifyPolicy,
+	runMutation,
+	translateMovedFile,
+} from "../core/mutation-pipeline.ts";
 import { loadProject, resolveTsConfig } from "../core/project.ts";
 import { serializeStructuredEdits } from "../core/text-changes.ts";
 import { loadTransformConfig } from "../core/transform-config.ts";
@@ -60,7 +68,6 @@ import type { InlineConflict, InlineRewrite } from "../types/inline.ts";
 import type { MoveResult } from "../types/move.ts";
 import type { TransformRule } from "../types/transform.ts";
 import {
-	checkWorktree,
 	errorText,
 	jsonText,
 	tsconfigNotFound,
@@ -369,14 +376,14 @@ export async function aliasTool(args: {
 	}
 	const project = loadProject(tsconfigPath);
 
-	const wt = await checkWorktree(project.rootDir, args.force);
-	if (wt.blocked) {
+	const guard = await checkRollbackSafeWorktree(project.rootDir, {
+		blockDirtyDryRun: true,
+		dryRun: args.dryRun,
+		force: args.force,
+	});
+	if (guard.blocked) {
 		return errorText(WORKTREE_BLOCKED_MESSAGE);
 	}
-	const journalContext = await prepareOperationJournal(
-		project.rootDir,
-		(args.journal ?? false) && !args.dryRun
-	);
 
 	const renames = parseSpecifierRenames(args.renameSpecifiers ?? []);
 	if (renames.length === 0 && !args.prefer) {
@@ -394,59 +401,58 @@ export async function aliasTool(args: {
 	result.edits =
 		result.conflicts.length === 0 ? await planAliasEdits(result.changes) : [];
 
-	let delta: VerificationResult | undefined;
-	let rolledBack = false;
+	// Rename-specifier mode rolls back on new errors; prefer/normalize mode only
+	// ever reports (unchanged from the pre-pipeline behavior of each).
+	const isRenameSpecifierMode = renames.length > 0;
+	let verifyPolicy: MutationVerifyPolicy = "none";
+	if (args.verify) {
+		verifyPolicy = isRenameSpecifierMode ? "rollback" : "report";
+	}
+	let outcome: MutationOutcome<void> | undefined;
 	if (
 		!args.dryRun &&
 		result.changes.length > 0 &&
 		result.conflicts.length === 0
 	) {
-		if (args.verify && renames.length > 0) {
-			const rollbackSafety = getRollbackSafety({
-				dirty: wt.dirty,
-				force: args.force,
+		outcome = await runMutation<void>(
+			{
+				apply: async () => {
+					await applyAliasChanges(result.changes);
+				},
 				dryRun: args.dryRun,
-			});
-			const verification = await applyAliasChangesWithVerification(
-				result.changes,
-				project,
-				rollbackSafety
-			);
-			delta = verification;
-			rolledBack = verification.rolledBack ?? false;
-		} else {
-			const guarded = args.verify
-				? await runWithTypecheckGuard(project, async () =>
-						applyAliasChanges(result.changes)
-					)
-				: { delta: undefined };
-			delta = guarded.delta;
-			if (!args.verify) {
-				await applyAliasChanges(result.changes);
-			}
-		}
-	}
-
-	const root = project.rootDir;
-	const journalEntry =
-		!args.dryRun &&
-		result.changes.length > 0 &&
-		result.conflicts.length === 0 &&
-		!rolledBack &&
-		(delta?.success ?? true)
-			? await completeOperationJournal(journalContext, {
+				force: args.force,
+				guardDir: project.rootDir,
+				journalDetails: {
 					args: {
 						prefer: args.prefer ?? null,
 						renameSpecifiers: args.renameSpecifiers ?? [],
 						target: path.relative(project.rootDir, absoluteTarget),
 					},
 					command: "alias",
-				})
-			: null;
+				},
+				journalEnabled: args.journal ?? false,
+				operation: "alias",
+				project,
+				rollbackStrategy: isRenameSpecifierMode
+					? async () =>
+							rollbackAliasChanges(
+								project.rootDir,
+								result.changes.map((c) => c.file)
+							)
+					: null,
+				verify: verifyPolicy,
+			},
+			{ checkRollbackSafeWorktree: async () => Promise.resolve(guard) }
+		);
+	}
+
+	const delta = outcome?.delta;
+	const rolledBack = outcome?.rolledBack ?? false;
+	const root = project.rootDir;
 	return jsonText({
 		dryRun: args.dryRun,
 		force: args.force,
-		worktreeDirty: wt.dirty,
+		worktreeDirty: guard.dirty,
 		success:
 			result.conflicts.length === 0 && !rolledBack && (delta?.success ?? true),
 		strategy: renames.length > 0 ? "rename-specifier" : args.prefer,
@@ -480,7 +486,7 @@ export async function aliasTool(args: {
 			to: m.to,
 		})),
 		typecheck: delta,
-		journalEntryId: journalEntry?.id,
+		journalEntryId: outcome?.journalEntry?.id,
 	});
 }
 
@@ -582,6 +588,7 @@ export async function inlineTool(args: {
 	project?: string;
 	dryRun: boolean;
 	force: boolean;
+	journal?: boolean;
 	verify: boolean;
 }): Promise<CallToolResult> {
 	const absoluteBarrel = path.resolve(args.barrelFile);
@@ -591,8 +598,12 @@ export async function inlineTool(args: {
 	}
 	const project = loadProject(tsconfigPath, absoluteBarrel);
 
-	const wt = await checkWorktree(project.rootDir, args.force);
-	if (wt.blocked) {
+	const guard = await checkRollbackSafeWorktree(project.rootDir, {
+		blockDirtyDryRun: true,
+		dryRun: args.dryRun,
+		force: args.force,
+	});
+	if (guard.blocked) {
 		return errorText(WORKTREE_BLOCKED_MESSAGE);
 	}
 
@@ -601,32 +612,41 @@ export async function inlineTool(args: {
 		force: args.force,
 	});
 
-	let delta: VerificationResult | undefined;
-	let rolledBack = false;
+	let outcome: MutationOutcome<void> | undefined;
 	if (!args.dryRun && result.isPureBarrel && changes.length > 0) {
-		if (args.verify) {
-			const rollbackSafety = getRollbackSafety({
-				dirty: wt.dirty,
-				force: args.force,
+		outcome = await runMutation<void>(
+			{
+				apply: async () => {
+					await applyAliasChanges(changes);
+				},
 				dryRun: args.dryRun,
-			});
-			const verification = await applyAliasChangesWithVerification(
-				changes,
+				force: args.force,
+				guardDir: project.rootDir,
+				journalDetails: {
+					args: { barrelFile: path.relative(project.rootDir, absoluteBarrel) },
+					command: "inline",
+				},
+				journalEnabled: args.journal ?? false,
+				operation: "inline",
 				project,
-				rollbackSafety
-			);
-			delta = verification;
-			rolledBack = verification.rolledBack ?? false;
-		} else {
-			await applyAliasChanges(changes);
-		}
+				rollbackStrategy: async () =>
+					rollbackAliasChanges(
+						project.rootDir,
+						changes.map((c) => c.file)
+					),
+				verify: args.verify ? "rollback" : "none",
+			},
+			{ checkRollbackSafeWorktree: async () => Promise.resolve(guard) }
+		);
 	}
 
+	const delta = outcome?.delta;
+	const rolledBack = outcome?.rolledBack ?? false;
 	const root = project.rootDir;
 	return jsonText({
 		dryRun: args.dryRun,
 		force: args.force,
-		worktreeDirty: wt.dirty,
+		worktreeDirty: guard.dirty,
 		success:
 			result.isPureBarrel &&
 			result.conflicts.length === 0 &&
@@ -652,5 +672,6 @@ export async function inlineTool(args: {
 			reason: c.reason,
 		})),
 		typecheck: delta,
+		journalEntryId: outcome?.journalEntry?.id,
 	});
 }

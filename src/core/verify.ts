@@ -3,9 +3,11 @@ import path from "node:path";
 import { logger } from "../cli-logger.ts";
 import { getRuntime } from "../runtime/index.ts";
 import type { ProjectConfig } from "../types.ts";
+import { mapConcurrent } from "./concurrency.ts";
 import { TSC_ERROR_PATTERN, TSC_GLOBAL_ERROR_PATTERN } from "./constants.ts";
 import { diffDiagnostics } from "./diagnostics.ts";
 import { createProgram } from "./project.ts";
+import { normalizePath } from "./resolver.ts";
 import {
 	scanUnresolvableImports,
 	type UnresolvableDiagnostic,
@@ -159,6 +161,74 @@ export async function runWithTypecheckGuard<T>(
 			errorsAfter,
 			newErrors,
 			fixedErrors,
+			verificationIncomplete,
+		},
+	};
+}
+
+/**
+ * Multi-project sibling of `runWithTypecheckGuard`, for a mutation whose
+ * writes can span several tsconfigs at once (alias `--workspace`, #226).
+ * Runs before/after `tsc --noEmit` on every unique project concurrently,
+ * diffs each project's diagnostics independently (so `translateBeforeFile`
+ * still resolves relative to the right tsconfig), then flattens the deltas
+ * into one merged result.
+ */
+export async function runWithWorkspaceTypecheckGuard<T>(
+	projects: readonly ProjectConfig[],
+	applyChanges: () => Promise<T>,
+	options?: { translateBeforeFile?: (file: string) => string }
+): Promise<{ result: T; delta: VerificationResult }> {
+	const uniqueProjects = [
+		...new Map(
+			projects.map((project) => [normalizePath(project.tsconfigPath), project])
+		).values(),
+	];
+	const before = await mapConcurrent(uniqueProjects, runTypeCheckDetailed);
+	const result = await applyChanges();
+	const after = await mapConcurrent(uniqueProjects, runTypeCheckDetailed);
+
+	const deltas = before.map((beforeResult, index) => {
+		const project = uniqueProjects[index];
+		const afterResult = after[index];
+		if (!(project && afterResult)) {
+			throw new Error(
+				"Workspace verification result count changed after apply"
+			);
+		}
+		const { newErrors, fixedErrors } = diffDiagnostics(
+			beforeResult.errors,
+			afterResult.errors,
+			{
+				resolveFile: (file) => resolveDiagnosticFile(project, file),
+				translateBeforeFile: options?.translateBeforeFile,
+			}
+		);
+		return {
+			errorsAfter: afterResult.errors,
+			errorsBefore: beforeResult.errors,
+			fixedErrors,
+			newErrors,
+			verificationIncomplete: beforeResult.incomplete || afterResult.incomplete,
+		};
+	});
+
+	const errorsBefore = deltas.flatMap((delta) => delta.errorsBefore);
+	const errorsAfter = deltas.flatMap((delta) => delta.errorsAfter);
+	const newErrors = deltas.flatMap((delta) => delta.newErrors);
+	const fixedErrors = deltas.flatMap((delta) => delta.fixedErrors);
+	const verificationIncomplete = deltas.some(
+		(delta) => delta.verificationIncomplete
+	);
+
+	return {
+		result,
+		delta: {
+			success: !verificationIncomplete && newErrors.length === 0,
+			errorsAfter,
+			errorsBefore,
+			fixedErrors,
+			newErrors,
 			verificationIncomplete,
 		},
 	};

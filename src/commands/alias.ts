@@ -2,16 +2,11 @@ import path from "node:path";
 import { logger } from "../cli-logger.ts";
 import ts from "../core/ast-utils.ts";
 import { mapConcurrent } from "../core/concurrency.ts";
-import { diffDiagnostics } from "../core/diagnostics.ts";
 import {
-	ensureCleanWorktree,
-	ensureRollbackSafeWorktree,
-	type RollbackSafety,
+	checkRollbackSafeWorktree,
+	type WorktreeGuardOutcome,
 } from "../core/git.ts";
-import {
-	completeOperationJournal,
-	prepareOperationJournal,
-} from "../core/journal.ts";
+import { runMutation } from "../core/mutation-pipeline.ts";
 import { createProgram, loadProject } from "../core/project.ts";
 import {
 	calculateRelativeSpecifier,
@@ -23,6 +18,7 @@ import {
 import {
 	createGitFilesRollbackStrategy,
 	createRollbackCheckpoint,
+	tryRestoreRollback,
 } from "../core/rollback.ts";
 import {
 	getDeclarationModuleSpecifier,
@@ -44,9 +40,8 @@ import {
 import { specifierEditsToTextChanges } from "../core/updater.ts";
 import {
 	printVerificationResults,
-	runTypeCheckDetailed,
+	runWithWorkspaceTypecheckGuard,
 	type VerificationResult,
-	verifyTypeChecking,
 } from "../core/verify.ts";
 import {
 	discoverWorkspace,
@@ -158,16 +153,19 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 	}
 	const isRenameMode = specifierRenames.length > 0;
 
-	const rollbackSafety =
-		verify && (isRenameMode || workspace)
-			? await ensureRollbackSafeWorktree(absoluteTarget, {
-					force,
-					dryRun,
-					operation: "alias",
-				})
-			: undefined;
-	if (!rollbackSafety) {
-		await ensureCleanWorktree(absoluteTarget, force, dryRun);
+	// One guard for all three modes (#221): computed once up front so early-exit
+	// reporting (no changes needed, conflicts found) never pays for a typecheck,
+	// then handed to runMutation via dependency injection so it isn't re-checked.
+	const guard = await checkRollbackSafeWorktree(absoluteTarget, {
+		force,
+		dryRun,
+	});
+	if (guard.blocked) {
+		logger.error(
+			"Error: working tree has uncommitted changes. " +
+				"Commit or stash your changes first, or rerun with --force to proceed anyway."
+		);
+		process.exit(1);
 	}
 
 	if (isRenameMode) {
@@ -178,13 +176,14 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 		await aliasRenameSpecifierCommand({
 			absoluteTarget,
 			dryRun,
+			force,
+			guard,
 			specifierRenames,
 			projectArg,
 			json,
 			verbose,
 			verify,
 			journal,
-			rollbackSafety,
 		});
 		return;
 	}
@@ -194,141 +193,20 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 		process.exit(1);
 	}
 
-	// Workspace mode: normalize imports across all packages
 	if (workspace) {
-		const wsDir = projectArg ? path.resolve(projectArg) : absoluteTarget;
-		const wsInfo = await discoverWorkspace(wsDir);
-		if (!wsInfo || wsInfo.packages.length === 0) {
-			logger.error("No workspace packages found.");
-			process.exit(1);
-		}
-		const journalContext = await prepareOperationJournal(
-			wsInfo.root,
-			journal && !dryRun
-		);
-
-		if (!json) {
-			logger.info(
-				`\n${dryRun ? "🔍 Dry run:" : "🔧"} Normalizing imports across ${wsInfo.packages.length} workspace package(s)...`
-			);
-			logger.info(`   Strategy: ${prefer}\n`);
-		}
-
-		const eligiblePkgs = wsInfo.packages.filter((pkg) => pkg.tsconfigPath);
-		const pkgResults = await mapConcurrent<
-			WorkspacePackage,
-			WorkspaceAliasPackageResult
-		>(
-			eligiblePkgs,
-			async (pkg) => {
-				const pkgProject = loadProject(pkg.tsconfigPath as string);
-				const pkgDir = pkg.srcDir ? path.join(pkg.path, pkg.srcDir) : pkg.path;
-				const pkgResult = normalizeImports(
-					pkgDir,
-					prefer,
-					pkgProject,
-					extensions
-				);
-				const bounded = pkgResult.changes.filter(
-					(c) => filterToWorkspaceBoundary([c.file], wsInfo.root).length > 0
-				);
-				return {
-					changes: bounded,
-					filesProcessed: pkgResult.filesProcessed,
-					project: pkgProject,
-				};
-			},
-			{
-				onError: (pkg) => {
-					if (verbose) {
-						logger.warn(`   Skipping ${pkg.name}: failed to load project`);
-					}
-					return {
-						changes: [] as AliasChange[],
-						filesProcessed: 0,
-						project: null,
-					};
-				},
-			}
-		);
-		const allChanges = pkgResults.flatMap((r) => r.changes);
-		const totalFiles = pkgResults.reduce((s, r) => s + r.filesProcessed, 0);
-
-		const result: AliasResult = {
-			filesProcessed: totalFiles,
-			importsUpdated: allChanges.length,
-			changes: allChanges,
-			conflicts: [],
-		};
-
-		if (result.changes.length === 0) {
-			if (json) {
-				printAliasResultJson(result, wsInfo.root);
-			} else {
-				logger.info(
-					"✨ No changes needed. All imports already follow the preferred style.\n"
-				);
-			}
-			return;
-		}
-
-		if (dryRun) {
-			result.edits = await planAliasEdits(result.changes);
-			if (json) {
-				printAliasResultJson(result, wsInfo.root);
-			} else {
-				printResults(result, dryRun, verbose, wsInfo.root);
-			}
-		} else {
-			const projects = pkgResults.flatMap(({ project }) =>
-				project ? [project] : []
-			);
-			const verifyResult = verify
-				? await applyChangesWithWorkspaceVerification(
-						result.changes,
-						projects,
-						wsInfo.root,
-						rollbackSafety
-					)
-				: undefined;
-			if (!verify) {
-				await applyChanges(result.changes);
-			}
-			const journalEntry =
-				(verifyResult?.success ?? true)
-					? await completeOperationJournal(journalContext, {
-							args: {
-								prefer,
-								target: path.relative(wsInfo.root, absoluteTarget),
-								workspace: true,
-							},
-							command: "alias",
-						})
-					: null;
-			if (json) {
-				printAliasResultJson(
-					result,
-					wsInfo.root,
-					verifyResult,
-					journalEntry?.id
-				);
-			} else {
-				printResults(result, dryRun, verbose, wsInfo.root);
-				if (verifyResult) {
-					logger.empty();
-					printVerificationResults(verifyResult);
-				}
-				if (journalEntry) {
-					logger.info(`Journaled operation ${journalEntry.id}`);
-				}
-			}
-			if (verifyResult && !verifyResult.success) {
-				logger.error(
-					aliasVerificationFailureMessage("Workspace alias", verifyResult)
-				);
-				process.exit(1);
-			}
-		}
+		await aliasWorkspaceCommand({
+			absoluteTarget,
+			dryRun,
+			extensions,
+			force,
+			guard,
+			journal,
+			json,
+			prefer,
+			projectArg,
+			verbose,
+			verify,
+		});
 		return;
 	}
 
@@ -342,10 +220,6 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 	}
 	const { project } = context;
 	warnIfExplicitExtensionsUnsupported(project, extensions);
-	const journalContext = await prepareOperationJournal(
-		project.rootDir,
-		journal && !dryRun
-	);
 
 	if (!json) {
 		logger.info(`\n${dryRun ? "🔍 Dry run:" : "🔧"} Normalizing imports...`);
@@ -370,7 +244,6 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 		return;
 	}
 
-	// Apply changes with optional verification
 	if (dryRun) {
 		result.edits = await planAliasEdits(result.changes);
 		if (json) {
@@ -378,81 +251,247 @@ export async function aliasCommand(options: AliasOptions): Promise<void> {
 		} else {
 			printResults(result, dryRun, verbose, project.rootDir);
 		}
-	} else if (verify) {
-		const verifyResult = await verifyTypeChecking(
+		return;
+	}
+
+	// `--prefer` mode never rolls back: a normalization pass that fails
+	// verification is reported, not restored (unchanged from the pre-pipeline
+	// behavior — this mode carried no rollback strategy before either).
+	const outcome = await runMutation<void>(
+		{
+			apply: async () => {
+				await applyChanges(result.changes);
+			},
+			dryRun,
+			force,
+			guardDir: absoluteTarget,
+			journalDetails: {
+				args: {
+					prefer,
+					target: path.relative(project.rootDir, absoluteTarget),
+				},
+				command: "alias",
+			},
+			journalEnabled: journal,
+			operation: "alias",
 			project,
-			() => {
-				// No snapshot needed
-			},
-			async () => applyChanges(result.changes)
+			verify: verify ? "report" : "none",
+		},
+		{ checkRollbackSafeWorktree: async () => Promise.resolve(guard) }
+	);
+
+	if (json) {
+		printAliasResultJson(
+			result,
+			project.rootDir,
+			outcome.delta,
+			outcome.journalEntry?.id
 		);
-
-		const journalEntry = verifyResult.success
-			? await completeOperationJournal(journalContext, {
-					args: {
-						prefer,
-						target: path.relative(project.rootDir, absoluteTarget),
-					},
-					command: "alias",
-				})
-			: null;
-		if (json) {
-			printAliasResultJson(
-				result,
-				project.rootDir,
-				verifyResult,
-				journalEntry?.id
-			);
-		} else {
-			printResults(result, dryRun, verbose, project.rootDir);
-			logger.empty();
-			printVerificationResults(verifyResult);
-			if (journalEntry) {
-				logger.info(`Journaled operation ${journalEntry.id}`);
-			}
-		}
-
-		if (!verifyResult.success) {
-			logger.error(
-				"\n⚠️  Type checking failed. Changes were applied but introduced errors."
-			);
-			process.exit(1);
-		}
 	} else {
-		await applyChanges(result.changes);
-		const journalEntry = await completeOperationJournal(journalContext, {
-			args: {
-				prefer,
-				target: path.relative(project.rootDir, absoluteTarget),
-			},
-			command: "alias",
-		});
-		if (json) {
-			printAliasResultJson(
-				result,
-				project.rootDir,
-				undefined,
-				journalEntry?.id
-			);
-		} else {
-			printResults(result, dryRun, verbose, project.rootDir);
-			if (journalEntry) {
-				logger.info(`Journaled operation ${journalEntry.id}`);
-			}
+		printResults(result, dryRun, verbose, project.rootDir);
+		if (outcome.delta) {
+			logger.empty();
+			printVerificationResults(outcome.delta);
 		}
+		if (outcome.journalEntry) {
+			logger.info(`Journaled operation ${outcome.journalEntry.id}`);
+		}
+	}
+
+	if (outcome.delta && !outcome.delta.success) {
+		logger.error(
+			"\n⚠️  Type checking failed. Changes were applied but introduced errors."
+		);
+		process.exit(1);
+	}
+}
+
+async function aliasWorkspaceCommand(options: {
+	absoluteTarget: string;
+	dryRun: boolean;
+	extensions?: ExtensionPolicy;
+	force: boolean;
+	guard: WorktreeGuardOutcome;
+	journal: boolean;
+	json: boolean;
+	prefer: "alias" | "relative" | "shortest";
+	projectArg?: string;
+	verbose: boolean;
+	verify: boolean;
+}): Promise<void> {
+	const wsDir = options.projectArg
+		? path.resolve(options.projectArg)
+		: options.absoluteTarget;
+	const wsInfo = await discoverWorkspace(wsDir);
+	if (!wsInfo || wsInfo.packages.length === 0) {
+		logger.error("No workspace packages found.");
+		process.exit(1);
+	}
+
+	if (!options.json) {
+		logger.info(
+			`\n${options.dryRun ? "🔍 Dry run:" : "🔧"} Normalizing imports across ${wsInfo.packages.length} workspace package(s)...`
+		);
+		logger.info(`   Strategy: ${options.prefer}\n`);
+	}
+
+	const eligiblePkgs = wsInfo.packages.filter((pkg) => pkg.tsconfigPath);
+	const pkgResults = await mapConcurrent<
+		WorkspacePackage,
+		WorkspaceAliasPackageResult
+	>(
+		eligiblePkgs,
+		async (pkg) => {
+			const pkgProject = loadProject(pkg.tsconfigPath as string);
+			const pkgDir = pkg.srcDir ? path.join(pkg.path, pkg.srcDir) : pkg.path;
+			const pkgResult = normalizeImports(
+				pkgDir,
+				options.prefer,
+				pkgProject,
+				options.extensions
+			);
+			const bounded = pkgResult.changes.filter(
+				(c) => filterToWorkspaceBoundary([c.file], wsInfo.root).length > 0
+			);
+			return {
+				changes: bounded,
+				filesProcessed: pkgResult.filesProcessed,
+				project: pkgProject,
+			};
+		},
+		{
+			onError: (pkg) => {
+				if (options.verbose) {
+					logger.warn(`   Skipping ${pkg.name}: failed to load project`);
+				}
+				return {
+					changes: [] as AliasChange[],
+					filesProcessed: 0,
+					project: null,
+				};
+			},
+		}
+	);
+	const allChanges = pkgResults.flatMap((r) => r.changes);
+	const totalFiles = pkgResults.reduce((s, r) => s + r.filesProcessed, 0);
+
+	const result: AliasResult = {
+		filesProcessed: totalFiles,
+		importsUpdated: allChanges.length,
+		changes: allChanges,
+		conflicts: [],
+	};
+
+	if (result.changes.length === 0) {
+		if (options.json) {
+			printAliasResultJson(result, wsInfo.root);
+		} else {
+			logger.info(
+				"✨ No changes needed. All imports already follow the preferred style.\n"
+			);
+		}
+		return;
+	}
+
+	if (options.dryRun) {
+		result.edits = await planAliasEdits(result.changes);
+		if (options.json) {
+			printAliasResultJson(result, wsInfo.root);
+		} else {
+			printResults(result, options.dryRun, options.verbose, wsInfo.root);
+		}
+		return;
+	}
+
+	const projects = pkgResults.flatMap(({ project }) =>
+		project ? [project] : []
+	);
+	const representativeProject = projects[0];
+	if (!representativeProject) {
+		// Unreachable: result.changes.length > 0 (checked above) only holds when
+		// at least one package produced changes with a successfully loaded project.
+		throw new Error(
+			"alias --workspace: no package project available to root the journal"
+		);
+	}
+	// The pipeline journals against `project.rootDir`; only that field is used
+	// here since verification is fully delegated to the workspace typecheck
+	// guard below, so borrowing one package's project (rootDir overridden to
+	// the actual workspace root) is safe and avoids a synthetic placeholder.
+	const journalProject: ProjectConfig = {
+		...representativeProject,
+		rootDir: wsInfo.root,
+	};
+
+	const outcome = await runMutation<void>(
+		{
+			apply: async () => {
+				await applyChanges(result.changes);
+			},
+			dryRun: options.dryRun,
+			force: options.force,
+			guardDir: options.absoluteTarget,
+			journalDetails: {
+				args: {
+					prefer: options.prefer,
+					target: path.relative(wsInfo.root, options.absoluteTarget),
+					workspace: true,
+				},
+				command: "alias",
+			},
+			journalEnabled: options.journal,
+			operation: "alias",
+			project: journalProject,
+			rollbackStrategy: async () =>
+				rollbackAliasChanges(
+					wsInfo.root,
+					result.changes.map((c) => c.file)
+				),
+			verify: options.verify ? "rollback" : "none",
+		},
+		{
+			checkRollbackSafeWorktree: async () => Promise.resolve(options.guard),
+			runWithTypecheckGuard: async (_project, apply, verifyOptions) =>
+				runWithWorkspaceTypecheckGuard(projects, apply, verifyOptions),
+		}
+	);
+
+	if (options.json) {
+		printAliasResultJson(
+			result,
+			wsInfo.root,
+			outcome.delta,
+			outcome.journalEntry?.id
+		);
+	} else {
+		printResults(result, options.dryRun, options.verbose, wsInfo.root);
+		if (outcome.delta) {
+			logger.empty();
+			printVerificationResults(outcome.delta);
+		}
+		if (outcome.journalEntry) {
+			logger.info(`Journaled operation ${outcome.journalEntry.id}`);
+		}
+	}
+	if (outcome.delta && !outcome.delta.success) {
+		logger.error(
+			aliasVerificationFailureMessage("Workspace alias", outcome.delta)
+		);
+		process.exit(1);
 	}
 }
 
 async function aliasRenameSpecifierCommand(options: {
 	absoluteTarget: string;
 	dryRun: boolean;
+	force: boolean;
+	guard: WorktreeGuardOutcome;
 	json: boolean;
 	specifierRenames: SpecifierRename[];
 	projectArg?: string;
 	verbose: boolean;
 	verify: boolean;
 	journal: boolean;
-	rollbackSafety?: RollbackSafety;
 }): Promise<void> {
 	const context = await setupCommandContext({
 		project: options.projectArg,
@@ -463,10 +502,6 @@ async function aliasRenameSpecifierCommand(options: {
 		process.exit(1);
 	}
 	const { project } = context;
-	const journalContext = await prepareOperationJournal(
-		project.rootDir,
-		options.journal && !options.dryRun
-	);
 	if (!options.json) {
 		logger.info(
 			`\n${options.dryRun ? "🔍 Dry run:" : "🔧"} Renaming import specifiers...`
@@ -526,65 +561,59 @@ async function aliasRenameSpecifierCommand(options: {
 		return;
 	}
 
-	if (options.verify) {
-		const verifyResult = await applyChangesWithVerification(
-			result.changes,
+	const outcome = await runMutation<void>(
+		{
+			apply: async () => {
+				await applyChanges(result.changes);
+			},
+			dryRun: options.dryRun,
+			force: options.force,
+			guardDir: options.absoluteTarget,
+			journalDetails: {
+				args: {
+					renameSpecifiers: options.specifierRenames.map(
+						(rename) => `${rename.from}=${rename.to}`
+					),
+					target: path.relative(project.rootDir, options.absoluteTarget),
+				},
+				command: "alias",
+			},
+			journalEnabled: options.journal,
+			operation: "alias",
 			project,
-			options.rollbackSafety
-		);
-		const journalEntry = verifyResult.success
-			? await completeOperationJournal(journalContext, {
-					args: {
-						renameSpecifiers: options.specifierRenames.map(
-							(rename) => `${rename.from}=${rename.to}`
-						),
-						target: path.relative(project.rootDir, options.absoluteTarget),
-					},
-					command: "alias",
-				})
-			: null;
-		if (options.json) {
-			printAliasResultJson(
-				result,
-				project.rootDir,
-				verifyResult,
-				journalEntry?.id
-			);
-		} else {
-			printResults(result, false, options.verbose, project.rootDir);
-			logger.empty();
-			printVerificationResults(verifyResult);
-			if (journalEntry) {
-				logger.info(`Journaled operation ${journalEntry.id}`);
-			}
-		}
-
-		if (!verifyResult.success) {
-			logger.error(
-				aliasVerificationFailureMessage("Specifier rename", verifyResult)
-			);
-			process.exit(1);
-		}
-		return;
-	}
-
-	await applyChanges(result.changes);
-	const journalEntry = await completeOperationJournal(journalContext, {
-		args: {
-			renameSpecifiers: options.specifierRenames.map(
-				(rename) => `${rename.from}=${rename.to}`
-			),
-			target: path.relative(project.rootDir, options.absoluteTarget),
+			rollbackStrategy: async () =>
+				rollbackAliasChanges(
+					project.rootDir,
+					result.changes.map((c) => c.file)
+				),
+			verify: options.verify ? "rollback" : "none",
 		},
-		command: "alias",
-	});
+		{ checkRollbackSafeWorktree: async () => Promise.resolve(options.guard) }
+	);
+
 	if (options.json) {
-		printAliasResultJson(result, project.rootDir, undefined, journalEntry?.id);
+		printAliasResultJson(
+			result,
+			project.rootDir,
+			outcome.delta,
+			outcome.journalEntry?.id
+		);
 	} else {
 		printResults(result, false, options.verbose, project.rootDir);
-		if (journalEntry) {
-			logger.info(`Journaled operation ${journalEntry.id}`);
+		if (outcome.delta) {
+			logger.empty();
+			printVerificationResults(outcome.delta);
 		}
+		if (outcome.journalEntry) {
+			logger.info(`Journaled operation ${outcome.journalEntry.id}`);
+		}
+	}
+
+	if (outcome.delta && !outcome.delta.success) {
+		logger.error(
+			aliasVerificationFailureMessage("Specifier rename", outcome.delta)
+		);
+		process.exit(1);
 	}
 }
 
@@ -841,85 +870,20 @@ export function renameImportSpecifiers(
 	};
 }
 
-export async function applyChangesWithVerification(
-	changes: AliasChange[],
-	project: ProjectConfig,
-	rollbackSafety?: RollbackSafety
-): Promise<VerificationResult> {
-	return applyChangesWithWorkspaceVerification(
-		changes,
-		[project],
-		project.rootDir,
-		rollbackSafety
+/**
+ * Restore files to their committed state after a failed post-apply verify.
+ * Safe because the pipeline's guard already guaranteed a clean worktree (or
+ * disabled this call entirely on a forced-dirty one) before `apply()` ran —
+ * shared by alias's rename-specifier and workspace modes, and by inline.
+ */
+export async function rollbackAliasChanges(
+	rootDir: string,
+	files: readonly string[]
+): Promise<boolean> {
+	const checkpoint = await createRollbackCheckpoint(
+		createGitFilesRollbackStrategy(rootDir, files)
 	);
-}
-
-async function applyChangesWithWorkspaceVerification(
-	changes: AliasChange[],
-	projects: ProjectConfig[],
-	rollbackRoot: string,
-	rollbackSafety: RollbackSafety = {
-		rollbackEnabled: true,
-		worktreeDirtyRollbackDisabled: false,
-	}
-): Promise<VerificationResult> {
-	const uniqueProjects = [
-		...new Map(
-			projects.map((project) => [normalizePath(project.tsconfigPath), project])
-		).values(),
-	];
-	const rollback = await createRollbackCheckpoint(
-		createGitFilesRollbackStrategy(
-			rollbackRoot,
-			changes.map((change) => change.file)
-		)
-	);
-	const before = await mapConcurrent(uniqueProjects, runTypeCheckDetailed);
-	await applyChanges(changes);
-	const after = await mapConcurrent(uniqueProjects, runTypeCheckDetailed);
-	const deltas = before.map((beforeResult, index) => {
-		const afterResult = after[index];
-		if (!afterResult) {
-			throw new Error(
-				"Workspace verification result count changed after apply"
-			);
-		}
-		const { newErrors, fixedErrors } = diffDiagnostics(
-			beforeResult.errors,
-			afterResult.errors
-		);
-		return {
-			errorsBefore: beforeResult.errors,
-			errorsAfter: afterResult.errors,
-			newErrors,
-			fixedErrors,
-			verificationIncomplete: beforeResult.incomplete || afterResult.incomplete,
-		};
-	});
-	const errorsBefore = deltas.flatMap((delta) => delta.errorsBefore);
-	const errorsAfter = deltas.flatMap((delta) => delta.errorsAfter);
-	const newErrors = deltas.flatMap((delta) => delta.newErrors);
-	const fixedErrors = deltas.flatMap((delta) => delta.fixedErrors);
-	const verificationIncomplete = deltas.some(
-		(delta) => delta.verificationIncomplete
-	);
-	const result: VerificationResult = {
-		success: newErrors.length === 0 && !verificationIncomplete,
-		errorsBefore,
-		errorsAfter,
-		newErrors,
-		fixedErrors,
-		verificationIncomplete,
-		rolledBack: false,
-		worktreeDirtyRollbackDisabled: rollbackSafety.worktreeDirtyRollbackDisabled,
-	};
-
-	if (!result.success && rollbackSafety.rollbackEnabled) {
-		await rollback.restore();
-		result.rolledBack = true;
-	}
-
-	return result;
+	return tryRestoreRollback(checkpoint);
 }
 
 function aliasVerificationFailureMessage(

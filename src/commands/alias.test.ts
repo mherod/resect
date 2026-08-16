@@ -11,7 +11,6 @@ import {
 import {
 	aliasCommand,
 	applyChanges,
-	applyChangesWithVerification,
 	parseSpecifierRenames,
 	renameImportSpecifiers,
 } from "./alias.ts";
@@ -167,7 +166,7 @@ describe("applyChanges — AST-targeted specifier replacement", () => {
 	});
 });
 
-describe("applyChangesWithVerification", () => {
+describe("alias rename-specifier — verify+rollback (via runMutation)", () => {
 	test("restores import edits when verification introduces an error", async () => {
 		const { dir, projectPath, srcDir } = await writeAliasProject({
 			"src/utils/foo.ts": "export const foo = 1;\n",
@@ -179,23 +178,28 @@ describe("applyChangesWithVerification", () => {
 		});
 		const consumerPath = path.join(srcDir, "consumer.ts");
 		const before = await Bun.file(consumerPath).text();
-		const project = loadProject(projectPath);
 
-		const result = await applyChangesWithVerification(
-			[
-				{
-					file: consumerPath,
-					line: 1,
-					oldSpecifier: "@utils/foo",
-					newSpecifier: "@utils/missing",
-					strategy: "alias",
-				},
-			],
-			project
-		);
+		const response = await aliasTool({
+			target: srcDir,
+			renameSpecifiers: ["@utils/foo=@utils/missing"],
+			project: projectPath,
+			dryRun: false,
+			force: false,
+			verify: true,
+		});
+		const content = response.content[0];
+		if (content?.type !== "text") {
+			throw new Error("Expected an MCP text result");
+		}
+		const payload = JSON.parse(content.text) as {
+			success: boolean;
+			rolledBack: boolean;
+			typecheck: { newErrors: string[] };
+		};
 
-		expect(result.success).toBe(false);
-		expect(result.newErrors.length).toBeGreaterThan(0);
+		expect(payload.success).toBe(false);
+		expect(payload.rolledBack).toBe(true);
+		expect(payload.typecheck.newErrors.length).toBeGreaterThan(0);
 		expect(await Bun.file(consumerPath).text()).toBe(before);
 	});
 
