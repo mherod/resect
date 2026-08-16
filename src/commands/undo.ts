@@ -1,12 +1,14 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
 import { diffDiagnostics } from "../core/diagnostics.ts";
-import { findGitRoot } from "../core/git.ts";
+import { findGitRoot, type WorktreeGuardOutcome } from "../core/git.ts";
 import {
 	markOperationJournalEntryUndone,
 	type OperationJournalEntry,
+	type UndoJournalResult,
 	undoJournalOperation,
 } from "../core/journal.ts";
+import { runMutation } from "../core/mutation-pipeline.ts";
 import { loadProject, resolveTsConfig } from "../core/project.ts";
 import {
 	createFileContentsRollbackStrategy,
@@ -18,6 +20,7 @@ import {
 	resolveDiagnosticFile,
 	runTypeCheckDetailed,
 	type TypeCheckOutcome,
+	type VerificationResult,
 } from "../core/verify.ts";
 import type { ProjectConfig } from "../types.ts";
 
@@ -83,40 +86,58 @@ const DEFAULT_DEPENDENCIES: UndoDependencies = {
 	undoJournalOperation,
 };
 
-function verificationResult(
-	project: ProjectConfig,
+/**
+ * Undo reverses a recorded operation, so a file's pre-existing diagnostics
+ * re-report at the path the operation moved them *from*. Mapping `to -> from`
+ * is the inverse of what a forward move passes, and is what keeps an inherited
+ * error from counting as newly introduced (#214).
+ */
+function reversedMoveTranslator(
 	repositoryRoot: string,
-	entry: OperationJournalEntry,
-	before: TypeCheckOutcome,
-	after: TypeCheckOutcome,
-	rolledBack: boolean
-): UndoVerification {
+	entry: OperationJournalEntry
+): (file: string) => string {
 	const reversedMoves = new Map(
 		entry.movedFiles.map((move) => [
 			path.normalize(path.resolve(repositoryRoot, move.to)),
 			path.normalize(path.resolve(repositoryRoot, move.from)),
 		])
 	);
-	const { newErrors, fixedErrors } = diffDiagnostics(
-		before.errors,
-		after.errors,
-		{
-			resolveFile: (file) => resolveDiagnosticFile(project, file),
-			translateBeforeFile: (file) => reversedMoves.get(file) ?? file,
-		}
-	);
-	const verificationIncomplete = before.incomplete || after.incomplete;
+	return (file) => reversedMoves.get(file) ?? file;
+}
+
+/** Project the pipeline's generic delta into undo's reported verification shape. */
+function undoVerification(
+	delta: VerificationResult,
+	rolledBack: boolean
+): UndoVerification {
 	return {
-		errors: [...newErrors],
-		errorsAfter: after.errors,
-		errorsBefore: before.errors,
-		fixedErrors,
-		newErrors,
-		success: newErrors.length === 0 && !verificationIncomplete,
-		verificationIncomplete,
+		errors: [...delta.newErrors],
+		errorsAfter: delta.errorsAfter,
+		errorsBefore: delta.errorsBefore,
+		fixedErrors: delta.fixedErrors,
+		newErrors: delta.newErrors,
+		success: delta.success,
+		verificationIncomplete: delta.verificationIncomplete,
 		rolledBack,
 	};
 }
+
+/**
+ * Undo's own worktree guard is `assertUndoState` inside `undoJournalOperation`,
+ * which refuses *unrelated* changes and diverged entry files while permitting
+ * the journaled operation's own files. The pipeline's generic dirty-worktree
+ * guard cannot be used here: a journaled operation's files are by definition
+ * modified relative to the entry's `baseRevision`, so a blanket dirty check
+ * would refuse every legitimate undo. Rollback stays enabled because undo's
+ * checkpoint restores file contents from memory — unlike `git restore` it
+ * cannot clobber unrelated uncommitted edits.
+ */
+const UNDO_GUARD_OWNED_BY_JOURNAL: WorktreeGuardOutcome = {
+	blocked: false,
+	dirty: false,
+	rollbackEnabled: true,
+	worktreeDirtyRollbackDisabled: false,
+};
 
 export async function executeUndo(
 	options: UndoOptions,
@@ -155,47 +176,94 @@ export async function executeUndo(
 	});
 	const repositoryRoot =
 		(await dependencies.findGitRoot(project.rootDir)) ?? project.rootDir;
-	const beforeTypecheck = await dependencies.runTypeCheckDetailed(project);
-	const rollback = await dependencies.createUndoRollback(
-		project.rootDir,
-		preview.restoredFiles
-	);
-	const undo = await dependencies.undoJournalOperation(project.rootDir, {
-		...undoOptions,
-		dryRun: false,
-		markUndone: false,
-	});
-	let typecheck: TypeCheckOutcome;
-	try {
-		typecheck = await dependencies.runTypeCheckDetailed(project);
-	} catch (error) {
-		const rolledBack = await tryRestoreRollback(rollback);
-		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(
-			rolledBack
-				? `Post-undo typecheck failed; the undo was rolled back: ${message}`
-				: `Post-undo typecheck failed and rollback also failed: ${message}`
-		);
-	}
-	let verification = verificationResult(
-		project,
-		repositoryRoot,
-		undo.entry,
-		beforeTypecheck,
-		typecheck,
-		false
-	);
-	if (!verification.success) {
-		const rolledBack = await tryRestoreRollback(rollback);
-		verification = verificationResult(
+
+	let rollback: RollbackCheckpoint<unknown> | undefined;
+	let undo: UndoJournalResult | undefined;
+
+	const outcome = await runMutation<void>(
+		{
+			apply: async () => {
+				rollback = await dependencies.createUndoRollback(
+					project.rootDir,
+					preview.restoredFiles
+				);
+				undo = await dependencies.undoJournalOperation(project.rootDir, {
+					...undoOptions,
+					dryRun: false,
+					markUndone: false,
+				});
+			},
+			dryRun: false,
+			force: options.force ?? false,
+			guardDir: project.rootDir,
+			journalEnabled: false,
+			operation: "undo",
 			project,
-			repositoryRoot,
-			undo.entry,
-			beforeTypecheck,
-			typecheck,
-			rolledBack
-		);
-		if (!rolledBack) {
+			rollbackStrategy: async () =>
+				rollback ? tryRestoreRollback(rollback) : false,
+			// The entry is selected by the dry-run preview above, so its moves are
+			// known before anything is applied.
+			translateBeforeFile: reversedMoveTranslator(
+				repositoryRoot,
+				preview.entry
+			),
+			verify: "rollback",
+		},
+		{
+			checkRollbackSafeWorktree: async () =>
+				Promise.resolve(UNDO_GUARD_OWNED_BY_JOURNAL),
+			// Undo keeps its own injectable typecheck seam (UndoDependencies), and
+			// must read `incomplete` straight off TypeCheckOutcome rather than
+			// re-deriving it from diagnostic strings — a caller can report an
+			// incomplete run alongside ordinary per-file diagnostics.
+			runWithTypecheckGuard: async (proj, apply, guardOptions) => {
+				const before = await dependencies.runTypeCheckDetailed(proj);
+				const result = await apply();
+				let after: TypeCheckOutcome;
+				try {
+					after = await dependencies.runTypeCheckDetailed(proj);
+				} catch (error) {
+					const rolledBack = rollback
+						? await tryRestoreRollback(rollback)
+						: false;
+					const message =
+						error instanceof Error ? error.message : String(error);
+					throw new Error(
+						rolledBack
+							? `Post-undo typecheck failed; the undo was rolled back: ${message}`
+							: `Post-undo typecheck failed and rollback also failed: ${message}`
+					);
+				}
+				const { newErrors, fixedErrors } = diffDiagnostics(
+					before.errors,
+					after.errors,
+					{
+						resolveFile: (file) => resolveDiagnosticFile(proj, file),
+						translateBeforeFile: guardOptions?.translateBeforeFile,
+					}
+				);
+				const verificationIncomplete = before.incomplete || after.incomplete;
+				return {
+					result,
+					delta: {
+						errorsAfter: after.errors,
+						errorsBefore: before.errors,
+						fixedErrors,
+						newErrors,
+						success: newErrors.length === 0 && !verificationIncomplete,
+						verificationIncomplete,
+					},
+				};
+			},
+		}
+	);
+
+	if (!(undo && outcome.delta)) {
+		throw new Error("Undo did not run to completion.");
+	}
+	const verification = undoVerification(outcome.delta, outcome.rolledBack);
+	if (!verification.success) {
+		if (!outcome.rolledBack) {
 			verification.errors.push(
 				"Post-undo verification failed and rollback also failed."
 			);
@@ -215,7 +283,10 @@ export async function executeUndo(
 			undo.entry.id
 		);
 	} catch (error) {
-		const rolledBack = await tryRestoreRollback(rollback);
+		// Third rollback trigger, and the one the pipeline cannot own: the undo
+		// verified cleanly but the journal could not be marked, so the restore
+		// happens after runMutation has already reported success.
+		const rolledBack = rollback ? await tryRestoreRollback(rollback) : false;
 		const message = error instanceof Error ? error.message : String(error);
 		throw new Error(
 			rolledBack

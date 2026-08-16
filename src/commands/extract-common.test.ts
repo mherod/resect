@@ -818,6 +818,10 @@ describe("extract-common --output duplicate guard", () => {
 			threshold: 0.95,
 			force: false,
 			dryRun: false,
+			// This block tests the duplicate-declaration guard, not verification.
+			// The fixture is an OS temp dir with no node_modules, so leaving verify
+			// on would make the assertion depend on `tsc` being on PATH.
+			verify: false,
 		});
 
 		expect(result.success).toBe(false);
@@ -837,6 +841,9 @@ describe("extract-common --output duplicate guard", () => {
 			threshold: 0.95,
 			force: true,
 			dryRun: false,
+			// See the sibling test: this block covers the conflict guard, and the
+			// temp-dir fixture has no node_modules to resolve `tsc` from.
+			verify: false,
 		});
 
 		expect(result.success).toBe(true);

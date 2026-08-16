@@ -2,7 +2,7 @@ import path from "node:path";
 import { logger } from "../cli-logger.ts";
 import { mapConcurrent } from "../core/concurrency.ts";
 import { analyzeDependencyContracts } from "../core/dependency-contracts.ts";
-import { ensureCleanWorktree } from "../core/git.ts";
+import { checkRollbackSafeWorktree } from "../core/git.ts";
 import {
 	createFileContentsRollbackStrategy,
 	createRollbackCheckpoint,
@@ -263,7 +263,27 @@ export async function executeDeps(
 		};
 	}
 
-	await ensureCleanWorktree(workspace.root, force, false);
+	// Return-based guard (#228). `executeDeps` is the data path behind both the
+	// CLI and the `deps` MCP tool, so the exiting `ensureCleanWorktree` used
+	// here would terminate the whole `resect-mcp` server process on a dirty
+	// worktree. The renderer owns the exit code; this layer only reports.
+	const guard = await checkRollbackSafeWorktree(workspace.root, {
+		dryRun: false,
+		force,
+	});
+	if (guard.blocked) {
+		return {
+			success: false,
+			dryRun: false,
+			applied: false,
+			report,
+			edits: serializedEdits,
+			modifiedFiles: [],
+			lockfileUpdated: false,
+			worktreeBlocked: true,
+			worktreeDirty: guard.dirty,
+		};
+	}
 	const refreshLockfile =
 		dependencies.refreshLockfile ?? refreshWorkspaceLockfile;
 	const filesToSnapshot = new Set(edits.map((edit) => edit.file));
@@ -294,6 +314,7 @@ export async function executeDeps(
 			success: true,
 			dryRun: false,
 			applied: true,
+			worktreeDirty: guard.dirty,
 			report,
 			edits: serializedEdits,
 			modifiedFiles: [
@@ -377,6 +398,15 @@ export function formatDependencyContractReport(
 
 export async function depsCommand(options: DepsOptions): Promise<void> {
 	const result = await executeDeps(options);
+	// The guard moved into `executeDeps` as a reported flag; the renderer still
+	// owns the refusal message and the non-zero exit it has always produced.
+	if (result.worktreeBlocked) {
+		logger.error(
+			"Error: working tree has uncommitted changes. " +
+				"Commit or stash your changes first, or rerun with --force to proceed anyway."
+		);
+		process.exit(1);
+	}
 	if (options.json) {
 		logger.info(JSON.stringify(result, null, 2));
 	} else {

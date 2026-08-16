@@ -120,4 +120,12 @@ export interface DepsApplyResult {
 	lockfileUpdated: boolean;
 	lockfileCommand?: string[];
 	verificationReport?: DependencyContractReport;
+	/**
+	 * True when the dirty-worktree guard refused to apply fixes. Reported
+	 * rather than exited so the `deps` MCP tool cannot kill its server (#228);
+	 * the CLI renderer turns this into the non-zero exit it always had.
+	 */
+	worktreeBlocked?: boolean;
+	/** Whether the worktree had uncommitted changes, independent of `force`. */
+	worktreeDirty?: boolean;
 }

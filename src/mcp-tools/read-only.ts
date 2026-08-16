@@ -189,25 +189,27 @@ export async function depsTool(
 	}
 	const dryRun = options.dryRun ?? true;
 	const force = options.force ?? false;
-	let worktreeDirty = false;
-	if (options.fix && !dryRun) {
-		const worktree = await checkWorktree(workspace.root, force);
-		worktreeDirty = worktree.dirty;
-		if (worktree.blocked) {
-			return errorText(WORKTREE_BLOCKED_MESSAGE);
-		}
-	}
 
+	// `executeDeps` owns the guard and reports `worktreeBlocked` rather than
+	// exiting (#228), so this wrapper no longer needs its own gate — nor the
+	// force-coercion that used to be required to stop the data layer from
+	// calling `process.exit` inside the server. Passing `force` straight through
+	// means an unforced dirty worktree is now genuinely refused instead of being
+	// silently forced past.
 	const result = await executeDeps({
 		directory: absoluteDir,
 		fix: options.fix,
 		dryRun,
-		// The MCP worktree gate above replaces ensureCleanWorktree, whose
-		// process.exit behavior is not safe inside a stdio server.
-		force: force || Boolean(options.fix && !dryRun),
+		force,
 		strict: options.strict,
 	});
-	const response = jsonText({ ...result, worktreeDirty });
+	if (result.worktreeBlocked) {
+		return errorText(WORKTREE_BLOCKED_MESSAGE);
+	}
+	const response = jsonText({
+		...result,
+		worktreeDirty: result.worktreeDirty ?? false,
+	});
 	if (options.strict && !result.success) {
 		response.isError = true;
 	}

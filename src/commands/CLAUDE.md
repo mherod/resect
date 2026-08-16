@@ -30,21 +30,63 @@ bun src/cli.ts tidy src --experimental [--json]
 
 ## Mutation safety
 
-Mutating commands must:
+`src/core/mutation-pipeline.ts` owns the whole sequence: worktree guard ->
+journal prepare -> apply (under the typecheck guard) -> rollback or journal
+complete -> structured `MutationOutcome`. It returns on every path and never
+calls `process.exit`.
 
-- call `ensureCleanWorktree()` before writes; staged, unstaged, and untracked changes block by default;
+DO route every mutating path through `runMutation` and express variance as
+configuration, not as a hand-written sequence: `verify` (`none | report |
+rollback`), `rollbackStrategy` (`null` is a deliberate leave-applied policy,
+as for plain moves), `journalEnabled`/`journalDetails` (a function of the apply
+result for batch commands), `translateBeforeFile`, `isApplySuccessful`,
+`rollbackRequiresApplySuccess: false` (batches with per-item success, so a
+partially-failed batch still rolls back what applied), and `blockDirtyDryRun:
+true` (MCP surfaces that refuse a dirty dry run).
+
+DON'T import `ensureCleanWorktree`, `ensureRollbackSafeWorktree`,
+`prepareOperationJournal`, `completeOperationJournal`, `runWithTypecheckGuard`,
+or `verifyTypeChecking` into `src/commands/**` or `src/mcp-tools/**`.
+`src/core/mutation-pipeline-enforcement.test.ts` fails on a new importer; the
+fix is to route the call site through `runMutation`, not to widen its allowlist.
+The first two call `process.exit`, which kills the `resect-mcp` server, so any
+data-layer function an MCP tool reaches must report a structured refusal and let
+the `*Command` renderer own the exit code (`executeDeps` returns
+`worktreeBlocked: true` for exactly this reason).
+
+DO compute the guard once with `checkRollbackSafeWorktree()` when the caller
+needs the result before delegating — for its exit code, or for a field it
+reports on paths that never reach the pipeline — then pass it in via
+`{ checkRollbackSafeWorktree: () => Promise.resolve(guard) }` so it is not
+re-checked. Two guards for one command is the bug #228 removed from
+extract-common.
+
+DO supply a `runWithTypecheckGuard` DI override when a command needs a different
+verification shape: alias's `--workspace` mode injects
+`runWithWorkspaceTypecheckGuard` so a cross-package rewrite is checked against
+every tsconfig it touched, and `undo` injects one built from its own
+`UndoDependencies.runTypeCheckDetailed` so `TypeCheckOutcome.incomplete` is read
+directly instead of re-derived from diagnostic strings.
+
+Mutating commands must still:
+
 - allow `--force`, bypass the guard for `--dry-run`, and permit non-git directories;
 - detect export-name, local-binding, and destination conflicts before mutation;
 - use before/after `tsc --noEmit` verification unless `--no-verify` is explicit;
-- return structured dry-run edits; MCP defaults `dryRun:true`;
-- restore through the shared rollback seam when verification fails.
+- return structured dry-run edits; MCP defaults `dryRun:true`.
 
 Whole-file Git rollback is safe only when the worktree was clean before the
-mutation. Commands that support `--force` must use
-`ensureRollbackSafeWorktree()`: on a forced dirty worktree, leave tool changes
-applied after failed verification and report
+mutation. On a forced dirty worktree the pipeline disables rollback, leaves the
+changes applied after failed verification, and reports
 `worktreeDirtyRollbackDisabled: true`. Never run `git restore` in that state,
 because it also destroys the user's pre-existing edits.
+
+DO use `createFileContentsRollbackStrategy` (in-memory snapshot) instead when a
+command can CREATE a file or must work outside a git repository —
+extract-common's `--output`, extract-component, and undo all do. `git restore`
+can neither delete a newly created path nor run outside a repository. Take the
+checkpoint inside `apply()`, immediately before the first write, once the
+destination list is known.
 
 DON'T add a mutating command without a dirty-worktree guard and conflict detection.
 

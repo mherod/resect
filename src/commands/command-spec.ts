@@ -552,6 +552,8 @@ Options:
   -o, --output       Write extracted functions to this file (consolidate into one location)
   -n, --dry-run      Preview changes without modifying files
   --force            Allow operation when git worktree has uncommitted changes
+  --verify           Enable type checking verification, overriding project config
+  --no-verify        Disable type checking verification (enabled by default)
   --json             Output results as JSON
   --strict           Exit 1 if extractable duplicate groups are found (use with --dry-run for CI)
   --skip-same-file   Skip groups where all functions are in the same file

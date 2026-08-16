@@ -59,10 +59,6 @@ import {
 import { loadProject, resolveTsConfig } from "../core/project.ts";
 import { serializeStructuredEdits } from "../core/text-changes.ts";
 import { loadTransformConfig } from "../core/transform-config.ts";
-import {
-	runWithTypecheckGuard,
-	type VerificationResult,
-} from "../core/verify.ts";
 import { discoverWorkspace } from "../core/workspace.ts";
 import type { InlineConflict, InlineRewrite } from "../types/inline.ts";
 import type { MoveResult } from "../types/move.ts";
@@ -515,31 +511,25 @@ export async function extractCommonTool(args: {
 	}
 	const project = loadProject(tsconfigPath);
 
-	const runExtract = async () =>
-		runExtractCommon({
-			directory: absoluteDir,
-			project: args.project,
-			threshold: args.threshold,
-			group: args.group,
-			output: args.output,
-			workspace: args.workspace,
-			dryRun: args.dryRun,
-			force: args.force,
-			nameThreshold: args.nameThreshold,
-			sameNameOnly: args.sameNameOnly,
-			skipSameFile: args.skipSameFile,
-			minLines: args.minLines,
-			skipDirectives: args.skipDirectives,
-			skipWrappers: args.skipWrappers,
-		});
-
-	const shouldVerify = args.verify && !args.dryRun;
-	type Result = Awaited<ReturnType<typeof runExtractCommon>>;
-	const guarded: { result: Result; delta: VerificationResult | undefined } =
-		shouldVerify
-			? await runWithTypecheckGuard(project, runExtract)
-			: { result: await runExtract(), delta: undefined };
-	const { result, delta } = guarded;
+	// Verification now lives inside `runExtractCommon` via runMutation (#228),
+	// so this wrapper no longer composes the typecheck guard itself.
+	const result = await runExtractCommon({
+		directory: absoluteDir,
+		project: args.project,
+		threshold: args.threshold,
+		group: args.group,
+		output: args.output,
+		workspace: args.workspace,
+		dryRun: args.dryRun,
+		force: args.force,
+		verify: args.verify,
+		nameThreshold: args.nameThreshold,
+		sameNameOnly: args.sameNameOnly,
+		skipSameFile: args.skipSameFile,
+		minLines: args.minLines,
+		skipDirectives: args.skipDirectives,
+		skipWrappers: args.skipWrappers,
+	});
 
 	const root = project.rootDir;
 	const payload = {
@@ -568,7 +558,8 @@ export async function extractCommonTool(args: {
 			})),
 		})),
 		errors: result.errors,
-		typecheck: delta,
+		typecheck: result.typecheck,
+		rolledBack: result.rolledBack ?? false,
 	};
 
 	// Mirror the CLI's `--strict` gate: surface duplicate groups as a tool error
