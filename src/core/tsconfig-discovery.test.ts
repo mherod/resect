@@ -265,4 +265,65 @@ describe("discoverProject cache", () => {
 			await rm(dir, { recursive: true, force: true });
 		}
 	});
+
+	test("rebuilds discovery when an inherited extends configuration changes (#244)", async () => {
+		const dir = await mkdtemp(path.join(tmpdir(), "resect-discovery-extends-"));
+		try {
+			const srcDir = path.join(dir, "src");
+			await mkdir(srcDir, { recursive: true });
+			await writeFile(path.join(srcDir, "a.ts"), "export const thing = 1;\n");
+			await writeFile(path.join(srcDir, "b.ts"), "export const thing = 2;\n");
+			// The base deliberately does NOT match the tsconfig*.json glob, so
+			// only the extends-chain snapshot can watch it.
+			const basePath = path.join(dir, "base-config.json");
+			await writeFile(
+				basePath,
+				JSON.stringify({
+					compilerOptions: {
+						strict: true,
+						baseUrl: ".",
+						paths: { "@thing": ["./src/a.ts"] },
+					},
+				})
+			);
+			await writeFile(
+				path.join(dir, "tsconfig.json"),
+				JSON.stringify({
+					extends: "./base-config.json",
+					include: ["src/**/*.ts"],
+				})
+			);
+
+			const first = discoverProject(dir);
+			expect(
+				first.configs
+					.find((c) => c.path.endsWith("tsconfig.json"))
+					?.pathAliases.get("@thing")
+			).toEqual(["./src/a.ts"]);
+
+			// Change ONLY the inherited base; the globbed tsconfig set and every
+			// source file are untouched. Force a distinctly-later mtime.
+			await writeFile(
+				basePath,
+				JSON.stringify({
+					compilerOptions: {
+						strict: true,
+						baseUrl: ".",
+						paths: { "@thing": ["./src/b.ts"] },
+					},
+				})
+			);
+			const future = new Date(Date.now() + 10_000);
+			await utimes(basePath, future, future);
+
+			const second = discoverProject(dir);
+			expect(
+				second.configs
+					.find((c) => c.path.endsWith("tsconfig.json"))
+					?.pathAliases.get("@thing")
+			).toEqual(["./src/b.ts"]);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
 });

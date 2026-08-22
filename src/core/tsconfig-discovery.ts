@@ -120,7 +120,17 @@ export function discoverProject(projectDir: string): ProjectDiscovery {
 	// Ignore files are watched too: changing them changes which directories the
 	// walk may enter, so a stale result would silently keep scanning a path the
 	// repository now ignores (or keep hiding one it no longer does).
-	const mtimes = snapshotMtimes([...tsconfigPaths, ...ignoreFiles]);
+	// The complete `extends` dependency chain is watched as well (#244):
+	// effective compiler options depend on inherited configuration files that
+	// the glob may not have discovered (outside the walked tree, node_modules
+	// presets, or non-tsconfig-named bases), and a stale result would keep
+	// serving options the inherited file no longer declares.
+	const extendsChain = collectExtendsChainFiles(tsconfigPaths);
+	const mtimes = snapshotMtimes([
+		...tsconfigPaths,
+		...ignoreFiles,
+		...extendsChain,
+	]);
 
 	// Parse each config
 	for (const tsconfigPath of tsconfigPaths) {
@@ -347,6 +357,84 @@ function sameTsconfigSet(current: string[], cached: Set<string>): boolean {
 
 function shouldSkipDirectory(name: string): boolean {
 	return SKIP_DIRECTORIES.has(name);
+}
+
+/**
+ * Resolve one raw `extends` value from a tsconfig to an existing file path.
+ * Handles relative/absolute specifiers with TypeScript's implicit `.json`
+ * suffix, and bare package specifiers (e.g. "@tsconfig/node20/tsconfig.json")
+ * through node_modules-style resolution from the extending config. Returns
+ * null when the target cannot be found; a broken extends already fails the
+ * parse, so there is nothing to watch.
+ */
+function resolveExtendsTarget(
+	specifier: string,
+	fromDir: string
+): string | null {
+	if (specifier.startsWith(".") || path.isAbsolute(specifier)) {
+		const resolved = path.resolve(fromDir, specifier);
+		for (const candidate of [resolved, `${resolved}.json`]) {
+			if (ts.sys.fileExists(candidate)) {
+				return candidate;
+			}
+		}
+		return null;
+	}
+	const result = ts.resolveModuleName(
+		specifier,
+		path.join(fromDir, "tsconfig.json"),
+		{
+			moduleResolution: ts.ModuleResolutionKind.NodeNext,
+			resolveJsonModule: true,
+		},
+		ts.sys
+	);
+	return result.resolvedModule?.resolvedFileName ?? null;
+}
+
+/**
+ * Collect every configuration file reachable through `extends` from the given
+ * tsconfigs (#244). Effective compiler options inherit from these files, so
+ * discovery freshness must include them even when they live outside the
+ * globbed tree. Cycle-guarded; already-globbed configs are excluded from the
+ * result since the caller snapshots them anyway.
+ */
+function collectExtendsChainFiles(tsconfigPaths: string[]): string[] {
+	const globbed = new Set(tsconfigPaths);
+	const visited = new Set<string>();
+	const chain = new Set<string>();
+	const queue = [...tsconfigPaths];
+
+	while (queue.length > 0) {
+		const configPath = queue.pop();
+		if (!configPath || visited.has(configPath)) {
+			continue;
+		}
+		visited.add(configPath);
+		const configFile = ts.readConfigFile(configPath, (f) => ts.sys.readFile(f));
+		if (configFile.error) {
+			continue;
+		}
+		const rawExtends: unknown = configFile.config.extends;
+		let specifiers: string[] = [];
+		if (typeof rawExtends === "string") {
+			specifiers = [rawExtends];
+		} else if (Array.isArray(rawExtends)) {
+			specifiers = rawExtends.filter((s): s is string => typeof s === "string");
+		}
+		for (const specifier of specifiers) {
+			const target = resolveExtendsTarget(specifier, path.dirname(configPath));
+			if (!target || visited.has(target)) {
+				continue;
+			}
+			if (!globbed.has(target)) {
+				chain.add(target);
+			}
+			queue.push(target);
+		}
+	}
+
+	return [...chain];
 }
 
 /**

@@ -387,3 +387,89 @@ describe("stylesheet imports", () => {
 		}
 	});
 });
+
+describe("graph cache configuration fingerprint (#244)", () => {
+	async function writeAliasProject(
+		dir: string,
+		aliasTarget: string
+	): Promise<string> {
+		const srcDir = path.join(dir, "src");
+		await mkdir(srcDir, { recursive: true });
+		const tsconfigPath = path.join(dir, "tsconfig.json");
+		await writeFile(
+			tsconfigPath,
+			JSON.stringify({
+				compilerOptions: {
+					strict: true,
+					baseUrl: ".",
+					paths: { "@thing": [aliasTarget] },
+				},
+				include: ["src/**/*.ts"],
+			})
+		);
+		await writeFile(path.join(srcDir, "a.ts"), "export const thing = 1;\n");
+		await writeFile(path.join(srcDir, "b.ts"), "export const thing = 2;\n");
+		await writeFile(
+			path.join(srcDir, "hub.ts"),
+			'import { thing } from "@thing";\nexport const hub = thing;\n'
+		);
+		return tsconfigPath;
+	}
+
+	function edgeTarget(graph: DependencyGraph, dir: string): string | undefined {
+		const hubRefs = graph.imports.get(
+			normalizePath(path.join(dir, "src/hub.ts"))
+		);
+		return hubRefs?.find((ref) => ref.specifier === "@thing")?.resolvedPath;
+	}
+
+	test("retargeting a path alias invalidates the graph with unchanged sources", async () => {
+		const dir = await mkdtemp(path.join(tmpdir(), "resect-graph-fingerprint-"));
+		try {
+			const tsconfigPath = await writeAliasProject(dir, "./src/a.ts");
+
+			const firstGraph = await buildDependencyGraph(
+				loadProject(tsconfigPath, dir)
+			);
+			expect(edgeTarget(firstGraph, dir)).toBe(
+				normalizePath(path.join(dir, "src/a.ts"))
+			);
+
+			// Change ONLY the alias mapping — no source file changes.
+			await writeAliasProject(dir, "./src/b.ts");
+
+			const secondGraph = await buildDependencyGraph(
+				loadProject(tsconfigPath, dir)
+			);
+			expect(secondGraph).not.toBe(firstGraph);
+			expect(secondGraph.program).not.toBe(firstGraph.program);
+			expect(edgeTarget(secondGraph, dir)).toBe(
+				normalizePath(path.join(dir, "src/b.ts"))
+			);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("an unchanged project keeps the cache-hit fast path", async () => {
+		const dir = await mkdtemp(path.join(tmpdir(), "resect-graph-fastpath-"));
+		try {
+			const tsconfigPath = await writeAliasProject(dir, "./src/a.ts");
+
+			const firstGraph = await buildDependencyGraph(
+				loadProject(tsconfigPath, dir)
+			);
+			// A fresh but identical ProjectConfig must fingerprint equal and
+			// return the cached graph object itself, quickly.
+			const start = performance.now();
+			const secondGraph = await buildDependencyGraph(
+				loadProject(tsconfigPath, dir)
+			);
+			const cachedMs = performance.now() - start;
+			expect(secondGraph).toBe(firstGraph);
+			expect(cachedMs).toBeLessThan(1000);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+});

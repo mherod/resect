@@ -92,6 +92,76 @@ const graphCache = new Map<string, DependencyGraph>();
  * process, where files are edited between tool calls.
  */
 const graphCacheMtimes = new Map<string, Map<string, number>>();
+/**
+ * Per-tsconfig fingerprint of the effective resolution/program configuration
+ * the cached graph was built under (#244). The cache key is the tsconfig
+ * path, so a refreshed ProjectConfig with different paths, baseUrl,
+ * moduleResolution, references, or inherited settings must not receive a
+ * graph and ts.Program built under the old resolution rules even when no
+ * source file changed.
+ */
+const graphCacheFingerprints = new Map<string, string>();
+
+/**
+ * Compiler options that change how module specifiers resolve or how the
+ * program is constructed. Options that only affect diagnostics (e.g.
+ * noUnusedLocals) are deliberately excluded so they keep the cache-hit fast
+ * path.
+ */
+const RESOLUTION_AFFECTING_OPTIONS = [
+	"allowImportingTsExtensions",
+	"allowJs",
+	"allowSyntheticDefaultImports",
+	"baseUrl",
+	"checkJs",
+	"composite",
+	"customConditions",
+	"esModuleInterop",
+	"jsx",
+	"jsxFactory",
+	"jsxFragmentFactory",
+	"jsxImportSource",
+	"module",
+	"moduleResolution",
+	"moduleSuffixes",
+	"noResolve",
+	"paths",
+	"preserveSymlinks",
+	"resolveJsonModule",
+	"resolvePackageJsonExports",
+	"resolvePackageJsonImports",
+	"rootDirs",
+	"target",
+	"typeRoots",
+	"types",
+] as const;
+
+/**
+ * Deterministic fingerprint of the parts of a ProjectConfig that decide graph
+ * edges and program construction: resolution-affecting compiler options,
+ * normalized path aliases, project references, and canonical config/root
+ * paths. JSON.stringify drops undefined members, so absent options compare
+ * equal across parses.
+ */
+function computeConfigFingerprint(project: ProjectConfig): string {
+	const options: Record<string, unknown> = {};
+	for (const key of RESOLUTION_AFFECTING_OPTIONS) {
+		options[key] = project.compilerOptions[key];
+	}
+	const aliases = [...project.pathAliases.entries()]
+		.sort(([a], [b]) => a.localeCompare(b))
+		.map(([alias, paths]) => [alias, [...paths]]);
+	const references = (project.references ?? [])
+		.map((ref) => normalizePath(ref.path))
+		.sort();
+	return JSON.stringify({
+		aliases,
+		options,
+		references,
+		rootDir: normalizePath(project.rootDir),
+		tsconfigPath: normalizePath(project.tsconfigPath),
+	});
+}
 
 /**
  * A cached graph is reusable only when the file SET is unchanged (count +
@@ -127,9 +197,15 @@ export async function buildDependencyGraph(
 	options: GraphBuildOptions = {}
 ): Promise<DependencyGraph> {
 	const files = getProjectFiles(project).map(normalizePath);
+	const fingerprint = computeConfigFingerprint(project);
 	const cached = touchCacheEntry(graphCache, project.tsconfigPath);
 	const cachedMtimes = graphCacheMtimes.get(project.tsconfigPath);
-	if (cached && cachedMtimes && isCacheValid(cached, cachedMtimes, files)) {
+	if (
+		cached &&
+		cachedMtimes &&
+		graphCacheFingerprints.get(project.tsconfigPath) === fingerprint &&
+		isCacheValid(cached, cachedMtimes, files)
+	) {
 		options.onProgress?.(files.length, files.length);
 		return cached;
 	}
@@ -206,7 +282,12 @@ export async function buildDependencyGraph(
 	};
 	setCacheEntry(graphCache, project.tsconfigPath, result);
 	graphCacheMtimes.set(project.tsconfigPath, mtimes);
-	enforceCacheLimit(graphCache, [graphCache, graphCacheMtimes]);
+	graphCacheFingerprints.set(project.tsconfigPath, fingerprint);
+	enforceCacheLimit(graphCache, [
+		graphCache,
+		graphCacheMtimes,
+		graphCacheFingerprints,
+	]);
 	return result;
 }
 
