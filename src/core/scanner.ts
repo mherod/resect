@@ -18,6 +18,7 @@ import type {
 import type { ProjectConfig } from "../types.ts";
 import {
 	packageNameFromSpecifier,
+	type ResolutionContext,
 	type ResolveResult,
 	resolveModuleSpecifier,
 } from "./resolver.ts";
@@ -67,12 +68,13 @@ export function getDeclarationModuleSpecifier(
  */
 export function scanModuleReferences(
 	sourceFile: ts.SourceFile,
-	project: ProjectConfig
+	project: ProjectConfig,
+	context?: ResolutionContext
 ): ModuleReference[] {
 	const references: ModuleReference[] = [];
 
 	function visit(node: ts.Node) {
-		const ref = extractReference(node, sourceFile, project);
+		const ref = extractReference(node, sourceFile, project, context);
 		if (ref) {
 			references.push(ref);
 		}
@@ -95,7 +97,8 @@ export interface UnresolvableDiagnostic {
  */
 export function scanUnresolvableImports(
 	sourceFile: ts.SourceFile,
-	project: ProjectConfig
+	project: ProjectConfig,
+	context?: ResolutionContext
 ): UnresolvableDiagnostic[] {
 	const diagnostics: UnresolvableDiagnostic[] = [];
 
@@ -106,7 +109,8 @@ export function scanUnresolvableImports(
 			const resolved = resolveModuleSpecifier(
 				specifierNode.text,
 				sourceFile.fileName,
-				project
+				project,
+				context
 			);
 			if (resolved.kind === "unresolvable") {
 				const { line } = sourceFile.getLineAndCharacterOfPosition(
@@ -151,7 +155,8 @@ export interface ExternalImport {
  */
 export function scanExternalImports(
 	sourceFile: ts.SourceFile,
-	project: ProjectConfig
+	project: ProjectConfig,
+	context?: ResolutionContext
 ): ExternalImport[] {
 	const byPackage = new Map<string, ExternalImport>();
 
@@ -162,7 +167,8 @@ export function scanExternalImports(
 			const resolved = resolveModuleSpecifier(
 				specifierNode.text,
 				sourceFile.fileName,
-				project
+				project,
+				context
 			);
 			if (resolved.kind === "external") {
 				const packageName = packageNameFromSpecifier(specifierNode.text);
@@ -192,27 +198,34 @@ export function scanExternalImports(
 function extractReference(
 	node: ts.Node,
 	sourceFile: ts.SourceFile,
-	project: ProjectConfig
+	project: ProjectConfig,
+	context?: ResolutionContext
 ): ModuleReference | null {
 	// import ... from '...'
 	if (ts.isImportDeclaration(node)) {
-		return extractImportDeclaration(node, sourceFile, project);
+		return extractImportDeclaration(node, sourceFile, project, context);
 	}
 
 	// import x = require('...')
 	if (ts.isImportEqualsDeclaration(node)) {
-		return extractImportEqualsDeclaration(node, sourceFile, project);
+		return extractImportEqualsDeclaration(node, sourceFile, project, context);
 	}
 
 	// export ... from '...'
 	if (ts.isExportDeclaration(node) && node.moduleSpecifier) {
-		return extractExportDeclaration(node, sourceFile, project);
+		return extractExportDeclaration(node, sourceFile, project, context);
 	}
 
 	// Dynamic import: import('...')
 	if (ts.isCallExpression(node)) {
 		if (node.expression.kind === ts.SyntaxKind.ImportKeyword) {
-			return resolveCallArgument(node, sourceFile, project, "import-dynamic");
+			return resolveCallArgument(
+				node,
+				sourceFile,
+				project,
+				"import-dynamic",
+				context
+			);
 		}
 
 		// require('...') or require.resolve('...')
@@ -220,7 +233,7 @@ function extractReference(
 			ts.isIdentifier(node.expression) &&
 			node.expression.text === "require"
 		) {
-			return resolveCallArgument(node, sourceFile, project, "require");
+			return resolveCallArgument(node, sourceFile, project, "require", context);
 		}
 
 		if (
@@ -229,7 +242,13 @@ function extractReference(
 			node.expression.expression.text === "require" &&
 			node.expression.name.text === "resolve"
 		) {
-			return resolveCallArgument(node, sourceFile, project, "require-resolve");
+			return resolveCallArgument(
+				node,
+				sourceFile,
+				project,
+				"require-resolve",
+				context
+			);
 		}
 
 		// jest.mock('...'), vi.mock('...'), or bun:test mock.module('...')
@@ -244,10 +263,10 @@ function extractReference(
 				(obj === "jest" || obj === "vi" || obj === "vitest") &&
 				(prop === "mock" || prop === "doMock" || prop === "unmock")
 			) {
-				return extractMockCallReference(node, sourceFile, project);
+				return extractMockCallReference(node, sourceFile, project, context);
 			}
 			if (obj === "mock" && prop === "module") {
-				return extractMockCallReference(node, sourceFile, project);
+				return extractMockCallReference(node, sourceFile, project, context);
 			}
 		}
 	}
@@ -258,9 +277,16 @@ function extractReference(
 function extractMockCallReference(
 	node: ts.CallExpression,
 	sourceFile: ts.SourceFile,
-	project: ProjectConfig
+	project: ProjectConfig,
+	context?: ResolutionContext
 ): ModuleReference | null {
-	const ref = resolveCallArgument(node, sourceFile, project, "jest-mock");
+	const ref = resolveCallArgument(
+		node,
+		sourceFile,
+		project,
+		"jest-mock",
+		context
+	);
 	if (!ref) {
 		return null;
 	}
@@ -517,7 +543,8 @@ function resolveDeclarationRef(
 	specifier: string,
 	node: ts.Node,
 	sourceFile: ts.SourceFile,
-	project: ProjectConfig
+	project: ProjectConfig,
+	context?: ResolutionContext
 ): {
 	specifier: string;
 	resolvedPath: string;
@@ -527,7 +554,8 @@ function resolveDeclarationRef(
 	const resolved = resolveModuleSpecifier(
 		specifier,
 		sourceFile.fileName,
-		project
+		project,
+		context
 	);
 	if (resolved.kind !== "resolved") {
 		warnIfUnresolvable(resolved);
@@ -571,7 +599,8 @@ function buildModuleReference(
 function extractImportDeclaration(
 	node: ts.ImportDeclaration,
 	sourceFile: ts.SourceFile,
-	project: ProjectConfig
+	project: ProjectConfig,
+	context?: ResolutionContext
 ): ModuleReference | null {
 	if (!ts.isStringLiteral(node.moduleSpecifier)) {
 		return null;
@@ -581,7 +610,8 @@ function extractImportDeclaration(
 		node.moduleSpecifier.text,
 		node,
 		sourceFile,
-		project
+		project,
+		context
 	);
 	if (!base) {
 		return null;
@@ -635,7 +665,8 @@ function extractImportDeclaration(
 function extractImportEqualsDeclaration(
 	node: ts.ImportEqualsDeclaration,
 	sourceFile: ts.SourceFile,
-	project: ProjectConfig
+	project: ProjectConfig,
+	context?: ResolutionContext
 ): ModuleReference | null {
 	const specifierNode = getDeclarationModuleSpecifier(node);
 	if (!specifierNode) {
@@ -646,7 +677,8 @@ function extractImportEqualsDeclaration(
 		specifierNode.text,
 		node,
 		sourceFile,
-		project
+		project,
+		context
 	);
 	if (!base) {
 		return null;
@@ -664,7 +696,8 @@ function extractImportEqualsDeclaration(
 function extractExportDeclaration(
 	node: ts.ExportDeclaration,
 	sourceFile: ts.SourceFile,
-	project: ProjectConfig
+	project: ProjectConfig,
+	context?: ResolutionContext
 ): ModuleReference | null {
 	if (!(node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier))) {
 		return null;
@@ -674,7 +707,8 @@ function extractExportDeclaration(
 		node.moduleSpecifier.text,
 		node,
 		sourceFile,
-		project
+		project,
+		context
 	);
 	if (!base) {
 		return null;
@@ -722,7 +756,8 @@ function resolveCallArgument(
 	node: ts.CallExpression,
 	sourceFile: ts.SourceFile,
 	project: ProjectConfig,
-	type: "import-dynamic" | "require" | "require-resolve" | "jest-mock"
+	type: "import-dynamic" | "require" | "require-resolve" | "jest-mock",
+	context?: ResolutionContext
 ): ModuleReference | null {
 	const arg = node.arguments[0];
 	if (!(arg && ts.isStringLiteral(arg))) {
@@ -733,7 +768,8 @@ function resolveCallArgument(
 	const resolved = resolveModuleSpecifier(
 		specifier,
 		sourceFile.fileName,
-		project
+		project,
+		context
 	);
 	if (resolved.kind !== "resolved") {
 		warnIfUnresolvable(resolved);
@@ -915,7 +951,8 @@ export function scanExports(sourceFile: ts.SourceFile): ExportInfo[] {
  */
 export function scanBarrelExports(
 	sourceFile: ts.SourceFile,
-	project: ProjectConfig
+	project: ProjectConfig,
+	context?: ResolutionContext
 ): BarrelExport[] {
 	const barrels: BarrelExport[] = [];
 	const entriesBySource = new Map<string, BarrelExportEntry[]>();
@@ -930,7 +967,8 @@ export function scanBarrelExports(
 			const resolved = resolveModuleSpecifier(
 				specifier,
 				sourceFile.fileName,
-				project
+				project,
+				context
 			);
 
 			if (resolved.kind !== "resolved") {

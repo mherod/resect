@@ -7,7 +7,7 @@ import { mapConcurrent } from "./concurrency.ts";
 import { TSC_ERROR_PATTERN, TSC_GLOBAL_ERROR_PATTERN } from "./constants.ts";
 import { diffDiagnostics } from "./diagnostics.ts";
 import { createProgram } from "./project.ts";
-import { normalizePath } from "./resolver.ts";
+import { createResolutionContext, normalizePath } from "./resolver.ts";
 import {
 	scanUnresolvableImports,
 	type UnresolvableDiagnostic,
@@ -43,10 +43,17 @@ export function collectUnresolvableDiagnostics(
 ): UnresolvableDiagnosticWithFile[] {
 	const program = createProgram(project);
 	const diagnostics: UnresolvableDiagnosticWithFile[] = [];
+	// One pass-scoped resolution cache (#247): every file's unresolvable scan
+	// shares resolver probes; dropped when this collection returns.
+	const resolutionContext = createResolutionContext(project);
 	for (const file of project.files) {
 		const sf = program.getSourceFile(file);
 		if (sf) {
-			for (const diag of scanUnresolvableImports(sf, project)) {
+			for (const diag of scanUnresolvableImports(
+				sf,
+				project,
+				resolutionContext
+			)) {
 				diagnostics.push({ file, ...diag });
 			}
 		}

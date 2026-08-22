@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import path from "node:path";
-import type ts from "typescript";
+import ts from "typescript";
 import { cleanup, makeFixture } from "../commands/__test-helpers.ts";
 import type {
 	ExtensionPolicy,
@@ -10,6 +10,7 @@ import type { ProjectConfig } from "../types.ts";
 import {
 	calculateNewSpecifier,
 	calculateRelativeSpecifier,
+	createResolutionContext,
 	findAliasForPath,
 	findCrossPackageImport,
 	findPackageForPath,
@@ -1211,5 +1212,98 @@ describe("resolveModuleSpecifier — bundler-owned assets", () => {
 			kind: "external",
 			specifier: "bootstrap/dist/css/bootstrap.css",
 		});
+	});
+});
+
+// ─── Shared build-scoped resolution cache (#247) ───────────────────────────
+
+describe("resolveModuleSpecifier — shared resolution cache (#247)", () => {
+	let dir: string;
+
+	beforeAll(async () => {
+		dir = await makeFixture("resolver-shared-cache", {
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: { strict: true, baseUrl: "." },
+				include: ["src/**/*.ts"],
+			}),
+			"src/util.ts": "export const util = 1;\n",
+			"src/a.ts": 'import { util } from "./util";\nexport const a = util;\n',
+			"src/b.ts": 'import { util } from "./util";\nexport const b = util;\n',
+		});
+	});
+
+	afterAll(async () => {
+		await cleanup(dir);
+	});
+
+	/** ts.sys passthrough host that counts fileExists probes. */
+	function instrumentedHost(counter: {
+		probes: number;
+	}): ts.ModuleResolutionHost {
+		return {
+			fileExists: (fileName: string) => {
+				counter.probes += 1;
+				return ts.sys.fileExists(fileName);
+			},
+			readFile: (fileName: string) => ts.sys.readFile(fileName),
+			directoryExists: (directoryName: string) =>
+				ts.sys.directoryExists(directoryName),
+			getCurrentDirectory: () => ts.sys.getCurrentDirectory(),
+			getDirectories: (directoryName: string) =>
+				ts.sys.getDirectories(directoryName),
+			useCaseSensitiveFileNames: () => ts.sys.useCaseSensitiveFileNames,
+		};
+	}
+
+	test("repeated lookups of one specifier reuse the cache instead of re-probing", () => {
+		const project = makeProject(dir);
+		const counter = { probes: 0 };
+		const context = createResolutionContext(project, instrumentedHost(counter));
+		const fromFile = path.join(dir, "src/a.ts");
+
+		const first = resolveModuleSpecifier("./util", fromFile, project, context);
+		const probesAfterFirst = counter.probes;
+		const second = resolveModuleSpecifier("./util", fromFile, project, context);
+
+		expect(first.kind).toBe("resolved");
+		expect(second).toEqual(first);
+		expect(probesAfterFirst).toBeGreaterThan(0);
+		// The second lookup must be served entirely from the shared cache.
+		expect(counter.probes).toBe(probesAfterFirst);
+	});
+
+	test("the cache is shared across importing files in the same directory", () => {
+		const project = makeProject(dir);
+		const counter = { probes: 0 };
+		const context = createResolutionContext(project, instrumentedHost(counter));
+
+		resolveModuleSpecifier(
+			"./util",
+			path.join(dir, "src/a.ts"),
+			project,
+			context
+		);
+		const probesAfterFirst = counter.probes;
+		resolveModuleSpecifier(
+			"./util",
+			path.join(dir, "src/b.ts"),
+			project,
+			context
+		);
+
+		// Per-directory cache: b.ts resolves the same specifier without new probes.
+		expect(counter.probes).toBe(probesAfterFirst);
+	});
+
+	test("cached and uncached resolution return identical results", () => {
+		const project = makeProject(dir);
+		const context = createResolutionContext(project);
+		const fromFile = path.join(dir, "src/b.ts");
+
+		for (const specifier of ["./util", "./a", "typescript", "./missing"]) {
+			expect(
+				resolveModuleSpecifier(specifier, fromFile, project, context)
+			).toEqual(resolveModuleSpecifier(specifier, fromFile, project));
+		}
 	});
 });

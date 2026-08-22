@@ -237,9 +237,11 @@ export {
 	resolveTsConfig,
 } from "./core/project.ts";
 // ── Core: resolver ──────────────────────────────────────────────────
+export type { ResolutionContext } from "./core/resolver.ts";
 export {
 	calculateNewSpecifier,
 	calculateRelativeSpecifier,
+	createResolutionContext,
 	findAliasForPath,
 	findCrossPackageImport,
 	findPackageForPath,

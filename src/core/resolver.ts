@@ -28,6 +28,53 @@ export type ResolveResult =
 const RESOURCE_SUFFIX_START = /[?#]/u;
 
 /**
+ * Build-scoped module-resolution state shared across every specifier resolved
+ * during one dependency-graph build (#247). Bundles TypeScript's optional
+ * `ModuleResolutionCache` with the host it must stay consistent with, so
+ * ordinary import/export, barrel, and unresolvable scanning reuse one cache
+ * instead of repeating filesystem probes per reference.
+ *
+ * Lifetime contract: create one context per graph build (or per verification
+ * pass) and drop it with the build. Never retain a context across filesystem
+ * mutations or compiler-option changes — staleness is invisible to the cache.
+ */
+export interface ResolutionContext {
+	/** Shared TypeScript resolver cache for `ts.resolveModuleName`. */
+	cache: ts.ModuleResolutionCache;
+	/** Host used for both TS resolution and the non-module file fallbacks. */
+	host: ts.ModuleResolutionHost;
+}
+
+/**
+ * Create a build-scoped {@link ResolutionContext} for a project. `host`
+ * defaults to `ts.sys`; tests pass an instrumented wrapper to count
+ * filesystem probes.
+ */
+export function createResolutionContext(
+	project: ProjectConfig,
+	host: ts.ModuleResolutionHost = ts.sys
+): ResolutionContext {
+	const getCanonicalFileName = (fileName: string) =>
+		ts.sys.useCaseSensitiveFileNames ? fileName : fileName.toLowerCase();
+	return {
+		host,
+		cache: ts.createModuleResolutionCache(
+			project.rootDir,
+			getCanonicalFileName,
+			project.compilerOptions
+		),
+	};
+}
+
+/** Existence probe that honors an optional resolution host (falls back to `ts.sys`). */
+function hostFileExists(
+	absolutePath: string,
+	context?: ResolutionContext
+): boolean {
+	return (context?.host ?? ts.sys).fileExists(absolutePath);
+}
+
+/**
  * Return the filesystem portion of a bundler module specifier. Query and
  * fragment suffixes control how the bundler loads the resource, but they are
  * not part of the path on disk.
@@ -45,7 +92,8 @@ function resourcePathFromSpecifier(specifier: string): string {
  */
 function resolveExistingFileByAlias(
 	specifier: string,
-	project: ProjectConfig
+	project: ProjectConfig,
+	context?: ResolutionContext
 ): string | null {
 	const baseUrl = project.compilerOptions.baseUrl ?? project.rootDir;
 	for (const [alias, paths] of project.pathAliases) {
@@ -60,7 +108,7 @@ function resolveExistingFileByAlias(
 				? pathPattern.slice(0, -1)
 				: pathPattern;
 			const absolutePath = path.resolve(baseUrl, resolvedPattern + remainder);
-			if (ts.sys.fileExists(absolutePath)) {
+			if (hostFileExists(absolutePath, context)) {
 				return absolutePath;
 			}
 		}
@@ -75,15 +123,16 @@ function resolveExistingFileByAlias(
 function findExistingNonModuleFile(
 	specifier: string,
 	fromFile: string,
-	project: ProjectConfig
+	project: ProjectConfig,
+	context?: ResolutionContext
 ): string | null {
 	const resourcePath = resourcePathFromSpecifier(specifier);
 	if (isRelativeImport(resourcePath) || path.isAbsolute(resourcePath)) {
 		const absolutePath = path.resolve(path.dirname(fromFile), resourcePath);
-		return ts.sys.fileExists(absolutePath) ? absolutePath : null;
+		return hostFileExists(absolutePath, context) ? absolutePath : null;
 	}
 	if (isBareImport(resourcePath)) {
-		return resolveExistingFileByAlias(resourcePath, project);
+		return resolveExistingFileByAlias(resourcePath, project, context);
 	}
 	return null;
 }
@@ -95,14 +144,16 @@ function findExistingNonModuleFile(
 export function resolveModuleSpecifier(
 	specifier: string,
 	fromFile: string,
-	project: ProjectConfig
+	project: ProjectConfig,
+	context?: ResolutionContext
 ): ResolveResult {
 	const resourcePath = resourcePathFromSpecifier(specifier);
 	const result = ts.resolveModuleName(
 		specifier,
 		fromFile,
 		project.compilerOptions,
-		ts.sys
+		context?.host ?? ts.sys,
+		context?.cache
 	);
 
 	if (result.resolvedModule) {
@@ -114,7 +165,12 @@ export function resolveModuleSpecifier(
 
 	// .vue specifiers are not resolved by ts.resolveModuleName — handle directly
 	if (VUE_EXTENSION.test(resourcePath)) {
-		const vuePath = findExistingNonModuleFile(specifier, fromFile, project);
+		const vuePath = findExistingNonModuleFile(
+			specifier,
+			fromFile,
+			project,
+			context
+		);
 		if (vuePath) {
 			return { kind: "resolved", path: vuePath };
 		}
@@ -130,7 +186,12 @@ export function resolveModuleSpecifier(
 	// graph node is created; a missing relative one still falls through to
 	// `unresolvable`. Filesystem lookup ignores bundler queries such as `?raw`.
 	if (BUNDLER_ASSET_EXTENSIONS.test(resourcePath)) {
-		const assetPath = findExistingNonModuleFile(specifier, fromFile, project);
+		const assetPath = findExistingNonModuleFile(
+			specifier,
+			fromFile,
+			project,
+			context
+		);
 		if (assetPath) {
 			return { kind: "asset", path: assetPath, specifier };
 		}

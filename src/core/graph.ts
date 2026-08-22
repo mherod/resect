@@ -11,7 +11,7 @@ import {
 import { mapConcurrent } from "./concurrency.ts";
 import { mtimesUnchanged, snapshotMtimes } from "./path-utils.ts";
 import { createProgram, getProjectFiles, loadProject } from "./project.ts";
-import { normalizePath } from "./resolver.ts";
+import { createResolutionContext, normalizePath } from "./resolver.ts";
 import { scanBarrelExports, scanModuleReferences } from "./scanner.ts";
 import { withSourceFile } from "./source-file.ts";
 import { discoverProject, toProjectConfig } from "./tsconfig-discovery.ts";
@@ -137,6 +137,11 @@ export async function buildDependencyGraph(
 	// next lookup rather than being masked by a post-build timestamp.
 	const mtimes = snapshotMtimes(files);
 	const program = createProgram(project, files);
+	// One resolution cache per build (#247): ordinary reference and barrel
+	// scanning across all files share resolver probes. Deliberately not stored
+	// on the graph or module state — it dies with this build, so filesystem
+	// mutations or compiler-option changes can never serve stale resolutions.
+	const resolutionContext = createResolutionContext(project);
 
 	// Scan all files concurrently — each scan is independent
 	const scanResults = await mapConcurrent(
@@ -148,8 +153,8 @@ export async function buildDependencyGraph(
 				(sourceFile): SuccessfulFileScan => ({
 					skipped: false,
 					normalizedFile: normalizePath(file),
-					refs: scanModuleReferences(sourceFile, project),
-					barrels: scanBarrelExports(sourceFile, project),
+					refs: scanModuleReferences(sourceFile, project, resolutionContext),
+					barrels: scanBarrelExports(sourceFile, project, resolutionContext),
 				}),
 				{ skipped: true, normalizedFile: normalizePath(file) }
 			),
