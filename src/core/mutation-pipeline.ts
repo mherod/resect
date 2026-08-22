@@ -1,4 +1,5 @@
 import { logger } from "../cli-logger.ts";
+import { withoutCancellation } from "../runtime/cancellation.ts";
 import type { ProjectConfig } from "../types.ts";
 import { checkRollbackSafeWorktree } from "./git.ts";
 import {
@@ -185,7 +186,11 @@ export async function runMutation<TResult>(
 			guard.rollbackEnabled &&
 			options.rollbackStrategy != null;
 		if (shouldRollback && options.rollbackStrategy) {
-			rolledBack = await options.rollbackStrategy(result);
+			// Rollback must not be cancelled by an already-aborted request
+			// signal (#245): a cancelled mutation still restores its files, so
+			// the recovery runs in a fresh, unaborted cancellation scope.
+			const strategy = options.rollbackStrategy;
+			rolledBack = await withoutCancellation(async () => strategy(result));
 		}
 		delta.rolledBack = rolledBack;
 	}

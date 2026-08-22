@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
 import { getRuntime } from "../runtime/index.ts";
+import type { ProcessTermination } from "../runtime/types.ts";
 import type { ProjectConfig } from "../types.ts";
 import { mapConcurrent } from "./concurrency.ts";
 import { TSC_ERROR_PATTERN, TSC_GLOBAL_ERROR_PATTERN } from "./constants.ts";
@@ -350,6 +351,26 @@ export function parseTsCompilerOutput(
 	return { errors, incomplete: sawGlobal };
 }
 
+/** Human-readable cause for an abnormal ProcessTermination (#245). */
+function describeAbnormalTermination(
+	termination: Exclude<ProcessTermination, { kind: "exit" }>
+): string {
+	switch (termination.kind) {
+		case "spawn-error":
+			return `spawn failed: ${termination.message}`;
+		case "signal":
+			return `killed by signal ${termination.signal}`;
+		case "aborted":
+			return "cancelled";
+		case "timeout":
+			return "timed out";
+		case "output-limit":
+			return `${termination.stream} exceeded the output bound`;
+		default:
+			return "abnormal termination";
+	}
+}
+
 /**
  * Run TypeScript compiler in noEmit mode and capture structured outcome.
  * Distinguishes a clean project from an incomplete verification (fatal
@@ -362,12 +383,31 @@ export async function runTypeCheckDetailed(
 	const cwd = path.dirname(tsconfigPath);
 	const tsc = findLocalTypeScriptBinary(project);
 
-	const { stdout, stderr, exitCode } = await getRuntime().process.exec(
+	const result = await getRuntime().process.exec(
 		[tsc, "--noEmit", "-p", tsconfigPath, "--pretty", "false"],
 		{ cwd }
 	);
 
-	return parseTsCompilerOutput(stdout + stderr, exitCode ?? 0);
+	// Abnormal or truncated termination must NEVER parse as a clean run
+	// (#245): Node used to report spawn failure as exitCode null, and
+	// `exitCode ?? 0` turned empty output into a passing typecheck.
+	if (result.termination.kind !== "exit" || result.outputTruncated) {
+		const cause =
+			result.termination.kind === "exit"
+				? "output truncated at the byte bound"
+				: describeAbnormalTermination(result.termination);
+		return {
+			errors: [
+				`${VERIFY_INCOMPLETE_PREFIX} tsc did not complete (${cause}) — verification did not run`,
+			],
+			incomplete: true,
+		};
+	}
+
+	return parseTsCompilerOutput(
+		result.stdout + result.stderr,
+		result.termination.exitCode
+	);
 }
 
 /**

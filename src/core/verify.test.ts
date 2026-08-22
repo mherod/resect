@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { bunRuntime, setRuntime } from "../runtime/index.ts";
+import type { ProcessResult } from "../runtime/types.ts";
+import type { ProjectConfig } from "../types.ts";
 import {
 	isIncompleteTypeCheck,
 	parseTsCompilerOutput,
+	runTypeCheckDetailed,
 	VERIFY_INCOMPLETE_PREFIX,
 } from "./verify.ts";
 
@@ -95,5 +99,98 @@ describe("isIncompleteTypeCheck", () => {
 
 	test("does not flag an empty list", () => {
 		expect(isIncompleteTypeCheck([])).toBe(false);
+	});
+});
+
+// ─── Abnormal process termination is never a clean typecheck (#245) ────────
+
+describe("runTypeCheckDetailed abnormal termination (#245)", () => {
+	const project: ProjectConfig = {
+		rootDir: "/repo",
+		tsconfigPath: "/repo/tsconfig.json",
+		compilerOptions: {},
+		pathAliases: new Map(),
+		include: [],
+		exclude: [],
+		files: [],
+	};
+
+	function fakeRuntimeWith(result: ProcessResult) {
+		setRuntime({
+			...bunRuntime,
+			process: { exec: async () => Promise.resolve(result) },
+		});
+	}
+
+	const abnormalResults: ProcessResult[] = [
+		{
+			stdout: "",
+			stderr: "",
+			exitCode: null,
+			termination: { kind: "spawn-error", message: "ENOENT" },
+			outputTruncated: false,
+		},
+		{
+			stdout: "",
+			stderr: "",
+			exitCode: null,
+			termination: { kind: "timeout" },
+			outputTruncated: false,
+		},
+		{
+			stdout: "",
+			stderr: "",
+			exitCode: null,
+			termination: { kind: "aborted" },
+			outputTruncated: false,
+		},
+		{
+			stdout: "",
+			stderr: "",
+			exitCode: null,
+			termination: { kind: "signal", signal: "SIGKILL" },
+			outputTruncated: false,
+		},
+		{
+			stdout: "partial",
+			stderr: "",
+			exitCode: 0,
+			termination: { kind: "exit", exitCode: 0 },
+			outputTruncated: true,
+		},
+	];
+
+	for (const result of abnormalResults) {
+		const label =
+			result.termination.kind === "exit"
+				? "truncated output"
+				: result.termination.kind;
+		test(`${label} with empty diagnostics is incomplete, never clean`, async () => {
+			fakeRuntimeWith(result);
+			try {
+				const outcome = await runTypeCheckDetailed(project);
+				expect(outcome.incomplete).toBe(true);
+				expect(outcome.errors[0]).toStartWith(VERIFY_INCOMPLETE_PREFIX);
+			} finally {
+				setRuntime(bunRuntime);
+			}
+		});
+	}
+
+	test("a normal empty exit-0 run still parses clean", async () => {
+		fakeRuntimeWith({
+			stdout: "",
+			stderr: "",
+			exitCode: 0,
+			termination: { kind: "exit", exitCode: 0 },
+			outputTruncated: false,
+		});
+		try {
+			const outcome = await runTypeCheckDetailed(project);
+			expect(outcome.errors).toEqual([]);
+			expect(outcome.incomplete).toBe(false);
+		} finally {
+			setRuntime(bunRuntime);
+		}
 	});
 });

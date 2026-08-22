@@ -45,6 +45,7 @@ import { version } from "../package.json";
 import { registerAnalysisTools } from "./mcp-tools/register-analysis.ts";
 import { registerHygieneTools } from "./mcp-tools/register-hygiene.ts";
 import { registerMutationTools } from "./mcp-tools/register-mutation.ts";
+import { withCancellationSignal } from "./runtime/cancellation.ts";
 
 // Re-exported for the tests that import these from the server entry:
 // `src/mcp-entrypoints.test.ts`, `src/mcp-rename.test.ts`, and
@@ -57,8 +58,36 @@ export { renameSpecifierInputSchema } from "./mcp-tools/register-mutation.ts";
 
 // ── Server wiring ───────────────────────────────────────────────────
 
+/**
+ * Bind every registered tool handler to its request's cancellation signal
+ * (#245). The MCP SDK passes an AbortSignal per request in the handler's
+ * second argument; entering a cancellation scope here lets both production
+ * ProcessRunners abort active child processes when the client cancels,
+ * without threading a signal parameter through every command. Rollback and
+ * cleanup sections opt out via `withoutCancellation`.
+ */
+export function enableRequestCancellation(target: McpServer): void {
+	type AnyToolHandler = (
+		args: unknown,
+		extra: { signal?: AbortSignal }
+	) => unknown;
+	const patchable = target as unknown as {
+		registerTool: (
+			name: string,
+			config: unknown,
+			cb: AnyToolHandler
+		) => unknown;
+	};
+	const original = patchable.registerTool.bind(target);
+	patchable.registerTool = (name, config, cb) =>
+		original(name, config, (args, extra) =>
+			withCancellationSignal(extra.signal, () => cb(args, extra))
+		);
+}
+
 const server = new McpServer({ name: "resect", version });
 
+enableRequestCancellation(server);
 registerAnalysisTools(server);
 registerHygieneTools(server);
 registerMutationTools(server);
