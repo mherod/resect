@@ -349,6 +349,16 @@ Reports:
 
 Use this instead of running `move` and reading the fallout.
 
+### `affected <files...>`
+
+List every file affected by changes to the given files — their transitive importers. Read-only; useful for scoping test or lint blast radius in git hooks.
+
+```bash
+resect affected src/core/graph.ts
+resect affected src/a.ts src/b.ts --workspace
+resect affected src/core/graph.ts --json
+```
+
 ### `find <query>`
 
 Search for files and exports by name.
@@ -421,6 +431,20 @@ resect workspace /path/to/monorepo --verbose
 ```
 
 Supports pnpm, yarn, and npm workspaces. Shows packages, entrypoints, barrel files, exports map, and internal dependencies.
+
+### `deps <directory>`
+
+Check — and optionally repair — dependency contracts declared by workspace packages. Packages opt in with `package.json#resect.consumerDependencies`. Analysis is read-only by default.
+
+```bash
+resect deps .                    # Report drift, conflicts, and policy issues
+resect deps . --strict           # Exit non-zero when drift is found (CI mode)
+resect deps . --fix --dry-run    # Preview manifest and Turbo repairs
+resect deps . --fix              # Repair manifest and Turbo dependency drift
+resect deps . --json             # Structured report and planned edits
+```
+
+Conflicts and malformed policies block all writes. Lockfiles refresh through the detected package manager, and a failed refresh or non-idempotent repair restores every touched file.
 
 ### `similar <directory>`
 
@@ -747,9 +771,10 @@ Under Bun the default runtime works out of the box; subpath entry points `@mhero
 | `--no-verify` | | Skip type checking verification (not recommended) |
 | `--force` | | Proceed past the dirty-worktree guard and similarity/conflict blocks (mutating commands) |
 | `--journal` | | Record a successful move, rename, alias rewrite, or tidy fix for later undo |
-| `--fix` | | Apply suggested fixes (mock-cleanup, test-relocation, naming, tidy) |
+| `--fix` | | Apply suggested fixes (deps, mock-cleanup, test-relocation, naming, tidy) |
 | `--transform` | | Apply AST rewrites from a config during a move; takes a value: `--transform=.resect/transforms.js` |
 | `--batch` | | Apply move pairs from a JSON manifest using one shared project context |
+| `--extensions` | | File-extension policy for rewritten specifiers: `preserve` or `explicit` |
 | `--type` | `-t` | Filter find results by type: `file`, `export`, or `all` |
 | `--prefer` | | Import-specifier strategy: `alias`, `relative`, or `shortest`. Required by `alias`; optional on `move`, where omitting it preserves each importer's existing style |
 | `--rename-specifier` | | Exact alias rewrite pair `<from>=<to>`; repeat for batch rewrites |
