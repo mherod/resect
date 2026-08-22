@@ -361,6 +361,100 @@ export interface SimilarityFilterOptions {
 	skipWrappers?: boolean;
 	/** Only include declarations of these kinds (default: all kinds) */
 	kinds?: DeclarationKind[];
+	/**
+	 * Test seam (#246): score every pair through the original exhaustive
+	 * nested loop instead of the pruned candidate index. Differential tests
+	 * compare both paths for exact equality; production callers omit this.
+	 */
+	exhaustiveScan?: boolean;
+	/**
+	 * Test seam (#246): mutated with the number of candidate pairs the scan
+	 * considered and the pairs that reached full scoring, so pruning
+	 * effectiveness is measurable without changing the return shape.
+	 */
+	stats?: SimilarityScanStats;
+}
+
+/** Candidate/scored pair counters for pruning instrumentation (#246). */
+export interface SimilarityScanStats {
+	candidatePairs: number;
+	scoredPairs: number;
+}
+
+/**
+ * Exact candidate pruning for the pairwise scan (#246).
+ *
+ * Every accepted fuzzy pair satisfies `jaccard(bigramsI, bigramsJ) >= bound`:
+ * penalties only lower the bigram score, and the one score-raising branch
+ * (the `contentSim < 0.2` blend) is bounded by `0.85*s + 0.03`, so the
+ * necessary bigram similarity is `threshold` for thresholds >= 0.2 and
+ * `(threshold - 0.03) / 0.85` below that. Structurally identical bodies have
+ * identical bigram sets (Jaccard 1), so they are always candidates. From the
+ * bound follow two provably safe filters:
+ *
+ * - size window: `min(|A|,|B|) / max(|A|,|B|) >= jaccard >= bound`;
+ * - overlap: a positive bound requires at least one shared bigram, served by
+ *   an inverted bigram index (declarations with EMPTY bigram sets are mutual
+ *   candidates because `jaccard(∅, ∅) = 1`, and never match non-empty sets).
+ *
+ * Returns null when no positive bound exists (threshold too low) — the
+ * caller must fall back to the exhaustive scan.
+ */
+function buildCandidateIndex(
+	bigramSets: Set<string>[],
+	threshold: number
+): { candidatesFor(i: number): number[] } | null {
+	const LOW_THRESHOLD_BLEND_CAP = 0.2;
+	const bound =
+		threshold >= LOW_THRESHOLD_BLEND_CAP
+			? threshold
+			: (threshold - 0.03) / 0.85;
+	if (bound <= 0) {
+		return null;
+	}
+
+	const invertedIndex = new Map<string, number[]>();
+	const emptySetIndices: number[] = [];
+	for (let index = 0; index < bigramSets.length; index++) {
+		const bigrams = bigramSets[index];
+		if (!bigrams || bigrams.size === 0) {
+			emptySetIndices.push(index);
+			continue;
+		}
+		for (const bigram of bigrams) {
+			const postings = invertedIndex.get(bigram);
+			if (postings) {
+				postings.push(index);
+			} else {
+				invertedIndex.set(bigram, [index]);
+			}
+		}
+	}
+
+	return {
+		candidatesFor(i: number): number[] {
+			const bigramsI = bigramSets[i];
+			if (!bigramsI || bigramsI.size === 0) {
+				// Mutually-empty sets score Jaccard 1; keep ascending j > i.
+				return emptySetIndices.filter((j) => j > i);
+			}
+			const sizeI = bigramsI.size;
+			const seen = new Set<number>();
+			for (const bigram of bigramsI) {
+				for (const j of invertedIndex.get(bigram) ?? []) {
+					if (j <= i || seen.has(j)) {
+						continue;
+					}
+					const sizeJ = bigramSets[j]?.size ?? 0;
+					if (Math.min(sizeI, sizeJ) / Math.max(sizeI, sizeJ) >= bound) {
+						seen.add(j);
+					}
+				}
+			}
+			// Ascending order preserves the greedy assignment exactly.
+			return [...seen].sort((a, b) => a - b);
+		},
+	};
 }
 
 export function findSimilarGroups(
@@ -397,11 +491,28 @@ export function findSimilarGroups(
 	// tokenization and bigram generation inside the O(n^2) pairwise loop.
 	const preTokens: string[][] = [];
 	const preBigrams: string[][] = [];
+	const preBigramSets: Set<string>[] = [];
 	for (const fn of candidates) {
 		const tokens = tokenize(fn.normalizedBody);
 		preTokens.push(tokens);
-		preBigrams.push(tokenBigrams(tokens));
+		const bigrams = tokenBigrams(tokens);
+		preBigrams.push(bigrams);
+		preBigramSets.push(new Set(bigrams));
 	}
+
+	// Exact candidate pruning (#246): only pairs that can still reach the
+	// threshold under the bigram-Jaccard bound are scored. Falls back to the
+	// original exhaustive scan when requested or when no safe bound exists.
+	const candidateIndex = opts.exhaustiveScan
+		? null
+		: buildCandidateIndex(preBigramSets, threshold);
+	const allIndicesAfter = (i: number): number[] => {
+		const rest: number[] = [];
+		for (let j = i + 1; j < candidates.length; j++) {
+			rest.push(j);
+		}
+		return rest;
+	};
 
 	const groups: SimilarityGroup[] = [];
 	const assigned = new Set<number>();
@@ -423,9 +534,15 @@ export function findSimilarGroups(
 		// through normalized-body equality rather than a saturated bigram set.
 		let allStructurallyIdentical = true;
 
-		for (let j = i + 1; j < candidates.length; j++) {
+		const candidateJs = candidateIndex
+			? candidateIndex.candidatesFor(i)
+			: allIndicesAfter(i);
+		for (const j of candidateJs) {
 			if (assigned.has(j)) {
 				continue;
+			}
+			if (opts.stats) {
+				opts.stats.candidatePairs++;
 			}
 
 			const fnJ = candidates[j];
@@ -497,6 +614,9 @@ export function findSimilarGroups(
 				continue;
 			}
 
+			if (opts.stats) {
+				opts.stats.scoredPairs++;
+			}
 			const structurallyIdentical = fnI.normalizedBody === fnJ.normalizedBody;
 			let score: number;
 			if (structurallyIdentical) {

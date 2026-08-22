@@ -2284,3 +2284,180 @@ describe("scanProjectFunctions --project resolution", () => {
 		}
 	});
 });
+
+// ─── Exact candidate pruning (#246) ────────────────────────────────────────
+
+describe("candidate pruning differential equivalence (#246)", () => {
+	/** Deterministic LCG so randomized fixtures are reproducible. */
+	function makeRng(seed: number): () => number {
+		let state = seed;
+		return () => {
+			state = (state * 1_103_515_245 + 12_345) % 2_147_483_648;
+			return state / 2_147_483_648;
+		};
+	}
+
+	const BODY_TEMPLATES = [
+		(a: string, b: string) =>
+			`{ const ${a} = input.${b}(); return ${a}.trim(); }`,
+		(a: string, b: string) =>
+			`{ if (!${a}) { return null; } return ${a}.map((x) => x.${b}); }`,
+		(a: string, b: string) =>
+			`{ const ${a} = await fetchRows("${b}"); return ${a}.length; }`,
+		(a: string, b: string) =>
+			`{ let ${a} = 0; for (const item of items) { ${a} += item.${b}; } return ${a}; }`,
+		(a: string, b: string) =>
+			`{ try { return JSON.parse(${a}); } catch { return "${b}"; } }`,
+		(a: string, b: string) =>
+			`{ const ${a} = new Map(); ${a}.set("${b}", 1); return ${a}; }`,
+	] as const;
+
+	function makeCorpus(size: number, seed: number) {
+		const rng = makeRng(seed);
+		const sources: string[] = [];
+		for (let i = 0; i < size; i++) {
+			const template =
+				BODY_TEMPLATES[Math.floor(rng() * BODY_TEMPLATES.length)] ??
+				BODY_TEMPLATES[0];
+			const varName = `v${Math.floor(rng() * 8)}`;
+			const propName = `p${Math.floor(rng() * 8)}`;
+			sources.push(`function fn${i}() ${template(varName, propName)}`);
+		}
+		const sf = makeSourceFile(sources.join("\n"), "corpus.ts");
+		return collectFunctions(sf, "corpus.ts");
+	}
+
+	function serializeGroups(groups: ReturnType<typeof findSimilarGroups>) {
+		return groups.map((g) => ({
+			bucket: g.bucket,
+			score: g.score,
+			functions: g.functions.map((f) => `${f.file}:${f.line}:${f.name}`),
+		}));
+	}
+
+	const DIFFERENTIAL_CASES: {
+		label: string;
+		size: number;
+		seed: number;
+		threshold: number;
+	}[] = [
+		{ label: "small mixed corpus", size: 60, seed: 1, threshold: 0.8 },
+		{ label: "250-declaration corpus", size: 250, seed: 2, threshold: 0.8 },
+		{ label: "500-declaration corpus", size: 500, seed: 3, threshold: 0.7 },
+		{
+			label: "low threshold engages the blend-corrected bound",
+			size: 120,
+			seed: 4,
+			threshold: 0.15,
+		},
+		{
+			label: "sub-bound threshold falls back to the exhaustive scan",
+			size: 80,
+			seed: 5,
+			threshold: 0.02,
+		},
+	];
+
+	for (const { label, size, seed, threshold } of DIFFERENTIAL_CASES) {
+		test(`pruned and exhaustive scans agree exactly: ${label}`, () => {
+			const corpus = makeCorpus(size, seed);
+			const pruned = findSimilarGroups(corpus, { threshold });
+			const reference = findSimilarGroups(corpus, {
+				threshold,
+				exhaustiveScan: true,
+			});
+
+			expect(serializeGroups(pruned)).toEqual(serializeGroups(reference));
+		});
+	}
+
+	test("adversarial homogeneous corpus stays exact while pruning little", () => {
+		// Every declaration shares one template: nearly all pairs are genuine
+		// candidates, so pruning cannot (and must not) cut the worst case.
+		const sources: string[] = [];
+		for (let i = 0; i < 120; i++) {
+			sources.push(
+				`function same${i}() { const value = input.load(); return value.trim(); }`
+			);
+		}
+		const sf = makeSourceFile(sources.join("\n"), "homogeneous.ts");
+		const corpus = collectFunctions(sf, "homogeneous.ts");
+
+		const pruned = findSimilarGroups(corpus, { threshold: 0.8 });
+		const reference = findSimilarGroups(corpus, {
+			threshold: 0.8,
+			exhaustiveScan: true,
+		});
+
+		expect(serializeGroups(pruned)).toEqual(serializeGroups(reference));
+	});
+
+	const STATEMENT_POOL = [
+		"const a = input.load();",
+		"if (!a) { return null; }",
+		"for (const item of items) { total += item.count; }",
+		"while (queue.length > 0) { queue.pop(); }",
+		"try { JSON.parse(raw); } catch { fallback(); }",
+		"switch (mode) { case 1: run(); break; default: stop(); }",
+		"const mapped = rows.map((row) => row.id);",
+		"await Promise.all(tasks);",
+		'throw new Error("bad state: " + code);',
+		"const [first, ...rest] = parts;",
+		"obj.field ??= computeDefault();",
+		"return values.filter((v) => v > 0).length;",
+	] as const;
+
+	/**
+	 * Structural diversity is what matters: identifiers normalize to `$I`, so
+	 * realism comes from variable-length bodies mixing distinct statement
+	 * forms, like a real mixed codebase.
+	 */
+	function makeDiverseCorpus(size: number, seed: number) {
+		const rng = makeRng(seed);
+		const sources: string[] = [];
+		for (let i = 0; i < size; i++) {
+			const statementCount = 1 + Math.floor(rng() * 8);
+			const statements: string[] = [];
+			for (let s = 0; s < statementCount; s++) {
+				statements.push(
+					STATEMENT_POOL[Math.floor(rng() * STATEMENT_POOL.length)] ??
+						STATEMENT_POOL[0]
+				);
+			}
+			sources.push(`async function fn${i}() { ${statements.join(" ")} }`);
+		}
+		const sf = makeSourceFile(sources.join("\n"), "diverse.ts");
+		return collectFunctions(sf, "diverse.ts");
+	}
+
+	test("pruned and exhaustive scans agree exactly on the diverse corpus", () => {
+		const corpus = makeDiverseCorpus(300, 11);
+		expect(
+			serializeGroups(findSimilarGroups(corpus, { threshold: 0.8 }))
+		).toEqual(
+			serializeGroups(
+				findSimilarGroups(corpus, { threshold: 0.8, exhaustiveScan: true })
+			)
+		);
+	});
+
+	test("candidate pair counts fall materially on mixed corpora", () => {
+		const corpus = makeDiverseCorpus(500, 7);
+		const prunedStats = { candidatePairs: 0, scoredPairs: 0 };
+		const exhaustiveStats = { candidatePairs: 0, scoredPairs: 0 };
+
+		findSimilarGroups(corpus, { threshold: 0.8, stats: prunedStats });
+		findSimilarGroups(corpus, {
+			threshold: 0.8,
+			exhaustiveScan: true,
+			stats: exhaustiveStats,
+		});
+
+		expect(prunedStats.candidatePairs).toBeGreaterThan(0);
+		// The pruned scan must consider well under half of the exhaustive
+		// pair count on a mixed corpus.
+		expect(prunedStats.candidatePairs).toBeLessThan(
+			exhaustiveStats.candidatePairs / 2
+		);
+	});
+});
