@@ -1,7 +1,6 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
-import { scanExports } from "../core/scanner.ts";
-import { withSourceFile } from "../core/source-file.ts";
+import { getIndexedFileExports } from "../core/export-index.ts";
 import { discoverProject } from "../core/tsconfig-discovery.ts";
 import {
 	discoverWorkspace,
@@ -213,7 +212,7 @@ export function search(
 			}
 
 			try {
-				const fileExports = getFileExports(filePath);
+				const fileExports = getIndexedFileExports(filePath);
 
 				for (const exp of fileExports) {
 					if (exp.name.toLowerCase().includes(queryLower)) {
@@ -258,10 +257,6 @@ export function search(
 	});
 
 	return { files, exports };
-}
-
-function getFileExports(filePath: string): ExportInfo[] {
-	return withSourceFile(filePath, scanExports, []);
 }
 
 function printResults(
