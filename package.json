@@ -1,6 +1,6 @@
 {
   "name": "@mherod/resect",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "description": "Surgical TypeScript/JavaScript module refactoring CLI. Move files, rename exports, and watch every import update automatically.",
   "type": "module",
   "bin": {
@@ -98,7 +98,6 @@
   "engines": {
     "bun": ">=1.0.0"
   },
-
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "typescript": "^5.7.2",
