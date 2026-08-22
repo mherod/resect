@@ -8,6 +8,7 @@ import {
 	cleanup,
 	initializeGitRepository,
 	makeFixture,
+	runCli,
 } from "./__test-helpers.ts";
 import { auditCommand, buildAuditReport, detectCycles } from "./audit.ts";
 
@@ -626,6 +627,95 @@ describe("audit non-source exclusion", () => {
 			const report = JSON.parse(result.stdout);
 
 			expect(report.warnings.join("\n")).not.toContain("non-source");
+		} finally {
+			await cleanup(dir);
+		}
+	});
+});
+
+// ─── Threshold flag validation (#236) ──────────────────────────────────────
+
+describe("audit threshold flag validation (#236)", () => {
+	async function makeHubFixture(): Promise<string> {
+		return makeFixture("audit-threshold-validation", {
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: { strict: true },
+				include: ["src/**/*.ts"],
+			}),
+			"src/a.ts": "export const a = 1;\n",
+			"src/b.ts": "export const b = 1;\n",
+			"src/c.ts": "export const c = 1;\n",
+			"src/hub.ts":
+				'import { a } from "./a.ts";\nimport { b } from "./b.ts";\nimport { c } from "./c.ts";\nexport const hub = a + b + c;\n',
+		});
+	}
+
+	for (const flag of [
+		"fan-out-threshold",
+		"fan-in-threshold",
+		"export-threshold",
+	]) {
+		test(`a non-numeric --${flag} exits non-zero instead of reporting nothing`, async () => {
+			const dir = await makeHubFixture();
+			try {
+				const { stdout, stderr, exitCode } = await runCli([
+					"audit",
+					dir,
+					`--${flag}=abc`,
+					"--json",
+				]);
+
+				expect(exitCode).toBe(1);
+				expect(stdout).toBe("");
+				expect(stderr).toContain(`--${flag} must be`);
+			} finally {
+				await cleanup(dir);
+			}
+		});
+	}
+
+	test("a valid threshold still flags and unflags exactly as before", async () => {
+		const dir = await makeHubFixture();
+		try {
+			const flagged = await runCli([
+				"audit",
+				dir,
+				"--fan-out-threshold=1",
+				"--json",
+			]);
+			expect(flagged.exitCode).toBe(0);
+			const flaggedReport = JSON.parse(flagged.stdout);
+			expect(
+				flaggedReport.highFanOut.map(({ file }: { file: string }) => file)
+			).toContain("src/hub.ts");
+			expect(flaggedReport.highFanOut[0]?.fanOut).toBe(3);
+
+			const unflagged = await runCli([
+				"audit",
+				dir,
+				"--fan-out-threshold=10",
+				"--json",
+			]);
+			expect(unflagged.exitCode).toBe(0);
+			expect(JSON.parse(unflagged.stdout).highFanOut).toEqual([]);
+		} finally {
+			await cleanup(dir);
+		}
+	});
+
+	test("extract-common rejects a non-numeric --group non-zero", async () => {
+		const dir = await makeHubFixture();
+		try {
+			const { stdout, stderr, exitCode } = await runCli([
+				"extract-common",
+				dir,
+				"--group=abc",
+				"--dry-run",
+			]);
+
+			expect(exitCode).toBe(1);
+			expect(stdout).toBe("");
+			expect(stderr).toContain("--group must be");
 		} finally {
 			await cleanup(dir);
 		}

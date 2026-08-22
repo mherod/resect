@@ -47,6 +47,35 @@ function requireArg(
 	}
 }
 
+/**
+ * Parse an optional numeric CLI flag, rejecting values that would otherwise
+ * coerce to NaN and silently disable a check (#236). Mirrors the truthy
+ * handling the call sites used before: an absent or empty value returns
+ * undefined so the command default applies. Anything non-finite or below
+ * `min` (or non-integer when `integer` is set) exits non-zero with the
+ * standard CLI error style. #219 will replace this with declarative
+ * validation in OPTION_FLAGS.
+ */
+function parseNumericFlag(
+	flagName: string,
+	raw: string | undefined,
+	{ min = 0, integer = false }: { min?: number; integer?: boolean } = {}
+): number | undefined {
+	if (raw === undefined || raw === "") {
+		return undefined;
+	}
+	const value = Number(raw);
+	const isValid =
+		(integer ? Number.isInteger(value) : Number.isFinite(value)) &&
+		value >= min;
+	if (!isValid) {
+		const kind = integer ? `an integer >= ${min}` : `a finite number >= ${min}`;
+		logger.error(`Error: --${flagName} must be ${kind}`);
+		process.exit(1);
+	}
+	return value;
+}
+
 interface CommandDef {
 	name: string;
 	helpText: string;
@@ -522,8 +551,10 @@ export const COMMANDS: CommandDef[] = [
 				logger.error("Error: --threshold must be a number between 0.0 and 1.0");
 				process.exit(1);
 			}
-			const rawGroup = values.group;
-			const group = rawGroup === undefined ? undefined : Number(rawGroup);
+			const group = parseNumericFlag("group", values.group, {
+				min: 1,
+				integer: true,
+			});
 			await extractCommonCommand({
 				directory,
 				project: values.project,
@@ -862,15 +893,18 @@ export const COMMANDS: CommandDef[] = [
 				project: values.project,
 				json: values.json,
 				workspace: values.workspace,
-				fanOutThreshold: values["fan-out-threshold"]
-					? Number(values["fan-out-threshold"])
-					: undefined,
-				fanInThreshold: values["fan-in-threshold"]
-					? Number(values["fan-in-threshold"])
-					: undefined,
-				exportThreshold: values["export-threshold"]
-					? Number(values["export-threshold"])
-					: undefined,
+				fanOutThreshold: parseNumericFlag(
+					"fan-out-threshold",
+					values["fan-out-threshold"]
+				),
+				fanInThreshold: parseNumericFlag(
+					"fan-in-threshold",
+					values["fan-in-threshold"]
+				),
+				exportThreshold: parseNumericFlag(
+					"export-threshold",
+					values["export-threshold"]
+				),
 				includeIgnored: values["include-ignored"],
 			});
 		},
