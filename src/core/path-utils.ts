@@ -49,6 +49,22 @@ export function dedupeTsconfigResults<T extends TsconfigPathResult>(
 	return deduped;
 }
 
+/** Whether a freshly discovered path list has exactly the cached members. */
+export function samePathSet(
+	current: readonly string[],
+	cached: ReadonlySet<string>
+): boolean {
+	if (current.length !== cached.size) {
+		return false;
+	}
+	for (const filePath of current) {
+		if (!cached.has(filePath)) {
+			return false;
+		}
+	}
+	return true;
+}
+
 /** Cheap sync mtime probe. NaN on an unreadable file forces a cache miss. */
 export function fileMtimeMs(file: string): number {
 	try {

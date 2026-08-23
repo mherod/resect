@@ -196,7 +196,7 @@ the Vue/out-of-program parse fallback.
 
 ### Workspace and graph caches
 
-`discoverWorkspace()` uses a process-lifetime `workspaceCache` keyed by the resolved start directory. Call it once per command and pass `WorkspaceInfo | null`; use `clearWorkspaceCache()` only in tests that mutate workspace files between calls.
+`discoverWorkspace()` stores hydrated workspace metadata once per canonical root, with bounded LRU root and start-directory alias caches. Root eviction removes its aliases as a group. Positive entries watch workspace configuration, root/package manifests, and source/barrel/tsconfig layout candidates; package-set additions use a throttled ~2s manifest re-glob, while removals invalidate through the watched manifest path. Negative aliases expire after ~2s. Keep warming lazy because caller paths are high-cardinality. Call discovery once per command and pass `WorkspaceInfo | null`; use `clearWorkspaceCache()` only for test isolation.
 
 `graphCache` (#78, #87) and `discoveryCache` (#88) are bounded LRUs and use `snapshotMtimes(paths)` plus `mtimesUnchanged(snapshot)` from `path-utils.ts`. Evict companion metadata through the shared bounded-cache helper so cache groups cannot drift. The sync `statSync().mtimeMs` probe catches edits/deletions without rebuilding unchanged graphs. Discovery detects added configs with a throttled ~2s re-glob.
 

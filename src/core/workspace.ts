@@ -2,8 +2,15 @@ import path from "node:path";
 import { logger } from "../cli-logger.ts";
 import { getRuntime } from "../runtime/index.ts";
 import type { ConsumerDependencyContractInput } from "../types/deps.ts";
+import {
+	enforceCacheLimit,
+	MAX_PROJECT_CACHE_ENTRIES,
+	setCacheEntry,
+	touchCacheEntry,
+} from "./bounded-cache.ts";
 import { EXPORT_STATEMENT_PATTERN } from "./constants.ts";
 import { readPackageJson } from "./package-json.ts";
+import { fileMtimeMs, samePathSet } from "./path-utils.ts";
 
 export interface WorkspacePackage {
 	/** Package name from package.json */
@@ -73,34 +80,227 @@ export interface WorkspaceInfo {
 	};
 }
 
-/** Per-invocation cache for workspace discovery, keyed by resolved start directory */
-const workspaceCache = new Map<string, WorkspaceInfo | null>();
+export const MAX_WORKSPACE_ROOT_ENTRIES = MAX_PROJECT_CACHE_ENTRIES;
+export const MAX_WORKSPACE_ALIAS_ENTRIES = MAX_PROJECT_CACHE_ENTRIES * 4;
+
+const NEGATIVE_WORKSPACE_CACHE_TTL_MS = 2000;
+const WORKSPACE_PACKAGE_REGLOB_INTERVAL_MS = 2000;
+
+interface WorkspaceRoot {
+	root: string;
+	type: WorkspaceInfo["type"];
+	patterns: string[];
+	configPath: string;
+}
+
+interface WorkspaceAliasEntry {
+	root: string | null;
+	expiresAt: number;
+}
+
+interface WorkspaceRootCacheEntry {
+	workspace: WorkspaceInfo;
+	manifestPaths: Set<string>;
+	pathSnapshot: Map<string, number | null>;
+	lastReglobAt: number;
+}
+
+/** Hydrated workspace data, stored once per canonical workspace root. */
+const workspaceRootCache = new Map<string, WorkspaceRootCacheEntry>();
+/** Bounded LRU from high-cardinality caller paths to canonical roots. */
+const workspaceAliasCache = new Map<string, WorkspaceAliasEntry>();
+/** Reverse alias membership, used to evict a root and every alias together. */
+const workspaceAliasesByRoot = new Map<string, Set<string>>();
+
+function removeAliasMembership(startDir: string): boolean {
+	const alias = workspaceAliasCache.get(startDir);
+	if (!alias?.root) {
+		return false;
+	}
+	const aliases = workspaceAliasesByRoot.get(alias.root);
+	const removed = aliases?.delete(startDir) ?? false;
+	if (aliases?.size === 0) {
+		workspaceAliasesByRoot.delete(alias.root);
+	}
+	return removed;
+}
+
+function deleteWorkspaceAlias(startDir: string): void {
+	removeAliasMembership(startDir);
+	workspaceAliasCache.delete(startDir);
+}
+
+function setWorkspaceAlias(startDir: string, root: string | null): void {
+	deleteWorkspaceAlias(startDir);
+	setCacheEntry(workspaceAliasCache, startDir, {
+		expiresAt: root
+			? Number.POSITIVE_INFINITY
+			: Date.now() + NEGATIVE_WORKSPACE_CACHE_TTL_MS,
+		root,
+	});
+	if (root) {
+		let aliases = workspaceAliasesByRoot.get(root);
+		if (!aliases) {
+			aliases = new Set();
+			workspaceAliasesByRoot.set(root, aliases);
+		}
+		aliases.add(startDir);
+	}
+	enforceCacheLimit(
+		workspaceAliasCache,
+		[{ delete: removeAliasMembership }, workspaceAliasCache],
+		MAX_WORKSPACE_ALIAS_ENTRIES
+	);
+}
+
+function removeRootAliases(root: string): boolean {
+	const aliases = workspaceAliasesByRoot.get(root);
+	if (!aliases) {
+		return false;
+	}
+	for (const alias of aliases) {
+		workspaceAliasCache.delete(alias);
+	}
+	return workspaceAliasesByRoot.delete(root);
+}
+
+function deleteWorkspaceRoot(root: string): void {
+	removeRootAliases(root);
+	workspaceRootCache.delete(root);
+}
+
+function setWorkspaceRoot(root: string, entry: WorkspaceRootCacheEntry): void {
+	setCacheEntry(workspaceRootCache, root, entry);
+	enforceCacheLimit(
+		workspaceRootCache,
+		[{ delete: removeRootAliases }, workspaceRootCache],
+		MAX_WORKSPACE_ROOT_ENTRIES
+	);
+}
+
+function snapshotWorkspacePaths(
+	paths: readonly string[]
+): Map<string, number | null> {
+	const snapshot = new Map<string, number | null>();
+	for (const filePath of paths) {
+		const mtime = fileMtimeMs(filePath);
+		snapshot.set(filePath, Number.isNaN(mtime) ? null : mtime);
+	}
+	return snapshot;
+}
+
+function workspacePathsUnchanged(
+	snapshot: Map<string, number | null>
+): boolean {
+	for (const [filePath, previousMtime] of snapshot) {
+		const currentMtime = fileMtimeMs(filePath);
+		if (
+			previousMtime === null
+				? !Number.isNaN(currentMtime)
+				: currentMtime !== previousMtime
+		) {
+			return false;
+		}
+	}
+	return true;
+}
+
+async function getCachedWorkspace(
+	root: string
+): Promise<WorkspaceInfo | undefined> {
+	const cached = touchCacheEntry(workspaceRootCache, root);
+	if (!cached) {
+		return undefined;
+	}
+	if (!workspacePathsUnchanged(cached.pathSnapshot)) {
+		deleteWorkspaceRoot(root);
+		return undefined;
+	}
+
+	const now = Date.now();
+	if (now - cached.lastReglobAt >= WORKSPACE_PACKAGE_REGLOB_INTERVAL_MS) {
+		cached.lastReglobAt = now;
+		const currentManifests = await findWorkspacePackageManifests(
+			cached.workspace.root,
+			cached.workspace.patterns
+		);
+		if (!samePathSet(currentManifests, cached.manifestPaths)) {
+			deleteWorkspaceRoot(root);
+			return undefined;
+		}
+	}
+
+	return cached.workspace;
+}
+
+function workspaceSnapshotPaths(
+	workspace: WorkspaceInfo,
+	configPath: string
+): string[] {
+	const paths = new Set<string>([
+		configPath,
+		path.join(workspace.root, "package.json"),
+	]);
+	for (const pkg of workspace.packages) {
+		paths.add(pkg.packageJsonPath);
+		for (const sourceDirectory of ["src", "lib", "source"]) {
+			paths.add(path.join(pkg.path, sourceDirectory));
+			for (const barrelName of ["index.ts", "index.tsx", "index.js"]) {
+				paths.add(path.join(pkg.path, sourceDirectory, barrelName));
+			}
+		}
+		for (const barrelName of ["index.ts", "index.tsx", "index.js"]) {
+			paths.add(path.join(pkg.path, barrelName));
+		}
+		for (const tsconfigName of ["tsconfig.json", "tsconfig.build.json"]) {
+			paths.add(path.join(pkg.path, tsconfigName));
+		}
+	}
+	return [...paths];
+}
 
 /**
  * Discover workspace configuration and all packages.
- * Results are cached per start directory for the lifetime of the process.
+ * Results are cached by canonical workspace root with bounded start-directory
+ * aliases. Cached filesystem inputs self-invalidate in long-lived processes.
  */
 export async function discoverWorkspace(
 	startDir: string
 ): Promise<WorkspaceInfo | null> {
 	const absoluteDir = path.resolve(startDir);
-
-	const cached = workspaceCache.get(absoluteDir);
-	if (cached !== undefined) {
-		return cached;
+	const alias = touchCacheEntry(workspaceAliasCache, absoluteDir);
+	if (alias) {
+		if (alias.root) {
+			const cached = await getCachedWorkspace(alias.root);
+			if (cached) {
+				return cached;
+			}
+		} else {
+			if (Date.now() < alias.expiresAt) {
+				return null;
+			}
+			deleteWorkspaceAlias(absoluteDir);
+		}
 	}
 
 	// Find workspace root by looking for workspace config files
 	const workspaceRoot = await findWorkspaceRoot(absoluteDir);
 	if (!workspaceRoot) {
-		workspaceCache.set(absoluteDir, null);
+		setWorkspaceAlias(absoluteDir, null);
 		return null;
 	}
 
-	const { root, type, patterns } = workspaceRoot;
+	const cached = await getCachedWorkspace(workspaceRoot.root);
+	if (cached) {
+		setWorkspaceAlias(absoluteDir, workspaceRoot.root);
+		return cached;
+	}
+
+	const { configPath, patterns, root, type } = workspaceRoot;
 
 	// Find all packages matching workspace patterns
-	const packages = await findWorkspacePackages(root, patterns);
+	const manifestPaths = await findWorkspacePackageManifests(root, patterns);
+	const packages = await findWorkspacePackages(manifestPaths);
 
 	// Read root package.json
 	const rootPackageJson = await readPackageJson(
@@ -120,7 +320,15 @@ export async function discoverWorkspace(
 				}
 			: undefined,
 	};
-	workspaceCache.set(absoluteDir, result);
+	setWorkspaceRoot(root, {
+		lastReglobAt: Date.now(),
+		manifestPaths: new Set(manifestPaths),
+		pathSnapshot: snapshotWorkspacePaths(
+			workspaceSnapshotPaths(result, configPath)
+		),
+		workspace: result,
+	});
+	setWorkspaceAlias(absoluteDir, root);
 	return result;
 }
 
@@ -130,17 +338,36 @@ export async function discoverWorkspace(
  * fresh scan; production code should rely on the cache.
  */
 export function clearWorkspaceCache(): void {
-	workspaceCache.clear();
+	workspaceRootCache.clear();
+	workspaceAliasCache.clear();
+	workspaceAliasesByRoot.clear();
+}
+
+/** Cache cardinalities exposed only for bounded-cache regression tests. */
+export function getWorkspaceCacheStatsForTesting(): {
+	aliasEntries: number;
+	negativeAliasEntries: number;
+	rootEntries: number;
+} {
+	let negativeAliasEntries = 0;
+	for (const alias of workspaceAliasCache.values()) {
+		if (!alias.root) {
+			negativeAliasEntries += 1;
+		}
+	}
+	return {
+		aliasEntries: workspaceAliasCache.size,
+		negativeAliasEntries,
+		rootEntries: workspaceRootCache.size,
+	};
 }
 
 /**
  * Find the workspace root directory and config
  */
-async function findWorkspaceRoot(startDir: string): Promise<{
-	root: string;
-	type: WorkspaceInfo["type"];
-	patterns: string[];
-} | null> {
+async function findWorkspaceRoot(
+	startDir: string
+): Promise<WorkspaceRoot | null> {
 	let currentDir = startDir;
 
 	while (currentDir !== path.dirname(currentDir)) {
@@ -148,7 +375,12 @@ async function findWorkspaceRoot(startDir: string): Promise<{
 		const pnpmWorkspace = path.join(currentDir, "pnpm-workspace.yaml");
 		if (await getRuntime().fs.exists(pnpmWorkspace)) {
 			const patterns = await parsePnpmWorkspace(pnpmWorkspace);
-			return { root: currentDir, type: "pnpm", patterns };
+			return {
+				configPath: pnpmWorkspace,
+				patterns,
+				root: currentDir,
+				type: "pnpm",
+			};
 		}
 
 		// Check for package.json with workspaces field (yarn/npm)
@@ -161,7 +393,12 @@ async function findWorkspaceRoot(startDir: string): Promise<{
 					? workspaces
 					: (workspaces.packages ?? []);
 				const type = await detectWorkspaceType(currentDir, pkg.packageManager);
-				return { root: currentDir, type, patterns };
+				return {
+					configPath: packageJson,
+					patterns,
+					root: currentDir,
+					type,
+				};
 			}
 		}
 
@@ -242,11 +479,11 @@ async function parsePnpmWorkspace(filePath: string): Promise<string[]> {
 /**
  * Find all packages in the workspace
  */
-async function findWorkspacePackages(
+async function findWorkspacePackageManifests(
 	root: string,
 	patterns: string[]
-): Promise<WorkspacePackage[]> {
-	const packages: WorkspacePackage[] = [];
+): Promise<string[]> {
+	const packageJsonPaths: string[] = [];
 	const seen = new Set<string>();
 
 	for (const pattern of patterns) {
@@ -268,14 +505,24 @@ async function findWorkspacePackages(
 					continue;
 				}
 				seen.add(packageJsonPath);
-
-				const pkg = await parsePackage(packageJsonPath);
-				if (pkg) {
-					packages.push(pkg);
-				}
+				packageJsonPaths.push(packageJsonPath);
 			}
 		} catch {
 			// Ignore glob errors
+		}
+	}
+	packageJsonPaths.sort((a, b) => a.localeCompare(b));
+	return packageJsonPaths;
+}
+
+async function findWorkspacePackages(
+	packageJsonPaths: readonly string[]
+): Promise<WorkspacePackage[]> {
+	const packages: WorkspacePackage[] = [];
+	for (const packageJsonPath of packageJsonPaths) {
+		const pkg = await parsePackage(packageJsonPath);
+		if (pkg) {
+			packages.push(pkg);
 		}
 	}
 

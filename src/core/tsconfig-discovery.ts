@@ -6,7 +6,7 @@ import {
 	setCacheEntry,
 	touchCacheEntry,
 } from "./bounded-cache.ts";
-import { mtimesUnchanged, snapshotMtimes } from "./path-utils.ts";
+import { mtimesUnchanged, samePathSet, snapshotMtimes } from "./path-utils.ts";
 
 /** Directories to skip during tsconfig discovery */
 const SKIP_DIRECTORIES = new Set([
@@ -104,7 +104,7 @@ export function discoverProject(projectDir: string): ProjectDiscovery {
 		const cachedSet = discoveryCacheTsconfigSets.get(absoluteDir);
 		if (
 			cachedSet &&
-			sameTsconfigSet(findAllTsConfigs(absoluteDir).tsconfigPaths, cachedSet)
+			samePathSet(findAllTsConfigs(absoluteDir).tsconfigPaths, cachedSet)
 		) {
 			return cached;
 		}
@@ -337,22 +337,6 @@ function findAllTsConfigs(dir: string): TsConfigScan {
 	}
 
 	return { tsconfigPaths, ignoreFiles };
-}
-
-/**
- * True when a freshly-globbed tsconfig set matches the cached set (by path).
- * Used to detect newly-added tsconfigs on a cache-hit re-glob.
- */
-function sameTsconfigSet(current: string[], cached: Set<string>): boolean {
-	if (current.length !== cached.size) {
-		return false;
-	}
-	for (const tsconfigPath of current) {
-		if (!cached.has(tsconfigPath)) {
-			return false;
-		}
-	}
-	return true;
 }
 
 function shouldSkipDirectory(name: string): boolean {
