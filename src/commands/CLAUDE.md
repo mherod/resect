@@ -12,6 +12,15 @@ Every command must reach:
 
 `src/index.test.ts` enforces CLI/library parity. Declare global flags in `OPTION_FLAGS` (`src/commands/option-flags.ts`); `option-flags.test.ts` guards drift.
 
+`command-descriptor.ts` is the zod-free owner for phased option declaration.
+Keep `OptionDescriptor.name` constrained to `OptionName`; numeric and enum
+semantics live on the descriptor while `toFlagSpec()` lowers them to the
+boolean/string types supported by `node:util` `parseArgs`.
+`toRegistryOptions()` owns pure coercion and validation and returns a structured
+failure; the registry renderer owns stderr and exit codes. Audit is the A1
+pilot. DON'T import zod, MCP modules, or per-command implementation modules into
+the descriptor owner, and don't migrate a second command incidentally.
+
 ## CLI examples
 
 ```bash

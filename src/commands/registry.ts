@@ -5,6 +5,10 @@ import { analyzeCommand } from "./analyze.ts";
 import { analyzeImpactCommand } from "./analyze-impact.ts";
 import { auditCommand } from "./audit.ts";
 import { barrelCommand } from "./barrel.ts";
+import {
+	AUDIT_OPTION_DESCRIPTORS,
+	toRegistryOptions,
+} from "./command-descriptor.ts";
 import { CLI_NAME, cliHelp } from "./command-spec.ts";
 import { depsCommand } from "./deps.ts";
 import { discoverCommand } from "./discover.ts";
@@ -53,8 +57,9 @@ function requireArg(
  * handling the call sites used before: an absent or empty value returns
  * undefined so the command default applies. Anything non-finite or below
  * `min` (or non-integer when `integer` is set) exits non-zero with the
- * standard CLI error style. #219 will replace this with declarative
- * validation in OPTION_FLAGS.
+ * standard CLI error style. Descriptor-migrated commands use the pure
+ * `toRegistryOptions` path; this compatibility helper remains for legacy
+ * call sites such as extract-common's `--group` until their own phase.
  */
 function parseNumericFlag(
 	flagName: string,
@@ -877,35 +882,17 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "audit",
 		helpText: cliHelp("audit"),
-		options: [
-			"project",
-			"json",
-			"workspace",
-			"fan-out-threshold",
-			"fan-in-threshold",
-			"export-threshold",
-			"include-ignored",
-		],
+		options: AUDIT_OPTION_DESCRIPTORS.map(({ name }) => name),
 		run: async ([directory], values) => {
 			requireArg("audit", "<directory>", directory);
+			const parsed = toRegistryOptions(AUDIT_OPTION_DESCRIPTORS, values);
+			if (!parsed.ok) {
+				logger.error(parsed.message);
+				process.exit(1);
+			}
 			await auditCommand({
 				directory,
-				project: values.project,
-				json: values.json,
-				workspace: values.workspace,
-				fanOutThreshold: parseNumericFlag(
-					"fan-out-threshold",
-					values["fan-out-threshold"]
-				),
-				fanInThreshold: parseNumericFlag(
-					"fan-in-threshold",
-					values["fan-in-threshold"]
-				),
-				exportThreshold: parseNumericFlag(
-					"export-threshold",
-					values["export-threshold"]
-				),
-				includeIgnored: values["include-ignored"],
+				...parsed.value,
 			});
 		},
 	},

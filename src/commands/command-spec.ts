@@ -15,14 +15,16 @@
  *    derives each `COMMANDS` entry's `helpText` from it.
  *  - `mcpDescription` is the dense agent-facing tool description; `mcp-server.ts`
  *    derives each `registerTool` description from it.
+ *  - `options`, when present, attaches the zod-free option descriptors that
+ *    generate the command's CLI flag/coercion contract during phased migration.
  * `cliHelp` and `mcpDescription` are intentionally DIFFERENT content for
  * different audiences, so they are separate fields — never merged. They are pure
  * strings (no zod, no command-module imports), so this module stays CLI-safe:
  * importing it never pulls zod into the CLI binary (zod is MCP-only).
  *
  * What stays OUT of the spec, by design:
- *  - The CLI `run` handlers (arg validation + option-bag mapping) keep their
- *    error strings in `registry.ts`.
+ *  - CLI `run` handlers and positional-argument validation remain in
+ *    `registry.ts`; descriptor-migrated option bags are generated separately.
  *  - The MCP `registerTool` zod `inputSchema` + handlers stay in `mcp-server.ts`
  *    (already single-source there) along with the deliberate dirty-worktree
  *    control-flow variation. Both reuse `option-flags.ts` / `option-domains.ts`
@@ -33,6 +35,10 @@
  */
 
 import { bin } from "../../package.json";
+import {
+	AUDIT_OPTION_DESCRIPTORS,
+	type CommandDescriptor,
+} from "./command-descriptor.ts";
 
 /**
  * The invocable CLI program name — the package `bin` key (`resect`), NOT the
@@ -42,7 +48,7 @@ import { bin } from "../../package.json";
 export const CLI_NAME: string = Object.keys(bin)[0] ?? "resect";
 
 /** Canonical declaration of one resect command. */
-export interface CommandSpec {
+export interface CommandSpec extends CommandDescriptor {
 	/** Command name exactly as typed on the CLI and registered as an MCP tool. */
 	name: string;
 	/**
@@ -623,6 +629,7 @@ Examples:
 		name: "audit",
 		usage: "<directory>",
 		summary: "Analyze module health: fan-out, fan-in, cycles",
+		options: AUDIT_OPTION_DESCRIPTORS,
 		cliHelp: `
 Usage: ${CLI_NAME} audit <directory> [options]
 

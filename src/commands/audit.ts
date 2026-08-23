@@ -28,6 +28,7 @@ import type { ModuleReference } from "../types/graph.ts";
 import type { ProgressCallback } from "../types/progress.ts";
 import type { ProjectConfig } from "../types.ts";
 import { setupCommandContext } from "./command-context.ts";
+import { AUDIT_OPTION_DEFAULTS } from "./command-descriptor.ts";
 
 export interface AuditOptions extends ReadOnlyCommandOptions {
 	directory: string;
@@ -565,9 +566,9 @@ export async function analyzeAudit(
 		project: projectArg,
 		json = false,
 		workspace = false,
-		fanOutThreshold = 10,
-		fanInThreshold = 10,
-		exportThreshold = 8,
+		fanOutThreshold = AUDIT_OPTION_DEFAULTS.fanOutThreshold,
+		fanInThreshold = AUDIT_OPTION_DEFAULTS.fanInThreshold,
+		exportThreshold = AUDIT_OPTION_DEFAULTS.exportThreshold,
 		includeIgnored = false,
 	} = options;
 	const absoluteDir = path.resolve(directory);

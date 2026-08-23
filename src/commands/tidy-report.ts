@@ -20,15 +20,13 @@ import type {
 } from "../types/tidy.ts";
 import { buildAuditReport, type FileMetrics } from "./audit.ts";
 import { setupCommandContext } from "./command-context.ts";
+import { AUDIT_OPTION_DEFAULTS } from "./command-descriptor.ts";
 import {
 	findUnusedExportsFromGraphs,
 	type ProjectGraphResult,
 } from "./unused.ts";
 
 const TIDY_SCHEMA_VERSION = "1-experimental" as const;
-const DEFAULT_FAN_OUT_THRESHOLD = 10;
-const DEFAULT_FAN_IN_THRESHOLD = 10;
-const DEFAULT_EXPORT_THRESHOLD = 8;
 const DEFAULT_SIMILARITY_THRESHOLD = 0.8;
 
 function firstScopedFile(
@@ -261,9 +259,12 @@ export async function buildTidyReport(
 		graph,
 		reportDirectory,
 		scopeDir,
-		fanOutThreshold: options.fanOutThreshold ?? DEFAULT_FAN_OUT_THRESHOLD,
-		fanInThreshold: options.fanInThreshold ?? DEFAULT_FAN_IN_THRESHOLD,
-		exportThreshold: options.exportThreshold ?? DEFAULT_EXPORT_THRESHOLD,
+		fanOutThreshold:
+			options.fanOutThreshold ?? AUDIT_OPTION_DEFAULTS.fanOutThreshold,
+		fanInThreshold:
+			options.fanInThreshold ?? AUDIT_OPTION_DEFAULTS.fanInThreshold,
+		exportThreshold:
+			options.exportThreshold ?? AUDIT_OPTION_DEFAULTS.exportThreshold,
 	});
 	const categories = {
 		unused: unused.findings.length,

@@ -4,6 +4,7 @@ import { parseArgs } from "node:util";
 import { version } from "../package.json";
 import { logger } from "./cli-logger.ts";
 import { installCliStdoutErrorHandler } from "./cli-stream-errors.ts";
+import { AUDIT_OPTION_DEFAULTS } from "./commands/command-descriptor.ts";
 import { CLI_NAME, formatCommandList } from "./commands/command-spec.ts";
 import { applyResectConfigToCliValues } from "./commands/config-defaults.ts";
 import {
@@ -79,9 +80,9 @@ Options:
   --out             Write command output to a file
   --entrypoint-globs   Glob pattern(s) for externally dispatched entrypoints (repeatable)
   --include-ignored    Analyse git-ignored files too (skipped by default)
-  --fan-out-threshold  Flag files with more than N imports (default: 10, audit command)
-  --fan-in-threshold   Flag files with more than N consumers (default: 10, audit command)
-  --export-threshold   Flag files with more than N exports (default: 8, audit command)
+  --fan-out-threshold  Flag files with more than N imports (default: ${AUDIT_OPTION_DEFAULTS.fanOutThreshold}, audit command)
+  --fan-in-threshold   Flag files with more than N consumers (default: ${AUDIT_OPTION_DEFAULTS.fanInThreshold}, audit command)
+  --export-threshold   Flag files with more than N exports (default: ${AUDIT_OPTION_DEFAULTS.exportThreshold}, audit command)
   --min-siblings       Minimum files in a directory before naming audit (default: 3)
   --majority-threshold Required filename casing majority for naming audit (default: 0.6)
   --case=STYLE        Require naming files to use kebab-case, camelCase, PascalCase, or snake_case

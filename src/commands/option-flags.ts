@@ -1,4 +1,58 @@
 import type { ParseArgsConfig } from "node:util";
+import { AUDIT_OPTION_DESCRIPTORS, toFlagSpec } from "./command-descriptor.ts";
+
+/** A canonical long-form option name accepted by the CLI parser. */
+export type OptionName =
+	| "help"
+	| "version"
+	| "verbose"
+	| "dry-run"
+	| "project"
+	| "type"
+	| "prefer"
+	| "alias-prefer"
+	| "rename-specifier"
+	| "force"
+	| "journal"
+	| "verify"
+	| "no-verify"
+	| "fix"
+	| "fix-category"
+	| "json"
+	| "threshold"
+	| "max-groups"
+	| "max-changes"
+	| "strict"
+	| "name-threshold"
+	| "same-name-only"
+	| "skip-same-file"
+	| "only-related-to"
+	| "min-lines"
+	| "skip-directives"
+	| "skip-wrappers"
+	| "kinds"
+	| "group"
+	| "output"
+	| "workspace"
+	| "experimental"
+	| "scope"
+	| "out"
+	| "bucket"
+	| "format"
+	| "fan-out-threshold"
+	| "fan-in-threshold"
+	| "export-threshold"
+	| "min-siblings"
+	| "majority-threshold"
+	| "case"
+	| "include-tests"
+	| "convention-threshold"
+	| "ignore"
+	| "entrypoint-globs"
+	| "transform"
+	| "batch"
+	| "extensions"
+	| "include-ignored";
 
 /** parseArgs option spec for a single flag, narrowed to what resect uses. */
 type FlagSpec =
@@ -48,9 +102,9 @@ export const OPTION_FLAGS = {
 	out: { type: "string" },
 	bucket: { type: "string" },
 	format: { type: "string" },
-	"fan-out-threshold": { type: "string" },
-	"fan-in-threshold": { type: "string" },
-	"export-threshold": { type: "string" },
+	"fan-out-threshold": toFlagSpec(AUDIT_OPTION_DESCRIPTORS[3]),
+	"fan-in-threshold": toFlagSpec(AUDIT_OPTION_DESCRIPTORS[4]),
+	"export-threshold": toFlagSpec(AUDIT_OPTION_DESCRIPTORS[5]),
 	"min-siblings": { type: "string" },
 	"majority-threshold": { type: "string" },
 	case: { type: "string" },
@@ -62,10 +116,7 @@ export const OPTION_FLAGS = {
 	batch: { type: "string" },
 	extensions: { type: "string" },
 	"include-ignored": { type: "boolean" },
-} as const satisfies Record<string, FlagSpec>;
-
-/** A canonical long-form option name accepted by the CLI parser. */
-export type OptionName = keyof typeof OPTION_FLAGS;
+} as const satisfies Record<OptionName, FlagSpec>;
 
 /** The exact object shape `parseArgs({ options })` expects. */
 export const PARSE_ARGS_OPTIONS = OPTION_FLAGS as NonNullable<
