@@ -8,6 +8,7 @@ import {
 	setCacheEntry,
 	touchCacheEntry,
 } from "./bounded-cache.ts";
+import { mapConcurrent } from "./concurrency.ts";
 import { EXPORT_STATEMENT_PATTERN } from "./constants.ts";
 import { readPackageJson } from "./package-json.ts";
 import { fileMtimeMs, samePathSet } from "./path-utils.ts";
@@ -82,6 +83,7 @@ export interface WorkspaceInfo {
 
 export const MAX_WORKSPACE_ROOT_ENTRIES = MAX_PROJECT_CACHE_ENTRIES;
 export const MAX_WORKSPACE_ALIAS_ENTRIES = MAX_PROJECT_CACHE_ENTRIES * 4;
+export const WORKSPACE_HYDRATION_CONCURRENCY = 4;
 
 const NEGATIVE_WORKSPACE_CACHE_TTL_MS = 2000;
 const WORKSPACE_PACKAGE_REGLOB_INTERVAL_MS = 2000;
@@ -111,6 +113,17 @@ const workspaceRootCache = new Map<string, WorkspaceRootCacheEntry>();
 const workspaceAliasCache = new Map<string, WorkspaceAliasEntry>();
 /** Reverse alias membership, used to evict a root and every alias together. */
 const workspaceAliasesByRoot = new Map<string, Set<string>>();
+/** Raw manifests retained out-of-band so public WorkspaceInfo JSON is unchanged. */
+const workspacePackageManifests = new WeakMap<
+	WorkspacePackage,
+	Readonly<Record<string, unknown>>
+>();
+
+export function getWorkspacePackageManifest(
+	pkg: WorkspacePackage
+): Readonly<Record<string, unknown>> | undefined {
+	return workspacePackageManifests.get(pkg);
+}
 
 function removeAliasMembership(startDir: string): boolean {
 	const alias = workspaceAliasCache.get(startDir);
@@ -518,13 +531,13 @@ async function findWorkspacePackageManifests(
 async function findWorkspacePackages(
 	packageJsonPaths: readonly string[]
 ): Promise<WorkspacePackage[]> {
-	const packages: WorkspacePackage[] = [];
-	for (const packageJsonPath of packageJsonPaths) {
-		const pkg = await parsePackage(packageJsonPath);
-		if (pkg) {
-			packages.push(pkg);
-		}
-	}
+	const hydrated = await mapConcurrent([...packageJsonPaths], parsePackage, {
+		concurrency: WORKSPACE_HYDRATION_CONCURRENCY,
+		onError: () => null,
+	});
+	const packages = hydrated.filter(
+		(pkg): pkg is WorkspacePackage => pkg !== null
+	);
 
 	// Sort by name
 	packages.sort((a, b) => a.name.localeCompare(b.name));
@@ -546,43 +559,56 @@ async function parsePackage(
 	const pkgDir = path.dirname(packageJsonPath);
 
 	// Try to detect source directory
-	let srcDir: string | undefined;
-	for (const candidate of ["src", "lib", "source"]) {
-		const candidatePath = path.join(pkgDir, candidate);
-		if (await getRuntime().fs.exists(candidatePath)) {
-			srcDir = candidate;
-			break;
+	const sourceDirectoryCandidates = ["src", "lib", "source"];
+	const sourceDirectoryMatches = await mapConcurrent(
+		sourceDirectoryCandidates,
+		async (candidate) => getRuntime().fs.exists(path.join(pkgDir, candidate)),
+		{
+			concurrency: WORKSPACE_HYDRATION_CONCURRENCY,
+			onError: () => false,
 		}
-	}
+	);
+	const srcDir = sourceDirectoryCandidates.find(
+		(_candidate, index) => sourceDirectoryMatches[index]
+	);
 
 	// Find barrel files (index.ts/index.tsx that contain exports)
-	const barrelFiles: string[] = [];
+	const barrelCandidates: string[] = [];
 	for (const barrelName of ["index.ts", "index.tsx", "index.js"]) {
-		// Check root
-		const rootBarrel = path.join(pkgDir, barrelName);
-		if (await isBarrelFile(rootBarrel)) {
-			barrelFiles.push(rootBarrel);
-		}
-		// Check src directory
+		barrelCandidates.push(path.join(pkgDir, barrelName));
 		if (srcDir) {
-			const srcBarrel = path.join(pkgDir, srcDir, barrelName);
-			if (await isBarrelFile(srcBarrel)) {
-				barrelFiles.push(srcBarrel);
-			}
+			barrelCandidates.push(path.join(pkgDir, srcDir, barrelName));
 		}
 	}
+	const barrelResults = await mapConcurrent(
+		barrelCandidates,
+		async (candidate) => ((await isBarrelFile(candidate)) ? candidate : null),
+		{
+			concurrency: WORKSPACE_HYDRATION_CONCURRENCY,
+			onError: () => null,
+		}
+	);
+	const barrelFiles = barrelResults.filter(
+		(candidate): candidate is string => candidate !== null
+	);
 
 	// Find tsconfig.json
-	let tsconfigPath: string | undefined;
-	for (const tsconfigName of ["tsconfig.json", "tsconfig.build.json"]) {
-		const candidatePath = path.join(pkgDir, tsconfigName);
-		if (await getRuntime().fs.exists(candidatePath)) {
-			tsconfigPath = candidatePath;
-			break;
+	const tsconfigCandidates = ["tsconfig.json", "tsconfig.build.json"].map(
+		(tsconfigName) => path.join(pkgDir, tsconfigName)
+	);
+	const tsconfigMatches = await mapConcurrent(
+		tsconfigCandidates,
+		async (candidate) => getRuntime().fs.exists(candidate),
+		{
+			concurrency: WORKSPACE_HYDRATION_CONCURRENCY,
+			onError: () => false,
 		}
-	}
+	);
+	const tsconfigPath = tsconfigCandidates.find(
+		(_candidate, index) => tsconfigMatches[index]
+	);
 
-	return {
+	const workspacePackage: WorkspacePackage = {
 		name: pkg.name as string,
 		path: pkgDir,
 		packageJsonPath,
@@ -605,6 +631,8 @@ async function parsePackage(
 		devDependencies: pkg.devDependencies as Record<string, string> | undefined,
 		resect: pkg.resect as WorkspacePackage["resect"],
 	};
+	workspacePackageManifests.set(workspacePackage, pkg);
+	return workspacePackage;
 }
 
 /**
