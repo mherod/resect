@@ -1,11 +1,10 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
-import {
-	ensureRollbackSafeWorktree,
-	type RollbackSafety,
-} from "../core/git.ts";
 import { buildDependencyGraph, type DependencyGraph } from "../core/graph.ts";
-import { runMutation } from "../core/mutation-pipeline.ts";
+import {
+	type MutationPipelineDependencies,
+	runMutation,
+} from "../core/mutation-pipeline.ts";
 import { isCrossPackageMove, normalizePath } from "../core/resolver.ts";
 import {
 	createMoveRollbackStrategy,
@@ -22,7 +21,6 @@ import {
 import { loadTransformConfig } from "../core/transform-config.ts";
 import {
 	printVerificationResults,
-	runWithTypecheckGuard,
 	type VerificationResult,
 } from "../core/verify.ts";
 import { filterToWorkspaceBoundary } from "../core/workspace.ts";
@@ -72,30 +70,26 @@ export interface MoveBatchResult {
 	journalEntryId?: string;
 }
 
+export class MoveBatchWorktreeBlockedError extends Error {
+	constructor() {
+		super("Move batch was blocked by the dirty-worktree guard.");
+		this.name = "MoveBatchWorktreeBlockedError";
+	}
+}
+
 interface MoveBatchDependencies {
 	buildDependencyGraph: typeof buildDependencyGraph;
-	ensureRollbackSafeWorktree: (
-		directory: string,
-		force: boolean,
-		dryRun: boolean
-	) => Promise<RollbackSafety>;
 	moveModule: typeof moveModule;
+	pipeline: Partial<MutationPipelineDependencies>;
 	runPackageBuilds: typeof runPackageBuilds;
-	runWithTypecheckGuard: typeof runWithTypecheckGuard;
 	setupCommandContext: typeof setupCommandContext;
 }
 
 const DEFAULT_DEPENDENCIES: MoveBatchDependencies = {
 	buildDependencyGraph,
-	ensureRollbackSafeWorktree: async (directory, force, dryRun) =>
-		ensureRollbackSafeWorktree(directory, {
-			force,
-			dryRun,
-			operation: "move-batch",
-		}),
 	moveModule,
+	pipeline: {},
 	runPackageBuilds,
-	runWithTypecheckGuard,
 	setupCommandContext,
 };
 
@@ -333,20 +327,13 @@ export async function moveBatchWithDependencies(
 			translateBeforeFile: createBatchPathTranslator(successfulMoves),
 			verify: verify ? "rollback" : "none",
 		},
-		{
-			checkRollbackSafeWorktree: async (dir, guardOptions) => {
-				const safety = await dependencies.ensureRollbackSafeWorktree(
-					dir,
-					guardOptions.force ?? false,
-					guardOptions.dryRun ?? false
-				);
-				return { blocked: false, dirty: false, ...safety };
-			},
-			runWithTypecheckGuard: dependencies.runWithTypecheckGuard,
-		}
+		dependencies.pipeline
 	);
+	if (outcome.blocked) {
+		throw new MoveBatchWorktreeBlockedError();
+	}
 	if (!outcome.result) {
-		throw new Error("Move batch was blocked by the dirty-worktree guard.");
+		throw new Error("Move batch completed without a result.");
 	}
 	const items = outcome.result;
 	const attemptedApplied = items.filter(({ result }) => result.success);
@@ -391,10 +378,22 @@ async function rollbackMoveBatch(
 export async function moveBatchCommand(
 	options: Omit<MoveBatchOptions, "moves"> & { batch: string }
 ): Promise<void> {
-	const result = await moveBatch({
-		...options,
-		moves: await loadMoveBatchFile(options.batch),
-	});
+	let result: MoveBatchResult;
+	try {
+		result = await moveBatch({
+			...options,
+			moves: await loadMoveBatchFile(options.batch),
+		});
+	} catch (error) {
+		if (error instanceof MoveBatchWorktreeBlockedError) {
+			logger.error(
+				"Error: working tree has uncommitted changes. " +
+					"Commit or stash your changes first, or rerun with --force to proceed anyway."
+			);
+			process.exit(1);
+		}
+		throw error;
+	}
 	if (options.json) {
 		logger.info(JSON.stringify(serializeMoveBatchResult(result), null, 2));
 	} else {

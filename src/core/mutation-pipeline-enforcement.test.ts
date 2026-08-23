@@ -9,8 +9,7 @@ import path from "node:path";
  * (under the typecheck guard) -> rollback-or-journal-complete. That property is
  * only worth the migration if it cannot silently regress, so this test asserts
  * the invariant instead of trusting a one-time grep: the raw primitives have no
- * importers under `src/commands/` or `src/mcp-tools/` beyond a small, justified
- * allowlist.
+ * importers under `src/commands/` or `src/mcp-tools/`.
  *
  * When this fails, the fix is almost always "route the new call site through
  * `runMutation`" — not "add an allowlist entry". Add an entry only when the
@@ -45,13 +44,7 @@ const PIPELINE_OWNED_PRIMITIVES = [
 ];
 
 /** Repo-relative path -> the primitives it may import, with justification. */
-const ALLOWLIST: Record<string, { primitives: string[]; reason: string }> = {
-	"commands/move-batch.ts": {
-		primitives: ["ensureRollbackSafeWorktree", "runWithTypecheckGuard"],
-		reason:
-			"Public MoveBatchDependencies injection seam (#225). These are the DEFAULT implementations of an injectable contract, not a hand-rolled sequence: move-batch adapts them into runMutation's own DI parameter, and moveBatchTool always overrides ensureRollbackSafeWorktree with a non-exiting variant, so the exiting default is unreachable from the MCP server. NOT fully clean: the library-exported moveBatch() still reaches that exiting default, so this exemption is temporary — tracked by #229, which removes it and empties this allowlist.",
-	},
-};
+const ALLOWLIST: Record<string, { primitives: string[]; reason: string }> = {};
 
 function parseNamedImports(source: string): Map<string, Set<string>> {
 	const pattern =
@@ -123,7 +116,7 @@ async function surfaceFiles(): Promise<string[]> {
 describe("mutation pipeline is the only composer of mutation primitives", () => {
 	// Proves the detector actually detects. Without this the repo scan could go
 	// green because the parser silently matched nothing.
-	test("detects a direct primitive import, and respects the allowlist", () => {
+	test("detects direct primitive imports with no exemptions", () => {
 		const offending = [
 			'import path from "node:path";',
 			'import { ensureCleanWorktree, isWorktreeDirty } from "../core/git.ts";',
@@ -143,13 +136,13 @@ describe("mutation pipeline is the only composer of mutation primitives", () => 
 			)
 		).toEqual([]);
 
-		// An allowlisted file is exempt only for the primitives it declares.
+		// Formerly exempt surfaces are held to the same invariant.
 		expect(
 			findViolations(
 				"commands/move-batch.ts",
 				'import { ensureRollbackSafeWorktree } from "../core/git.ts";'
 			)
-		).toEqual([]);
+		).toEqual(["commands/move-batch.ts imports ensureRollbackSafeWorktree"]);
 		expect(
 			findViolations(
 				"commands/move-batch.ts",

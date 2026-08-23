@@ -4,9 +4,8 @@
  * Every tool here can write to the worktree, so each one goes through a
  * dirty-worktree guard before applying changes and honours the `dryRun: true`
  * default enforced by its registration. `moveTool`, `renameTool`, `aliasTool`,
- * and `inlineTool` route guard/journal/verify/rollback through the shared
- * `runMutation` pipeline (#221, #226); `moveBatchTool` and `extractCommonTool`
- * still compose their own primitives (#227/#228). Registrations live in
+ * `moveBatchTool`, and `inlineTool` route guard/journal/verify/rollback through
+ * the shared `runMutation` pipeline (#221, #226, #229). Registrations live in
  * `src/mcp-server.ts`; this module must not import it (#186), keeping the
  * dependency direction one-way exactly as `./read-only.ts` does.
  *
@@ -33,6 +32,7 @@ import { inlineBarrel } from "../commands/inline.ts";
 import { moveModule, rollbackTransformMove } from "../commands/move.ts";
 import {
 	type MoveBatchEntry,
+	MoveBatchWorktreeBlockedError,
 	moveBatchWithDependencies,
 	serializeMoveBatchResult,
 } from "../commands/move-batch.ts";
@@ -45,11 +45,7 @@ import {
 	renameSymbol,
 	rollbackRenameChanges,
 } from "../commands/rename.ts";
-import {
-	checkRollbackSafeWorktree,
-	getRollbackSafety,
-	isWorktreeDirty,
-} from "../core/git.ts";
+import { checkRollbackSafeWorktree } from "../core/git.ts";
 import {
 	type MutationOutcome,
 	type MutationVerifyPolicy,
@@ -82,37 +78,38 @@ export async function moveBatchTool(args: {
 	prefer?: PreferStrategy;
 	extensions?: ExtensionPolicy;
 }): Promise<CallToolResult> {
-	const result = await moveBatchWithDependencies(
-		{
-			moves: args.batch,
-			project: args.project,
-			dryRun: args.dryRun,
-			force: false,
-			journal: args.journal ?? false,
-			verify: args.verify,
-			verbose: args.verbose,
-			transform: args.transform,
-			prefer: args.prefer,
-			extensions: args.extensions,
-		},
-		{
-			ensureRollbackSafeWorktree: async (directory, _force, dryRun) => {
-				const dirty = await isWorktreeDirty(directory);
-				if (args.force || dryRun) {
-					return getRollbackSafety({
-						dirty,
-						force: args.force,
-						dryRun,
-					});
-				}
-				if (dirty) {
-					throw new Error(WORKTREE_BLOCKED_MESSAGE);
-				}
-				return getRollbackSafety({ dirty, force: false, dryRun });
+	try {
+		const result = await moveBatchWithDependencies(
+			{
+				moves: args.batch,
+				project: args.project,
+				dryRun: args.dryRun,
+				force: args.force,
+				journal: args.journal ?? false,
+				verify: args.verify,
+				verbose: args.verbose,
+				transform: args.transform,
+				prefer: args.prefer,
+				extensions: args.extensions,
 			},
+			{
+				pipeline: {
+					checkRollbackSafeWorktree: async (directory, guardOptions) =>
+						checkRollbackSafeWorktree(directory, {
+							...guardOptions,
+							blockDirtyDryRun: true,
+							force: args.force,
+						}),
+				},
+			}
+		);
+		return jsonText(serializeMoveBatchResult(result));
+	} catch (error) {
+		if (error instanceof MoveBatchWorktreeBlockedError) {
+			return errorText(WORKTREE_BLOCKED_MESSAGE);
 		}
-	);
-	return jsonText(serializeMoveBatchResult(result));
+		throw error;
+	}
 }
 
 export async function moveTool(args: {

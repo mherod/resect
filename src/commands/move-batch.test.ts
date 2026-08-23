@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import path from "node:path";
 import { buildDependencyGraph } from "../core/graph.ts";
 import { moveBatchTool } from "../mcp-tools/mutating.ts";
+import { WORKTREE_BLOCKED_MESSAGE } from "../mcp-tools/shared.ts";
 import {
 	CLI,
 	cleanup,
@@ -196,26 +197,30 @@ describe("move batch execution", () => {
 					graphBuilds += 1;
 					return buildDependencyGraph(project);
 				},
-				ensureRollbackSafeWorktree: async () => {
-					worktreeChecks += 1;
-					return {
-						rollbackEnabled: true,
-						worktreeDirtyRollbackDisabled: false,
-					};
-				},
-				runWithTypecheckGuard: async (_project, applyChanges) => {
-					verificationGuards += 1;
-					return {
-						result: await applyChanges(),
-						delta: {
-							success: true,
-							errorsBefore: [],
-							errorsAfter: [],
-							newErrors: [],
-							fixedErrors: [],
-							verificationIncomplete: false,
-						},
-					};
+				pipeline: {
+					checkRollbackSafeWorktree: async () => {
+						worktreeChecks += 1;
+						return {
+							blocked: false,
+							dirty: false,
+							rollbackEnabled: true,
+							worktreeDirtyRollbackDisabled: false,
+						};
+					},
+					runWithTypecheckGuard: async (_project, applyChanges) => {
+						verificationGuards += 1;
+						return {
+							result: await applyChanges(),
+							delta: {
+								success: true,
+								errorsBefore: [],
+								errorsAfter: [],
+								newErrors: [],
+								fixedErrors: [],
+								verificationIncomplete: false,
+							},
+						};
+					},
 				},
 				moveModule,
 				runPackageBuilds,
@@ -227,6 +232,112 @@ describe("move batch execution", () => {
 		expect(graphBuilds).toBe(1);
 		expect(worktreeChecks).toBe(1);
 		expect(verificationGuards).toBe(1);
+	});
+
+	test("library dirty-worktree refusal does not terminate the host process", async () => {
+		const dir = await makeBatchFixture("library-dirty-guard");
+		await commitBatchFixture(dir);
+		const source = path.join(dir, "src/b.ts");
+		await Bun.write(
+			source,
+			`${await Bun.file(source).text()}// dirty user edit\n`
+		);
+
+		const entrypoint = path.join(import.meta.dir, "move-batch.ts");
+		const script = `
+			import { moveBatch } from ${JSON.stringify(entrypoint)};
+			try {
+				await moveBatch({
+					baseDir: ${JSON.stringify(dir)},
+					verify: false,
+					moves: [{ source: "src/b.ts", target: "src/domain/b.ts" }],
+				});
+				console.error("moveBatch unexpectedly returned");
+				process.exitCode = 2;
+			} catch (error) {
+				console.log(error instanceof Error ? error.message : String(error));
+			}
+		`;
+		const proc = Bun.spawn([process.execPath, "-e", script], {
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		const [stdout, stderr] = await Promise.all([
+			new Response(proc.stdout).text(),
+			new Response(proc.stderr).text(),
+		]);
+		await proc.exited;
+
+		expect(proc.exitCode, stderr).toBe(0);
+		expect(stdout).toContain(
+			"Move batch was blocked by the dirty-worktree guard"
+		);
+		expect(await Bun.file(source).exists()).toBe(true);
+		expect(await Bun.file(path.join(dir, "src/domain/b.ts")).exists()).toBe(
+			false
+		);
+	});
+
+	test("MCP dirty-worktree refusal returns a structured error without writing", async () => {
+		const dir = await makeBatchFixture("mcp-dirty-guard");
+		await commitBatchFixture(dir);
+		const source = path.join(dir, "src/b.ts");
+		await Bun.write(
+			source,
+			`${await Bun.file(source).text()}// dirty user edit\n`
+		);
+
+		const response = await moveBatchTool({
+			batch: [{ source, target: path.join(dir, "src/domain/b.ts") }],
+			project: path.join(dir, "tsconfig.json"),
+			dryRun: false,
+			force: false,
+			verify: false,
+			verbose: false,
+		});
+
+		expect(response.isError).toBe(true);
+		expect(response.content[0]).toEqual({
+			type: "text",
+			text: WORKTREE_BLOCKED_MESSAGE,
+		});
+		expect(await Bun.file(source).exists()).toBe(true);
+		expect(await Bun.file(path.join(dir, "src/domain/b.ts")).exists()).toBe(
+			false
+		);
+	});
+
+	test("CLI dirty-worktree refusal owns the exit and leaves files unchanged", async () => {
+		const dir = await makeBatchFixture("cli-dirty-guard");
+		await commitBatchFixture(dir);
+		const source = path.join(dir, "src/b.ts");
+		await Bun.write(
+			source,
+			`${await Bun.file(source).text()}// dirty user edit\n`
+		);
+		await Bun.write(
+			path.join(dir, "moves.json"),
+			JSON.stringify([{ source: "src/b.ts", target: "src/domain/b.ts" }])
+		);
+
+		const proc = Bun.spawn([...CLI, "move", "--batch", "moves.json"], {
+			cwd: dir,
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		const [stdout, stderr] = await Promise.all([
+			new Response(proc.stdout).text(),
+			new Response(proc.stderr).text(),
+		]);
+		await proc.exited;
+
+		expect(proc.exitCode).toBe(1);
+		expect(stdout).toBe("");
+		expect(stderr).toContain("working tree has uncommitted changes");
+		expect(await Bun.file(source).exists()).toBe(true);
+		expect(await Bun.file(path.join(dir, "src/domain/b.ts")).exists()).toBe(
+			false
+		);
 	});
 
 	test("collects failures and continues with independent moves", async () => {
