@@ -35,4 +35,18 @@ describe("library API / CLI parity", () => {
 		};
 		expect(options.case).toBe("kebab-case");
 	});
+
+	test("preserves unused helpers while exposing the shared liveness policy", async () => {
+		const api: Record<string, unknown> = await import("./index.ts");
+		for (const exportName of [
+			"buildImportedBindingsMap",
+			"computeOrphanFiles",
+			"countInternalReferences",
+			"hasNoExternalUsage",
+			"isExportUsed",
+			"evaluateExportLiveness",
+		]) {
+			expect(typeof api[exportName]).toBe("function");
+		}
+	});
 });

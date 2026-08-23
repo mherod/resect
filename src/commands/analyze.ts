@@ -1,27 +1,17 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
-import {
-	type EntrypointGlobs,
-	isConventionEntrypointFile,
-} from "../core/framework-conventions.ts";
+import { evaluateExportLiveness } from "../core/export-liveness.ts";
+import type { EntrypointGlobs } from "../core/framework-conventions.ts";
 import {
 	buildDependencyGraph,
 	buildProjectGraphs,
 	findAllReferences,
 	findBarrelReExports,
 	mergeDependencyGraphs,
+	withGraphSourceFile,
 } from "../core/graph.ts";
 import {
-	discoverPackageEntrypoints,
-	findPackagePublicApiExports,
-	isPackageEntrypointTraceIncomplete,
-	resolveBinReachabilityRoots,
-} from "../core/package-entrypoints.ts";
-import { createProgram } from "../core/project.ts";
-import { normalizePath } from "../core/resolver.ts";
-import {
 	scanBarrelExports,
-	scanExports,
 	scanModuleReferences,
 	scanUnresolvableImports,
 } from "../core/scanner.ts";
@@ -194,28 +184,32 @@ export async function analyze(
 	project: ProjectConfig,
 	options?: AnalyzeFileOptions
 ): Promise<AnalysisResult> {
-	// .vue files cannot be parsed via createProgram — use the Vue-aware parseSourceFile instead.
-	// For non-vue files, fall back to parseSourceFile if the program can't resolve the file
-	// (e.g., file is outside the tsconfig scope).
-	const program = filePath.endsWith(".vue")
+	// Build/select the owning project graph before parsing the target. The graph
+	// already owns the normal TypeScript Program and checker, so a target-only
+	// Program would duplicate most of the command's warm latency (#234).
+	const projectGraphs = await buildProjectGraphs(project.tsconfigPath);
+	const graph =
+		projectGraphs.length > 1
+			? mergeDependencyGraphs(projectGraphs.map((result) => result.graph))
+			: (projectGraphs[0]?.graph ?? (await buildDependencyGraph(project)));
+	const graphSource = filePath.endsWith(".vue")
 		? null
-		: createProgram(project, [filePath]);
-	const programSourceFile = program?.getSourceFile(filePath) ?? null;
-	const sourceFile =
-		programSourceFile ?? parseSourceFile(filePath) ?? undefined;
+		: withGraphSourceFile(
+				graph,
+				filePath,
+				(sourceFile, program) => ({
+					checker: program.getTypeChecker(),
+					sourceFile,
+				}),
+				null
+			);
+	const sourceFile = graphSource?.sourceFile ?? parseSourceFile(filePath);
 
 	if (!sourceFile) {
 		throw new Error(`Could not parse file: ${filePath}`);
 	}
 
-	// Only resolve same-file references by symbol identity when the source file
-	// genuinely came from the program; the parseSourceFile fallback is unbound.
-	const internalRefChecker = programSourceFile
-		? program?.getTypeChecker()
-		: undefined;
-
 	const imports = scanModuleReferences(sourceFile, project);
-	const exports = scanExports(sourceFile);
 	const barrelExports = scanBarrelExports(sourceFile, project);
 	const unresolvable = scanUnresolvableImports(sourceFile, project);
 
@@ -223,11 +217,6 @@ export async function analyze(
 	// just the one that owns the analyze target — otherwise a consumer living
 	// in a sibling config (e.g. tsconfig.scripts.json) leaves referencedBy
 	// empty and the export looks dead. See #66.
-	const projectGraphs = await buildProjectGraphs(project.tsconfigPath);
-	const graph =
-		projectGraphs.length > 1
-			? mergeDependencyGraphs(projectGraphs.map((g) => g.graph))
-			: await buildDependencyGraph(project);
 	const referencedBy = findAllReferences(filePath, graph);
 	const barrelReExportFiles = findBarrelReExports(filePath, graph);
 
@@ -241,83 +230,37 @@ export async function analyze(
 					exports: [],
 				}));
 
-	// Cross-reference exports against imported-bindings map to find unused exports.
-	// Each hit carries internalUsage so callers can tell a de-export candidate
-	// (keep the symbol, drop `export`) from a delete candidate (no usage anywhere).
-	const {
-		buildImportedBindingsMap,
-		countInternalReferences,
-		hasNoExternalUsage,
-		isExportUsed,
-	} = await import("./unused.ts");
-	const importedBindings = buildImportedBindingsMap(graph);
-	const fileImporters = importedBindings.get(filePath);
-	const conventionEntrypoint = isConventionEntrypointFile(
-		filePath,
-		options?.entrypointGlobs
-	);
-	const packageEntrypoints = await discoverPackageEntrypoints(
-		path.dirname(filePath)
-	);
-	const publicApiExports = findPackagePublicApiExports(
-		filePath,
-		exports,
+	const liveness = await evaluateExportLiveness({
 		graph,
-		packageEntrypoints.files
-	);
-	const publicApiExportSet = new Set(publicApiExports);
-	const publicApiTraceIncomplete = isPackageEntrypointTraceIncomplete(
-		filePath,
-		packageEntrypoints,
-		graph
-	);
-	const externalUsageAssumed = conventionEntrypoint || publicApiTraceIncomplete;
-	// A bin target roots reachability but confers no public API (#207), so it
-	// is reported without suppressing this file's own unused-export verdicts.
-	const packageBinEntrypoint = resolveBinReachabilityRoots(
-		packageEntrypoints,
-		graph
-	).has(normalizePath(filePath));
-	const unusedExports = externalUsageAssumed
-		? []
-		: exports
-				.filter(
-					(exp) =>
-						!(
-							publicApiExportSet.has(exp) ||
-							isExportUsed(exp, filePath, fileImporters, graph)
-						)
-				)
-				.map((exp) => {
-					const internalRefCount = countInternalReferences(
-						sourceFile,
-						exp,
-						internalRefChecker
-					);
-					return {
-						...exp,
-						internalUsage: internalRefCount > 0,
-						internalRefCount,
-					};
-				});
-	const noExternalUsage =
-		!externalUsageAssumed &&
-		publicApiExports.length === 0 &&
-		hasNoExternalUsage(filePath, exports, graph);
+		candidates: [
+			{
+				file: filePath,
+				sourceFile,
+				checker: graphSource?.checker,
+			},
+		],
+		packageDirectory: path.dirname(filePath),
+		analysisDirectory: path.dirname(filePath),
+		entrypointGlobs: options?.entrypointGlobs,
+	});
+	const verdict = liveness.files[0];
+	if (!verdict) {
+		throw new Error(`Could not evaluate export liveness: ${filePath}`);
+	}
 
 	return {
 		file: filePath,
 		imports,
-		exports,
+		exports: verdict.exports,
 		referencedBy,
 		barrelExports: barrelsWithContext,
 		unresolvable,
-		unusedExports,
-		publicApiExports,
-		publicApiTraceIncomplete,
-		noExternalUsage,
-		externalUsageAssumed,
-		packageBinEntrypoint,
+		unusedExports: verdict.unusedExports,
+		publicApiExports: verdict.publicApiExports,
+		publicApiTraceIncomplete: verdict.publicApiTraceIncomplete,
+		noExternalUsage: verdict.noExternalUsage,
+		externalUsageAssumed: verdict.externalUsageAssumed,
+		packageBinEntrypoint: verdict.packageBinEntrypoint,
 		skippedFiles: graph.skippedFiles,
 	};
 }

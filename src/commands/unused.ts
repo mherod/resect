@@ -1,10 +1,9 @@
 import path from "node:path";
-import ts from "typescript";
 import { logger } from "../cli-logger.ts";
 import {
-	isConventionEntrypointFile,
-	normalizeEntrypointGlobs,
-} from "../core/framework-conventions.ts";
+	type ExportLivenessCandidate,
+	evaluateExportLiveness,
+} from "../core/export-liveness.ts";
 import {
 	createFrameworkGeneratedArtifactClassifier,
 	excludeClassifiedFiles,
@@ -13,43 +12,28 @@ import {
 } from "../core/generated-artifacts.ts";
 import { filterGitignored } from "../core/git.ts";
 import type { DependencyGraph } from "../core/graph.ts";
-import {
-	findAllReferences,
-	mergeDependencyGraphs,
-	withGraphSourceFile,
-} from "../core/graph.ts";
+import { mergeDependencyGraphs, withGraphSourceFile } from "../core/graph.ts";
 import {
 	createNonSourceClassifier,
 	nonSourceWarning,
 } from "../core/non-source-files.ts";
-import {
-	discoverPackageEntrypoints,
-	findPackagePublicApiExports,
-	isPackageEntrypointTraceIncomplete,
-	resolveBinReachabilityRoots,
-} from "../core/package-entrypoints.ts";
 import { resolveTsConfig } from "../core/project.ts";
 import { normalizePath } from "../core/resolver.ts";
-import { scanExports } from "../core/scanner.ts";
 import { withSourceFile } from "../core/source-file.ts";
 import { buildWorkspaceGraphs } from "../core/workspace-graphs.ts";
 import type { ExportInfo } from "../types/analysis.ts";
 import type { ReadOnlyCommandOptions } from "../types/commands.ts";
-import type { ModuleReference, ReferenceType } from "../types/graph.ts";
 import type { ProgressCallback } from "../types/progress.ts";
-import {
-	computeModuleReachability,
-	deadImportersOf,
-	findDeadImportChain,
-} from "./unused-reachability.ts";
 
 const UNUSED_SCHEMA_VERSION = "1-experimental" as const;
-const ALL_BINDINGS = "__all__";
-const RE_EXPORT_TYPES = new Set<ReferenceType>([
-	"export-from",
-	"export-all",
-	"export-all-as",
-]);
+
+export {
+	buildImportedBindingsMap,
+	computeOrphanFiles,
+	countInternalReferences,
+	hasNoExternalUsage,
+	isExportUsed,
+} from "../core/export-liveness.ts";
 
 export interface UnusedOptions extends ReadOnlyCommandOptions {
 	directory: string;
@@ -320,20 +304,7 @@ export async function findUnusedExportsFromGraphs(
 		};
 	}
 
-	// Merge per-config usage maps so sibling tsconfigs contribute importers.
-	const importedBindings = new Map<string, Set<string>>();
-	const scannedConfigs: string[] = [];
-
-	for (const {
-		tsconfigPath: configPath,
-		graph: projectGraph,
-	} of filteredGraphs) {
-		scannedConfigs.push(configPath);
-		mergeImportedBindings(
-			importedBindings,
-			buildImportedBindingsMap(projectGraph)
-		);
-	}
+	const scannedConfigs = filteredGraphs.map(({ tsconfigPath }) => tsconfigPath);
 
 	// Candidate files: those under the target directory, across all configs.
 	let candidateFiles = Array.from(graph.imports.keys()).filter((f) =>
@@ -347,25 +318,8 @@ export async function findUnusedExportsFromGraphs(
 	// CANDIDATES only — ignored files (e.g. tests) still contribute to the usage
 	// graph above, so a test-only export is not falsely reported dead.
 	const ignorePattern = options?.ignore ? new Bun.Glob(options.ignore) : null;
-	const entrypointGlobPatterns = normalizeEntrypointGlobs(
-		options?.entrypointGlobs
-	);
-
-	const unused: UnusedExport[] = [];
-	const publicApiExports: PublicApiExport[] = [];
-	const unknownExternalUsageExports: PublicApiExport[] = [];
-	// Exports that passed every liveness guard on the single-pass check. They are
-	// revisited after reachability so an importer that is itself dead no longer
-	// counts as usage (#193).
-	const usedExports: Array<{ file: string; export: ExportInfo }> = [];
-	const exportedFiles = new Map<string, ExportInfo[]>();
-	const packageEntrypoints = await discoverPackageEntrypoints(absoluteDir, {
-		includeWorkspacePackages: true,
-	});
-	const entrypointFiles = packageEntrypoints.files;
-	const excludedEntrypointFiles = new Set<string>();
 	const skippedFiles = new Set(graph.skippedFiles);
-	let totalExports = 0;
+	const candidates: ExportLivenessCandidate[] = [];
 
 	for (const file of candidateFiles) {
 		if (
@@ -374,148 +328,57 @@ export async function findUnusedExportsFromGraphs(
 		) {
 			continue;
 		}
-		if (isConventionEntrypointFile(file, entrypointGlobPatterns)) {
-			excludedEntrypointFiles.add(normalizePath(file));
-			continue;
-		}
 
-		const fileImporters = importedBindings.get(normalizePath(file));
-		const publicApiTraceIncomplete = isPackageEntrypointTraceIncomplete(
-			file,
-			packageEntrypoints,
-			graph
-		);
-
-		// Scan exports and count internal references from the same parsed
-		// source file, so the cross-file and same-file checks share one parse.
-		const collect = (
-			sourceFile: ts.SourceFile,
-			checker?: ts.TypeChecker
-		): void => {
-			const exports = scanExports(sourceFile);
-			const packagePublicApiExports = new Set(
-				findPackagePublicApiExports(file, exports, graph, entrypointFiles)
-			);
-			totalExports += exports.length;
-			exportedFiles.set(normalizePath(file), exports);
-
-			for (const exp of exports) {
-				if (publicApiTraceIncomplete) {
-					unknownExternalUsageExports.push({ file, ...exp });
-					continue;
-				}
-				if (packagePublicApiExports.has(exp)) {
-					publicApiExports.push({ file, ...exp });
-					continue;
-				}
-				if (isExportUsed(exp, file, fileImporters, graph)) {
-					usedExports.push({ file, export: exp });
-					continue;
-				}
-				const internalRefCount = countInternalReferences(
-					sourceFile,
-					exp,
-					checker
-				);
-				unused.push({
-					file,
-					name: exp.name,
-					type: exp.type,
-					isType: exp.isType,
-					line: exp.line,
-					internalUsage: internalRefCount > 0,
-					internalRefCount,
-				});
-			}
-		};
-
-		// Prefer the graph's already-parsed source file and resolve same-file
-		// references by symbol identity via its program's checker. Falls back to a
-		// fresh disk parse (no checker → name-based count) when the graph's
-		// program(s) do not own the file.
-		const didCollect = withGraphSourceFile(
+		const graphCandidate = withGraphSourceFile<ExportLivenessCandidate | null>(
 			graph,
 			file,
-			(sourceFile, program) => {
-				collect(sourceFile, program.getTypeChecker());
-				return true;
-			},
-			false
-		);
-		if (!didCollect) {
-			const didParseFromDisk = withSourceFile(
+			(sourceFile, program) => ({
 				file,
-				(sourceFile) => {
-					collect(sourceFile);
-					return true;
-				},
-				false
+				sourceFile,
+				checker: program.getTypeChecker(),
+			}),
+			null
+		);
+		const candidate =
+			graphCandidate ??
+			withSourceFile<ExportLivenessCandidate | null>(
+				file,
+				(sourceFile) => ({ file, sourceFile }),
+				null
 			);
-			if (!didParseFromDisk) {
-				skippedFiles.add(normalizePath(file));
-			}
+		if (candidate) {
+			candidates.push(candidate);
+		} else {
+			skippedFiles.add(normalizePath(file));
 		}
 	}
 
+	const liveness = await evaluateExportLiveness({
+		graph,
+		candidates,
+		packageDirectory: absoluteDir,
+		analysisDirectory: absoluteDir,
+		entrypointGlobs: options?.entrypointGlobs,
+		includeWorkspacePackages: true,
+	});
+	const reportFiles = liveness.files.filter(
+		({ conventionEntrypoint }) => !conventionEntrypoint
+	);
+	const unused: UnusedExport[] = reportFiles.flatMap(
+		({ file, unusedExports }) => unusedExports.map((exp) => ({ file, ...exp }))
+	);
+	const publicApiExports: PublicApiExport[] = liveness.publicApiExports;
+	const unknownExternalUsageExports: PublicApiExport[] =
+		liveness.unknownExternalUsageExports;
+	const transitivelyDeadExports: TransitivelyDeadExport[] =
+		liveness.transitivelyDeadExports;
+	const orphanFiles: OrphanFile[] = liveness.orphanFiles;
+	const totalExports = reportFiles.reduce(
+		(total, file) => total + file.exports.length,
+		0
+	);
 	const internalOnlyCount = unused.filter((u) => u.internalUsage).length;
 	const sortedSkippedFiles = [...skippedFiles].sort();
-	const publicApiFiles = new Set(
-		[...publicApiExports, ...unknownExternalUsageExports].map((exp) =>
-			normalizePath(exp.file)
-		)
-	);
-
-	// Reachability pass (#193). Roots are everything that keeps a module alive
-	// independently of the analysed directory: package and convention
-	// entrypoints, exports withheld as public API or unknown-usage, and any
-	// consumer outside the directory under analysis. Modules never reached are
-	// dead, so an export whose only importers are unreachable is transitively
-	// dead rather than used.
-	//
-	// `binRoots` enters here and NOT in `entrypointFiles` (#207). A binary keeps
-	// its tree alive, but it publishes no importable surface, so its modules must
-	// not gain the public API protection that `main`/`module`/`exports` confer.
-	const binRoots = resolveBinReachabilityRoots(packageEntrypoints, graph);
-	const liveRoots = new Set<string>([
-		...entrypointFiles,
-		...binRoots,
-		...publicApiFiles,
-		...excludedEntrypointFiles,
-	]);
-	for (const file of graph.imports.keys()) {
-		const normalized = normalizePath(file);
-		if (!normalized.startsWith(absoluteDir)) {
-			liveRoots.add(normalized);
-		} else if (isConventionEntrypointFile(normalized, entrypointGlobPatterns)) {
-			liveRoots.add(normalized);
-		}
-	}
-	const { liveModules } = computeModuleReachability(graph, liveRoots);
-	const directlyDeadModules = new Set(
-		unused.map((entry) => normalizePath(entry.file))
-	);
-	const transitivelyDeadExports: TransitivelyDeadExport[] = usedExports
-		.filter(({ file }) => !liveModules.has(normalizePath(file)))
-		.map(({ file, export: exp }) => ({
-			file,
-			name: exp.name,
-			type: exp.type,
-			isType: exp.isType,
-			line: exp.line,
-			deadImporters: deadImportersOf(file, graph, liveModules),
-			chain: findDeadImportChain(file, graph, liveModules, directlyDeadModules),
-		}))
-		.sort(
-			(a, b) => a.file.localeCompare(b.file) || a.name.localeCompare(b.name)
-		);
-	const orphanFiles = computeOrphanFiles(graph, exportedFiles, {
-		entrypointFiles: new Set([
-			...entrypointFiles,
-			...binRoots,
-			...publicApiFiles,
-		]),
-		entrypointGlobs: entrypointGlobPatterns,
-	});
 
 	return {
 		schemaVersion: UNUSED_SCHEMA_VERSION,
@@ -535,8 +398,8 @@ export async function findUnusedExportsFromGraphs(
 		excludedGeneratedFiles: [...excludedGeneratedFiles].sort(),
 		excludedGeneratedFileCount: excludedGeneratedFiles.size,
 		excludedNonSourceFileCount: excludedNonSourceFiles.length,
-		excludedEntrypointFiles: [...excludedEntrypointFiles].sort(),
-		excludedEntrypointFileCount: excludedEntrypointFiles.size,
+		excludedEntrypointFiles: liveness.excludedEntrypointFiles,
+		excludedEntrypointFileCount: liveness.excludedEntrypointFiles.length,
 		publicApiExports,
 		publicApiExportCount: publicApiExports.length,
 		unknownExternalUsageExports,
@@ -555,353 +418,6 @@ export async function findUnusedExportsFromGraphs(
 		skippedFileCount: sortedSkippedFiles.length,
 		coverageIncomplete: sortedSkippedFiles.length > 0,
 	};
-}
-
-/**
- * Merge a per-config imported-bindings map into the accumulating union map.
- * Keys are normalized so the same resolved file from different configs lines up.
- */
-function mergeImportedBindings(
-	target: Map<string, Set<string>>,
-	source: Map<string, Set<string>>
-): void {
-	for (const [resolvedPath, bindings] of source) {
-		const key = normalizePath(resolvedPath);
-		const existing = target.get(key);
-		if (existing) {
-			for (const binding of bindings) {
-				existing.add(binding);
-			}
-		} else {
-			target.set(key, new Set(bindings));
-		}
-	}
-}
-
-export function computeOrphanFiles(
-	graph: DependencyGraph,
-	exportedFiles: ReadonlyMap<string, readonly ExportInfo[]>,
-	options?: {
-		entrypointFiles?: ReadonlySet<string>;
-		entrypointGlobs?: readonly string[];
-	}
-): OrphanFile[] {
-	const entrypointFiles = options?.entrypointFiles ?? new Set<string>();
-	const entrypointGlobs = options?.entrypointGlobs ?? [];
-	const orphanFiles: OrphanFile[] = [];
-
-	for (const [file, exports] of exportedFiles) {
-		if (exports.length === 0 || entrypointFiles.has(normalizePath(file))) {
-			continue;
-		}
-		if (isConventionEntrypointFile(file, entrypointGlobs)) {
-			continue;
-		}
-
-		const externalImporterCount = countExternalImporters(file, graph);
-		if (externalImporterCount > 0) {
-			continue;
-		}
-
-		// An orphan is self-contained when it imports nothing from other project
-		// files — all its imports are external packages or unresolved. Such files
-		// are likely convention entrypoints dispatched by filename rather than
-		// genuinely dead modules (which typically import from the project).
-		const normalizedFile = normalizePath(file);
-		const fileRefs = graph.imports.get(normalizedFile) ?? [];
-		const selfContained = fileRefs.every((ref) => {
-			const resolved = normalizePath(ref.resolvedPath);
-			return (
-				!resolved || resolved === normalizedFile || !graph.imports.has(resolved)
-			);
-		});
-
-		orphanFiles.push({
-			file,
-			exportNames: exports.map((exp) => exp.name),
-			externalImporterCount,
-			noExternalUsage: true,
-			selfContained,
-		});
-	}
-
-	orphanFiles.sort((a, b) => a.file.localeCompare(b.file));
-	return orphanFiles;
-}
-
-export function hasNoExternalUsage(
-	file: string,
-	exports: readonly ExportInfo[],
-	graph: DependencyGraph
-): boolean {
-	return exports.length > 0 && countExternalImporters(file, graph) === 0;
-}
-
-function countExternalImporters(file: string, graph: DependencyGraph): number {
-	const normalizedFile = normalizePath(file);
-	const importers = new Set<string>();
-
-	for (const ref of findAllReferences(normalizedFile, graph)) {
-		if (isExternalUsage(ref, normalizedFile)) {
-			importers.add(normalizePath(ref.sourceFile));
-		}
-	}
-
-	return importers.size;
-}
-
-function isExternalUsage(ref: ModuleReference, targetFile: string): boolean {
-	return (
-		normalizePath(ref.sourceFile) !== targetFile &&
-		!RE_EXPORT_TYPES.has(ref.type)
-	);
-}
-
-// Position guards shared by the name-based and checker-based reference
-// counters. Parent is tracked explicitly through the walk rather than read from
-// `node.parent`: source files obtained from a ts.Program are not bound until the
-// type checker runs, so their parent pointers may be undefined.
-
-// The declaration name introduces the symbol; it is not a reference to it.
-const isDeclarationName = (node: ts.Identifier, parent: ts.Node): boolean =>
-	(ts.isFunctionDeclaration(parent) && parent.name === node) ||
-	(ts.isClassDeclaration(parent) && parent.name === node) ||
-	(ts.isInterfaceDeclaration(parent) && parent.name === node) ||
-	(ts.isTypeAliasDeclaration(parent) && parent.name === node) ||
-	(ts.isEnumDeclaration(parent) && parent.name === node) ||
-	(ts.isVariableDeclaration(parent) && parent.name === node) ||
-	(ts.isParameter(parent) && parent.name === node) ||
-	(ts.isBindingElement(parent) && parent.name === node);
-
-// Property/member positions (`obj.name`, `{ name: ... }`, `Ns.name`) are not
-// references to the exported symbol.
-const isMemberName = (node: ts.Identifier, parent: ts.Node): boolean =>
-	(ts.isPropertyAccessExpression(parent) && parent.name === node) ||
-	(ts.isQualifiedName(parent) && parent.right === node) ||
-	(ts.isPropertyAssignment(parent) && parent.name === node) ||
-	(ts.isPropertySignature(parent) && parent.name === node) ||
-	(ts.isMethodDeclaration(parent) && parent.name === node) ||
-	(ts.isMethodSignature(parent) && parent.name === node);
-
-// The export statement itself (`export { name }`, `export default name`) is not
-// internal usage — it is the redundant re-export we are flagging.
-const isExportName = (node: ts.Identifier, parent: ts.Node): boolean =>
-	ts.isExportSpecifier(parent) ||
-	(ts.isExportAssignment(parent) && parent.expression === node);
-
-// An identifier in a position that could be a genuine reference to the export
-// (i.e. not a declaration name, member name, or export-statement name).
-const isCountablePosition = (node: ts.Identifier, parent: ts.Node): boolean =>
-	!(
-		isDeclarationName(node, parent) ||
-		isMemberName(node, parent) ||
-		isExportName(node, parent)
-	);
-
-/**
- * Resolve the symbol declared by `exp` within `sourceFile` by locating its
- * declaration-name identifier and asking the checker. A declaration name always
- * resolves to the concrete local symbol (never an import/export alias), so the
- * result compares directly by identity against same-file references. Returns
- * `undefined` when no declaration name matches (e.g. `export default <expr>`),
- * signalling the caller to fall back to the name-based walk.
- */
-function resolveExportSymbol(
-	sourceFile: ts.SourceFile,
-	exp: ExportInfo,
-	checker: ts.TypeChecker
-): ts.Symbol | undefined {
-	let symbol: ts.Symbol | undefined;
-	const visit = (node: ts.Node, parent: ts.Node): void => {
-		if (symbol) {
-			return;
-		}
-		if (
-			ts.isIdentifier(node) &&
-			node.text === exp.name &&
-			isDeclarationName(node, parent)
-		) {
-			const resolved = checker.getSymbolAtLocation(node);
-			if (resolved) {
-				symbol = resolved;
-				return;
-			}
-		}
-		ts.forEachChild(node, (child) => {
-			visit(child, node);
-		});
-	};
-	ts.forEachChild(sourceFile, (child) => {
-		visit(child, sourceFile);
-	});
-	return symbol;
-}
-
-/**
- * Checker-based reference walk: matches same-file identifiers by resolved symbol
- * identity, so a same-named local that shadows the export is NOT counted.
- * Returns `null` when the export's symbol cannot be resolved.
- */
-function countReferencesBySymbol(
-	sourceFile: ts.SourceFile,
-	exp: ExportInfo,
-	checker: ts.TypeChecker
-): number | null {
-	const target = resolveExportSymbol(sourceFile, exp, checker);
-	if (!target) {
-		return null;
-	}
-
-	let count = 0;
-	const visit = (node: ts.Node, parent: ts.Node): void => {
-		if (
-			ts.isIdentifier(node) &&
-			node.text === exp.name &&
-			isCountablePosition(node, parent)
-		) {
-			const symbol = checker.getSymbolAtLocation(node);
-			if (symbol && symbol === target) {
-				count++;
-			}
-		}
-		ts.forEachChild(node, (child) => {
-			visit(child, node);
-		});
-	};
-	ts.forEachChild(sourceFile, (child) => {
-		visit(child, sourceFile);
-	});
-	return count;
-}
-
-/** Name-based reference walk: matches same-file identifiers by text only. */
-function countReferencesByName(
-	sourceFile: ts.SourceFile,
-	exp: ExportInfo
-): number {
-	let count = 0;
-	const visit = (node: ts.Node, parent: ts.Node): void => {
-		if (
-			ts.isIdentifier(node) &&
-			node.text === exp.name &&
-			isCountablePosition(node, parent)
-		) {
-			count++;
-		}
-		ts.forEachChild(node, (child) => {
-			visit(child, node);
-		});
-	};
-	ts.forEachChild(sourceFile, (child) => {
-		visit(child, sourceFile);
-	});
-	return count;
-}
-
-/**
- * Count references to an exported symbol within its own defining file,
- * excluding the declaration itself and the export statements that surface it.
- *
- * A positive count means the symbol is consumed inside its own module: only the
- * `export` keyword is redundant (a de-export candidate). A zero count means the
- * symbol is referenced by no file at all and is safe to delete.
- *
- * When a `ts.TypeChecker` is supplied (the `unused`/`audit` graph builds one —
- * see `graph.program`), references are resolved by **symbol identity**, so a
- * same-named local that shadows the export is correctly NOT counted. Without a
- * checker (standalone `ts.SourceFile` callers and unit tests), or when the
- * symbol cannot be resolved, it falls back to a name-based AST walk that biases
- * ambiguous matches toward "used" (the safe "verify before deleting" direction).
- */
-export function countInternalReferences(
-	sourceFile: ts.SourceFile,
-	exp: ExportInfo,
-	checker?: ts.TypeChecker
-): number {
-	if (checker) {
-		const bySymbol = countReferencesBySymbol(sourceFile, exp, checker);
-		if (bySymbol !== null) {
-			return bySymbol;
-		}
-	}
-	return countReferencesByName(sourceFile, exp);
-}
-
-/**
- * Build a map from resolved file path to the set of binding names imported from it.
- * Also tracks wildcard imports (import *, export *) as a special "__all__" entry.
- */
-export function buildImportedBindingsMap(
-	graph: DependencyGraph
-): Map<string, Set<string>> {
-	const map = new Map<string, Set<string>>();
-
-	for (const refs of graph.imports.values()) {
-		for (const ref of refs) {
-			const resolved = normalizePath(ref.resolvedPath);
-			if (!map.has(resolved)) {
-				map.set(resolved, new Set());
-			}
-			const bindings = map.get(resolved);
-			if (!bindings) {
-				continue;
-			}
-
-			switch (ref.type) {
-				case "import":
-				case "export-all":
-				case "export-all-as":
-				case "import-namespace":
-				case "import-side-effect":
-				case "import-dynamic":
-				case "require":
-				case "require-resolve":
-				case "jest-mock":
-					// These consume the entire module
-					bindings.add(ALL_BINDINGS);
-					break;
-				case "import-named":
-				case "export-from":
-					if (ref.bindings) {
-						for (const b of ref.bindings) {
-							bindings.add(b.name);
-						}
-					}
-					break;
-				default:
-					break;
-			}
-		}
-	}
-
-	return map;
-}
-
-/**
- * Check whether an export is consumed anywhere in the project.
- */
-export function isExportUsed(
-	exp: ExportInfo,
-	_file: string,
-	fileImporters: Set<string> | undefined,
-	_graph: DependencyGraph
-): boolean {
-	if (!fileImporters) {
-		return false;
-	}
-
-	// If anyone does import *, export *, require, dynamic import — all exports are used
-	if (fileImporters.has(ALL_BINDINGS)) {
-		return true;
-	}
-
-	// Default exports are imported as the default binding
-	if (exp.type === "default") {
-		return fileImporters.has("default");
-	}
-
-	// Named exports are matched by name
-	return fileImporters.has(exp.name);
 }
 
 /**

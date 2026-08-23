@@ -168,15 +168,27 @@ Core seams are `computeMetrics(graph)`, iterative/deduplicated `detectCycles(gra
 
 ## Unused exports
 
-`unused` resolves every non-solution tsconfig through `buildProjectGraphs()`, then `mergeImportedBindings()` by normalized path. Never build usage from one selected tsconfig; sibling configs such as `tsconfig.scripts.json` may be the only consumers (#59).
+`unused` resolves every non-solution tsconfig through `buildProjectGraphs()` and
+merges those graphs before preparing report candidates. Never build usage from
+one selected tsconfig; sibling configs such as `tsconfig.scripts.json` may be
+the only consumers (#59).
 
-The command pipeline is `resolveTsConfig()` -> `buildDependencyGraph()`/`buildProjectGraphs()` -> `scanExports()` -> imported-binding comparison. Reports retain `scannedConfigs` and `scannedFileCount`.
+The command pipeline is `resolveTsConfig()` -> workspace/project graph build ->
+candidate preparation -> core `evaluateExportLiveness()` -> report mapping.
+`analyze` uses the same batch policy with one candidate. Reports retain
+`scannedConfigs` and `scannedFileCount`.
 
 `--ignore` removes reported candidates only; ignored tests still count as usage. Namespace imports, `export *`, dynamic imports, and `require()` mark all exports used.
 
-A hit means de-export, not delete (#58). `countInternalReferences(sourceFile, exp)` uses checker symbol identity (#92) and returns `internalUsage`/`internalRefCount`; `deadCount` and `internalOnlyCount` are exposed. Walk with an explicit parent argument because program source files may have no `node.parent`.
+A hit means de-export, not delete (#58). Core
+`countInternalReferences(sourceFile, exp)` uses checker symbol identity (#92)
+and returns `internalUsage`/`internalRefCount`; `deadCount` and
+`internalOnlyCount` are exposed. The command module keeps compatibility
+re-exports for existing library consumers.
 
-DON'T add scanner types without updating `buildImportedBindingsMap()`.
+DON'T compose package/public/bin/convention/internal-reference/root policy in a
+command adapter. Update `src/core/export-liveness.ts`, including
+`buildImportedBindingsMap()`, so one-file and many-file verdicts cannot drift.
 
 ## Extract component
 

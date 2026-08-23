@@ -102,7 +102,7 @@ Non-string specifiers, `import.meta.url`, and `export namespace` are out of scop
 - `node.expression` for identifier `ExportAssignment` expressions, including `export default` and `export =`;
 - `null` for `MethodDeclaration`, `ConstructorDeclaration`, accessors, and namespaces, which command code handles.
 
-DON'T add a scanner reference type without updating `buildImportedBindingsMap()` in `src/commands/unused.ts`.
+DON'T add a scanner reference type without updating `buildImportedBindingsMap()` in `src/core/export-liveness.ts`.
 
 ## Source changes and constants
 
@@ -185,6 +185,14 @@ withSourceFile(graph.program, file, scanExports, []);
 ```
 
 Known violation: `audit.ts:81`. `buildDependencyGraph` creates a program; do not add a third `createProgram()` call in `move.ts` or `rename.ts`. If exposing it, add `program: ts.Program` to `DependencyGraph`.
+
+`export-liveness.ts` owns destructive export-verdict policy for both `analyze`
+and `unused`: imported bindings, package/public/bin evidence, convention
+entrypoints, internal references, reachability, transitive-dead chains, and
+orphans. Feed `evaluateExportLiveness()` prepared graph-owned source files and
+checkers. DON'T reconstruct that ordering in a command adapter or create a
+target-only `Program` for `analyze`; use `withGraphSourceFile()` and retain only
+the Vue/out-of-program parse fallback.
 
 ### Workspace and graph caches
 
