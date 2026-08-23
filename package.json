@@ -1,6 +1,6 @@
 {
   "name": "@mherod/resect",
-  "version": "1.8.1",
+  "version": "1.8.2",
   "description": "Surgical TypeScript/JavaScript module refactoring CLI. Move files, rename exports, and watch every import update automatically.",
   "type": "module",
   "bin": {
@@ -45,6 +45,7 @@
     "README.md",
     "LICENSE",
     "NOTICE",
+    "!**/CLAUDE.md",
     "!**/*.test.ts",
     "!**/*.spec.ts",
     "!**/__fixtures__",
