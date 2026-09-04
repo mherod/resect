@@ -21,6 +21,15 @@ failure; the registry renderer owns stderr and exit codes. Audit is the A1
 pilot. DON'T import zod, MCP modules, or per-command implementation modules into
 the descriptor owner, and don't migrate a second command incidentally.
 
+Audit's MCP schema and help Options block now derive from the same declaration.
+Keep MCP-only positionals separate from CLI flags, and omit MCP metadata for
+CLI-only rendering options. `option-descriptor-zod.ts` is imported by production
+registration modules only; `option-descriptor-help.ts` must remain zod-free.
+MCP optionality and describes are explicit; don't apply CLI numeric bounds or
+defaults to an existing MCP schema as an incidental refactor. Preserve divergent
+strings in `mcp-descriptions.ts` until a separate prose change is approved.
+Record actual registered input schemas in parity tests, not source indentation.
+
 ## CLI examples
 
 ```bash

@@ -37,8 +37,10 @@
 import { bin } from "../../package.json";
 import {
 	AUDIT_OPTION_DESCRIPTORS,
+	AUDIT_POSITIONAL_DESCRIPTORS,
 	type CommandDescriptor,
 } from "./command-descriptor.ts";
+import { toCliHelpOptions } from "./option-descriptor-help.ts";
 
 /**
  * The invocable CLI program name — the package `bin` key (`resect`), NOT the
@@ -630,6 +632,7 @@ Examples:
 		usage: "<directory>",
 		summary: "Analyze module health: fan-out, fan-in, cycles",
 		options: AUDIT_OPTION_DESCRIPTORS,
+		positionals: AUDIT_POSITIONAL_DESCRIPTORS,
 		cliHelp: `
 Usage: ${CLI_NAME} audit <directory> [options]
 
@@ -640,15 +643,7 @@ Arguments:
   directory    Path to the project directory to scan
 
 Options:
-  -p, --project          Path to project directory or tsconfig.json
-  --json                 Output results as JSON
-  --workspace            Scan across all workspace packages
-  --fan-out-threshold    Flag files with more than N imports (default: 10)
-  --fan-in-threshold     Flag files with more than N consumers (default: 10)
-  --export-threshold     Flag files with more than N exports (default: 8)
-  --include-ignored      Analyse git-ignored files too. Off by default: a file
-                         excluded from version control is not source, so build
-                         output cannot distort coupling metrics
+${toCliHelpOptions(AUDIT_OPTION_DESCRIPTORS)}
 
 Metrics:
   Fan-out       Number of distinct modules a file imports

@@ -1,7 +1,33 @@
+import { MCP_DESCRIPTIONS } from "./mcp-descriptions.ts";
 import { isInDomain } from "./option-domains.ts";
 import type { OptionName } from "./option-flags.ts";
 
 type RawCliValues = Partial<Record<OptionName, boolean | string | string[]>>;
+
+export type DescriptorText = string | ((defaultValue: unknown) => string);
+
+export interface McpPresentation {
+	description: DescriptorText;
+	required?: true;
+}
+
+export interface CliHelpPresentation {
+	description: DescriptorText;
+}
+
+/** MCP-only positional input; never widens the CLI OptionName union. */
+export interface PositionalDescriptor {
+	key: string;
+	type: "string";
+	mcp: McpPresentation;
+}
+
+export function descriptorText(
+	text: DescriptorText,
+	defaultValue?: unknown
+): string {
+	return typeof text === "string" ? text : text(defaultValue);
+}
 
 interface OptionDescriptorBase<
 	Name extends OptionName = OptionName,
@@ -10,6 +36,9 @@ interface OptionDescriptorBase<
 	name: Name;
 	key: Key;
 	short?: string;
+	cliHelp?: CliHelpPresentation;
+	/** Omit to keep a CLI-only option out of the MCP shape. */
+	mcp?: McpPresentation;
 }
 
 export interface BooleanOptionDescriptor<
@@ -60,9 +89,10 @@ export type OptionDescriptor<
 	| NumberOptionDescriptor<Name, Key>
 	| EnumOptionDescriptor<Name, Key>;
 
-/** Shared declarative command shape; presentation fields remain on CommandSpec. */
+/** Shared declarative inputs; command-level prose remains on CommandSpec. */
 export interface CommandDescriptor {
 	options?: readonly OptionDescriptor[];
+	positionals?: readonly PositionalDescriptor[];
 }
 
 type DescriptorShort<Descriptor extends OptionDescriptor> = Descriptor extends {
@@ -275,15 +305,43 @@ export function toRegistryDefaults<
 }
 
 export const AUDIT_OPTION_DESCRIPTORS = [
-	{ name: "project", key: "project", type: "string", short: "p" },
-	{ name: "json", key: "json", type: "boolean" },
-	{ name: "workspace", key: "workspace", type: "boolean" },
+	{
+		name: "project",
+		key: "project",
+		type: "string",
+		short: "p",
+		cliHelp: {
+			description: "Path to project directory or tsconfig.json",
+		},
+		mcp: { description: MCP_DESCRIPTIONS.project.directory },
+	},
+	{
+		name: "json",
+		key: "json",
+		type: "boolean",
+		cliHelp: { description: "Output results as JSON" },
+	},
+	{
+		name: "workspace",
+		key: "workspace",
+		type: "boolean",
+		cliHelp: { description: "Scan across all workspace packages" },
+		mcp: { description: "Scan across all workspace packages (default false)" },
+	},
 	{
 		name: "fan-out-threshold",
 		key: "fanOutThreshold",
 		type: "number",
 		min: 0,
 		default: 10,
+		cliHelp: {
+			description: (value) =>
+				`Flag files with more than N imports (default: ${String(value)})`,
+		},
+		mcp: {
+			description: (value) =>
+				`Flag files that import more than N distinct modules (default ${String(value)}). Lower to surface more candidates`,
+		},
 	},
 	{
 		name: "fan-in-threshold",
@@ -291,6 +349,14 @@ export const AUDIT_OPTION_DESCRIPTORS = [
 		type: "number",
 		min: 0,
 		default: 10,
+		cliHelp: {
+			description: (value) =>
+				`Flag files with more than N consumers (default: ${String(value)})`,
+		},
+		mcp: {
+			description: (value) =>
+				`Flag files imported by more than N distinct files (default ${String(value)}). High fan-in marks hub modules`,
+		},
 	},
 	{
 		name: "export-threshold",
@@ -298,9 +364,34 @@ export const AUDIT_OPTION_DESCRIPTORS = [
 		type: "number",
 		min: 0,
 		default: 8,
+		cliHelp: {
+			description: (value) =>
+				`Flag files with more than N exports (default: ${String(value)})`,
+		},
+		mcp: {
+			description: (value) =>
+				`Flag files exporting more than N symbols (default ${String(value)}). High counts suggest a module doing too much`,
+		},
 	},
-	{ name: "include-ignored", key: "includeIgnored", type: "boolean" },
+	{
+		name: "include-ignored",
+		key: "includeIgnored",
+		type: "boolean",
+		cliHelp: {
+			description:
+				"Analyse git-ignored files too. Off by default: a file\nexcluded from version control is not source, so build\noutput cannot distort coupling metrics",
+		},
+		mcp: { description: MCP_DESCRIPTIONS.includeIgnored.analysis },
+	},
 ] as const satisfies readonly OptionDescriptor[];
+
+export const AUDIT_POSITIONAL_DESCRIPTORS = [
+	{
+		key: "directory",
+		type: "string",
+		mcp: { required: true, description: MCP_DESCRIPTIONS.directory.scan },
+	},
+] as const satisfies readonly PositionalDescriptor[];
 
 export const AUDIT_OPTION_DEFAULTS = toRegistryDefaults(
 	AUDIT_OPTION_DESCRIPTORS

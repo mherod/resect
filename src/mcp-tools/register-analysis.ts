@@ -12,7 +12,12 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { affected } from "../commands/affected.ts";
 import { analyzeImpact } from "../commands/analyze-impact.ts";
+import {
+	AUDIT_OPTION_DESCRIPTORS,
+	AUDIT_POSITIONAL_DESCRIPTORS,
+} from "../commands/command-descriptor.ts";
 import { mcpDescription } from "../commands/command-spec.ts";
+import { toZodShape } from "../commands/option-descriptor-zod.ts";
 import { FIND_TYPES } from "../commands/option-domains.ts";
 import {
 	analyzeTool,
@@ -228,47 +233,10 @@ export function registerAnalysisTools(server: McpServer): void {
 		"audit",
 		{
 			description: mcpDescription("audit"),
-			inputSchema: {
-				directory: z
-					.string()
-					.describe(
-						"Absolute or cwd-relative path to the project directory to scan"
-					),
-				project: z
-					.string()
-					.optional()
-					.describe(
-						"Optional path to the project root or tsconfig.json. Omit to auto-resolve the tsconfig for `directory`"
-					),
-				workspace: z
-					.boolean()
-					.optional()
-					.describe("Scan across all workspace packages (default false)"),
-				fanOutThreshold: z
-					.number()
-					.optional()
-					.describe(
-						"Flag files that import more than N distinct modules (default 10). Lower to surface more candidates"
-					),
-				fanInThreshold: z
-					.number()
-					.optional()
-					.describe(
-						"Flag files imported by more than N distinct files (default 10). High fan-in marks hub modules"
-					),
-				exportThreshold: z
-					.number()
-					.optional()
-					.describe(
-						"Flag files exporting more than N symbols (default 8). High counts suggest a module doing too much"
-					),
-				includeIgnored: z
-					.boolean()
-					.optional()
-					.describe(
-						"Analyse git-ignored files too (#202). Off by default: a file excluded from version control is not source, so build output cannot distort the result. Set true only to deliberately analyse generated output"
-					),
-			},
+			inputSchema: toZodShape([
+				...AUDIT_POSITIONAL_DESCRIPTORS,
+				...AUDIT_OPTION_DESCRIPTORS,
+			]),
 		},
 		async ({
 			directory,

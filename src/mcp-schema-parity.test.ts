@@ -1,53 +1,53 @@
 import { describe, expect, test } from "bun:test";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+import { cliHelp } from "./commands/command-spec.ts";
+import { MCP_DESCRIPTIONS } from "./commands/mcp-descriptions.ts";
 import { renameSpecifierInputSchema } from "./mcp-server.ts";
-import {
-	REGISTRATION_MODULES,
-	readRegistrationSource,
-} from "./mcp-tools/registration-test-helpers.ts";
+import { registerAnalysisTools } from "./mcp-tools/register-analysis.ts";
+import { registerHygieneTools } from "./mcp-tools/register-hygiene.ts";
+import { registerMutationTools } from "./mcp-tools/register-mutation.ts";
 
 /**
  * MCP inputSchema ↔ CLI options parity guard (#129).
- *
- * This parses the registered `inputSchema` keys straight out of the source
- * text for each tool and compares them against the option keys its CLI
- * counterpart supports. Behavioural schemas are imported directly where a
- * source-key comparison would not exercise their validation.
- * `json`/`format` are excluded per-tool where they only toggle CLI text
- * rendering — MCP tools already return structured JSON unconditionally, so
- * those flags would be no-ops over MCP (documented in #129's resolution).
+ * Record the actual schemas passed to the real registrations, including generated
+ * schemas. The one-way EXPECTED table is deliberately retained until phase E.
+ * json/format remain CLI-only where MCP already returns structured JSON.
  */
+interface SchemaRecorder {
+	registerTool(name: string, config: { inputSchema?: z.ZodRawShape }): void;
+}
 
-// Split out of `mcp-server.ts` per domain in #187; the server entry now holds
-// only construction and the register calls, so scraping it would find no tools.
-const REGISTRATION_SOURCE = await readRegistrationSource();
+function recordInputSchemas(): Map<string, z.ZodRawShape> {
+	const schemas = new Map<string, z.ZodRawShape>();
+	const recorder: SchemaRecorder = {
+		registerTool(name, config) {
+			if (!config.inputSchema || schemas.has(name)) {
+				throw new Error(`Missing or duplicate schema for tool "${name}"`);
+			}
+			schemas.set(name, config.inputSchema);
+		},
+	};
+	// Only registerTool is exercised; handlers and transports are never started.
+	const server = recorder as unknown as McpServer;
+	registerAnalysisTools(server);
+	registerHygieneTools(server);
+	registerMutationTools(server);
+	return schemas;
+}
 
-function extractInputSchemaKeys(toolName: string): string[] {
-	// Registrations sit inside `register<Domain>Tools(server)`, so every line
-	// carries one more tab than it did at module top level. The depth is load
-	// bearing: it selects top-level schema keys and skips nested ones (e.g. the
-	// `source`/`target` pair inside `move`'s `batch` array element).
-	const toolStart = REGISTRATION_SOURCE.indexOf(
-		`\tserver.registerTool(\n\t\t"${toolName}",`
-	);
-	if (toolStart === -1) {
-		throw new Error(
-			`Tool "${toolName}" not found in ${REGISTRATION_MODULES.join(", ")}`
-		);
+const REGISTERED_SCHEMAS = recordInputSchemas();
+
+function registeredSchema(toolName: string): z.ZodRawShape {
+	const schema = REGISTERED_SCHEMAS.get(toolName);
+	if (!schema) {
+		throw new Error(`Tool "${toolName}" was not registered`);
 	}
-	const schemaStart = REGISTRATION_SOURCE.indexOf("inputSchema: {", toolStart);
-	const schemaEnd = REGISTRATION_SOURCE.indexOf(
-		"\n\t\t\t},\n\t\t},",
-		schemaStart
-	);
-	const block = REGISTRATION_SOURCE.slice(schemaStart, schemaEnd);
-	const keys: string[] = [];
-	for (const match of block.matchAll(/\n\t\t\t\t(\w+):/g)) {
-		const key = match[1];
-		if (key) {
-			keys.push(key);
-		}
-	}
-	return keys;
+	return schema;
+}
+
+function registeredInputKeys(toolName: string): string[] {
+	return Object.keys(registeredSchema(toolName));
 }
 
 /**
@@ -178,7 +178,7 @@ const EXPECTED: Record<string, string[]> = {
 describe("MCP inputSchema ↔ CLI options parity (#129)", () => {
 	for (const [toolName, expectedKeys] of Object.entries(EXPECTED)) {
 		test(`"${toolName}" MCP schema includes every expected CLI-parity key`, () => {
-			const actualKeys = extractInputSchemaKeys(toolName);
+			const actualKeys = registeredInputKeys(toolName);
 			for (const key of expectedKeys) {
 				expect(actualKeys).toContain(key);
 			}
@@ -186,15 +186,15 @@ describe("MCP inputSchema ↔ CLI options parity (#129)", () => {
 	}
 
 	test('"similar" schema intentionally omits format (CLI-only text rendering)', () => {
-		expect(extractInputSchemaKeys("similar")).not.toContain("format");
+		expect(registeredInputKeys("similar")).not.toContain("format");
 	});
 
 	test('"extract-common" schema intentionally omits json (CLI-only text rendering)', () => {
-		expect(extractInputSchemaKeys("extract-common")).not.toContain("json");
+		expect(registeredInputKeys("extract-common")).not.toContain("json");
 	});
 
 	test('"extract-component" schema intentionally omits json (CLI-only text rendering)', () => {
-		expect(extractInputSchemaKeys("extract-component")).not.toContain("json");
+		expect(registeredInputKeys("extract-component")).not.toContain("json");
 	});
 
 	test('"alias" rejects malformed rename specifiers at the MCP schema boundary', () => {
@@ -208,4 +208,91 @@ describe("MCP inputSchema ↔ CLI options parity (#129)", () => {
 			renameSpecifierInputSchema.safeParse("@scope/old=@scope/new").success
 		).toBe(true);
 	});
+});
+
+const AUDIT_BASELINE = {
+	help: "\nUsage: resect audit <directory> [options]\n\nAnalyze module health metrics: fan-out, fan-in, instability ratios,\nand circular dependency detection.\n\nArguments:\n  directory    Path to the project directory to scan\n\nOptions:\n  -p, --project          Path to project directory or tsconfig.json\n  --json                 Output results as JSON\n  --workspace            Scan across all workspace packages\n  --fan-out-threshold    Flag files with more than N imports (default: 10)\n  --fan-in-threshold     Flag files with more than N consumers (default: 10)\n  --export-threshold     Flag files with more than N exports (default: 8)\n  --include-ignored      Analyse git-ignored files too. Off by default: a file\n                         excluded from version control is not source, so build\n                         output cannot distort coupling metrics\n\nMetrics:\n  Fan-out       Number of distinct modules a file imports\n  Fan-in        Number of distinct files that import a module\n  Instability   fan-out / (fan-in + fan-out) — 0 = maximally stable, 1 = maximally unstable\n\nExamples:\n  resect audit src\n  resect audit . --json\n  resect audit . --workspace\n  resect audit src --fan-out-threshold=8 --export-threshold=5\n",
+	schema: {
+		$schema: "https://json-schema.org/draft/2020-12/schema",
+		type: "object",
+		properties: {
+			directory: {
+				type: "string",
+				description:
+					"Absolute or cwd-relative path to the project directory to scan",
+			},
+			project: {
+				description:
+					"Optional path to the project root or tsconfig.json. Omit to auto-resolve the tsconfig for `directory`",
+				type: "string",
+			},
+			workspace: {
+				description: "Scan across all workspace packages (default false)",
+				type: "boolean",
+			},
+			fanOutThreshold: {
+				description:
+					"Flag files that import more than N distinct modules (default 10). Lower to surface more candidates",
+				type: "number",
+			},
+			fanInThreshold: {
+				description:
+					"Flag files imported by more than N distinct files (default 10). High fan-in marks hub modules",
+				type: "number",
+			},
+			exportThreshold: {
+				description:
+					"Flag files exporting more than N symbols (default 8). High counts suggest a module doing too much",
+				type: "number",
+			},
+			includeIgnored: {
+				description:
+					"Analyse git-ignored files too (#202). Off by default: a file excluded from version control is not source, so build output cannot distort the result. Set true only to deliberately analyse generated output",
+				type: "boolean",
+			},
+		},
+		required: ["directory"],
+		additionalProperties: false,
+	},
+};
+
+test("audit generated presentation preserves shipped help and schema bytes", () => {
+	expect(cliHelp("audit")).toBe(AUDIT_BASELINE.help);
+	expect(
+		JSON.stringify(z.toJSONSchema(z.object(registeredSchema("audit"))))
+	).toBe(JSON.stringify(AUDIT_BASELINE.schema));
+});
+
+test("audit schema keeps directory required and thresholds optional plain numbers", () => {
+	const schema = z.object(registeredSchema("audit"));
+	expect(schema.safeParse({}).success).toBeFalse();
+	expect(schema.parse({ directory: "." })).toEqual({ directory: "." });
+	for (const key of ["fanOutThreshold", "fanInThreshold", "exportThreshold"]) {
+		expect(
+			schema.safeParse({ directory: ".", [key]: -0.5 }).success
+		).toBeTrue();
+		expect(
+			schema.safeParse({ directory: ".", [key]: "10" }).success
+		).toBeFalse();
+	}
+});
+
+test("unregistered tools fail explicitly instead of borrowing neighboring keys", () => {
+	expect(() => registeredInputKeys("missing-tool")).toThrow(
+		'Tool "missing-tool" was not registered'
+	);
+});
+
+test("shared describe catalogue retains every shipped variant", () => {
+	const descriptions = [...REGISTERED_SCHEMAS.values()].flatMap((schema) =>
+		Object.values(schema).map((leaf) => z.globalRegistry.get(leaf)?.description)
+	);
+	for (const family of Object.values(MCP_DESCRIPTIONS)) {
+		for (const text of Object.values(family)) {
+			expect(descriptions).toContain(text);
+		}
+	}
+	expect(String(MCP_DESCRIPTIONS.includeIgnored.naming)).not.toBe(
+		MCP_DESCRIPTIONS.includeIgnored.analysis
+	);
 });
