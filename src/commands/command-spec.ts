@@ -41,6 +41,14 @@ import {
 	type CommandDescriptor,
 } from "./command-descriptor.ts";
 import { toCliHelpOptions } from "./option-descriptor-help.ts";
+import {
+	BARREL_OPTION_DESCRIPTORS,
+	BARREL_POSITIONAL_DESCRIPTORS,
+	SIMILAR_OPTION_DESCRIPTORS,
+	SIMILAR_POSITIONAL_DESCRIPTORS,
+	UNUSED_OPTION_DESCRIPTORS,
+	UNUSED_POSITIONAL_DESCRIPTORS,
+} from "./report-descriptors.ts";
 
 /**
  * The invocable CLI program name — the package `bin` key (`resect`), NOT the
@@ -480,6 +488,8 @@ Examples:
 	},
 	{
 		name: "similar",
+		options: SIMILAR_OPTION_DESCRIPTORS,
+		positionals: SIMILAR_POSITIONAL_DESCRIPTORS,
 		usage: "<directory>",
 		summary: "Find similar or duplicate functions for consolidation",
 		cliHelp: `
@@ -493,25 +503,7 @@ Arguments:
   directory    Path to the project directory to scan
 
 Options:
-  --json            Output results as JSON
-  --threshold       Minimum similarity score 0.0–1.0 (default: 0.8)
-  --max-groups      Maximum number of groups to display (default: 10, 0 for unlimited)
-  --strict          Exit with error code 1 if similar declarations are found (for CI/hooks)
-  --name-threshold  Only group declarations whose names also meet this similarity (0.0–1.0)
-  --same-name-only  Only group declarations with identical names
-  --skip-same-file  Skip groups where all declarations are in the same file
-  --only-related-to Only show groups related to a file or folder (path or glob)
-  --min-lines       Exclude declarations with fewer body lines (filters thin wrappers)
-  --skip-directives Skip functions containing compile-time directives
-  --skip-wrappers   Skip thin wrapper functions (single return + call expression)
-  --kinds           Comma-separated list of declaration kinds to include:
-                    function, type, interface (default: all)
-  --bucket          Filter groups by similarity bucket: exact, high, or medium
-  --format          Output format: compact (minimal name + file:line per group)
-  --workspace       Scan across all workspace packages
-  --include-ignored Analyse git-ignored files too. Off by default: a bundled
-                    copy of a source declaration is a guaranteed duplicate of it
-  -p, --project     Path to project directory or tsconfig.json
+${toCliHelpOptions(SIMILAR_OPTION_DESCRIPTORS)}
 
 Similarity buckets:
   exact   Identical after normalization (renamed identifiers or literal differences)
@@ -661,6 +653,8 @@ Examples:
 	},
 	{
 		name: "barrel",
+		options: BARREL_OPTION_DESCRIPTORS,
+		positionals: BARREL_POSITIONAL_DESCRIPTORS,
 		usage: "<directory>",
 		summary: "Analyze barrel files: shadowing, wildcards, chains",
 		cliHelp: `
@@ -672,13 +666,7 @@ Arguments:
   directory    Path to the project directory to scan
 
 Options:
-  -p, --project   Path to project directory or tsconfig.json
-  --json          Output results as JSON
-  --workspace     Scan across all workspace packages
-  --verbose       Show detailed output
-  --include-ignored  Analyse git-ignored files too. Off by default: an emitted
-                  bundle re-exporting its chunks is structurally a barrel, but
-                  not one you maintain
+${toCliHelpOptions(BARREL_OPTION_DESCRIPTORS)}
 
 Findings:
   Sub-path export shadowing — files reachable through a barrel that ALSO have a
@@ -740,6 +728,8 @@ Examples:
 	},
 	{
 		name: "unused",
+		options: UNUSED_OPTION_DESCRIPTORS,
+		positionals: UNUSED_POSITIONAL_DESCRIPTORS,
 		usage: "<directory>",
 		summary: "Find exports never imported by other files",
 		cliHelp: `
@@ -751,19 +741,7 @@ Arguments:
   directory    Path to the project directory to scan
 
 Options:
-  -p, --project    Path to project directory or tsconfig.json
-  --json           Output results as JSON
-  --verbose        Show detailed output
-  --ignore              Glob pattern to exclude files (e.g. "*.test.ts")
-  --workspace           Merge sibling workspace packages into the usage graph, so an
-                        export consumed only from another package is not reported
-                        dead. The report still covers <directory> only.
-  --entrypoint-globs    Glob pattern(s) for convention entrypoints to exclude from
-                        orphan/dead reporting (e.g. "hooks/**", "scripts/*.ts").
-                        Repeat the flag for multiple patterns.
-  --include-ignored     Analyse git-ignored files too. Off by default: build
-                        output that imports a source export makes it look
-                        consumed, hiding a genuinely dead export
+${toCliHelpOptions(UNUSED_OPTION_DESCRIPTORS)}
 
 Recognized Next.js App Router code entrypoints are excluded automatically.
 

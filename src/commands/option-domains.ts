@@ -33,6 +33,12 @@ export type ExtensionPolicy = (typeof EXTENSION_POLICIES)[number];
 export const FIND_TYPES = ["file", "export", "all"] as const;
 export type FindType = (typeof FIND_TYPES)[number];
 
+/** Report adapter domains; core discovery/filter types remain independent. */
+export const SIMILARITY_KINDS = ["function", "type", "interface"] as const;
+export type SimilarityKind = (typeof SIMILARITY_KINDS)[number];
+export const SIMILARITY_BUCKETS = ["exact", "high", "medium"] as const;
+export type SimilarityBucket = (typeof SIMILARITY_BUCKETS)[number];
+
 /** `naming --case` explicit filename casing targets. */
 export const FILENAME_CASING_STYLES = [
 	"kebab-case",

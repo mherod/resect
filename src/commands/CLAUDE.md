@@ -30,6 +30,15 @@ defaults to an existing MCP schema as an incidental refactor. Preserve divergent
 strings in `mcp-descriptions.ts` until a separate prose change is approved.
 Record actual registered input schemas in parity tests, not source indentation.
 
+`report-descriptors.ts` owns barrel, unused and similar adapter declarations.
+Keep pure legacy CLI parsing there when generic coercion would change accepted
+values; MCP cardinality and CLI repeatability are separate contracts. Preserve
+help layout and ordering in presentation metadata. Derive unused input types
+from its descriptors, composing directory and progress separately.
+Core `SimilarityDiscoveryOptions` and `SimilarityFilterOptions` remain independent
+API types: core must not import command descriptors. Declaration migration does
+not authorize changing similarity scores, bucket boundaries or discovery seams.
+
 ## CLI examples
 
 ```bash

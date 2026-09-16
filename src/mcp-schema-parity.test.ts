@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { cliHelp } from "./commands/command-spec.ts";
+import { COMMAND_SPECS, cliHelp } from "./commands/command-spec.ts";
 import { MCP_DESCRIPTIONS } from "./commands/mcp-descriptions.ts";
+import { COMMANDS } from "./commands/registry.ts";
 import { renameSpecifierInputSchema } from "./mcp-server.ts";
 import { registerAnalysisTools } from "./mcp-tools/register-analysis.ts";
 import { registerHygieneTools } from "./mcp-tools/register-hygiene.ts";
@@ -37,6 +38,159 @@ function recordInputSchemas(): Map<string, z.ZodRawShape> {
 }
 
 const REGISTERED_SCHEMAS = recordInputSchemas();
+
+// Frozen from the pre-migration registrations at 3e4bf3d. These compatibility
+// receipts cover full schema descriptions/types/optionality and exact help bytes,
+// independently of descriptor derivation. Phase E still owns the EXPECTED table.
+const REPORT_BASELINE = {
+	audit: {
+		help: "423c239de021c7aa375bc8767c337f9eeaba2119d6964396809424d50fad7e8f",
+		schema: "cf6b850f63c8a362b4840bdadfaf4d9fa4f43a5001a8de2518a7e5954c9ac374",
+		flags: [
+			"project",
+			"json",
+			"workspace",
+			"fan-out-threshold",
+			"fan-in-threshold",
+			"export-threshold",
+			"include-ignored",
+		],
+		prose: "f55d3ff8373a38c59f071bc9dc6c36d583134a1ecdd9b11857a9b69e769d7565",
+	},
+	barrel: {
+		help: "fa077b7881330611658d39acaed4471412656e81936e7e5ee8392a6e525793fe",
+		schema: "366afa9284b0bcf424c339b4272b9c3c0afffed2f0f45a0968866488282b13b8",
+		flags: ["project", "json", "workspace", "verbose", "include-ignored"],
+		prose: "0b125756c0cea2e60c36cbeff58cc85cd16c1e92df9edb3c87527754be4908d3",
+	},
+	unused: {
+		help: "62bc72d0d0ced54fac48841fc07a96febd6975191a8e50587a296f854a271be8",
+		schema: "9fcddd946cf323a38d284b44071e8f70a26f6599db0de80424fa5d3a72434fc2",
+		flags: [
+			"project",
+			"json",
+			"verbose",
+			"ignore",
+			"workspace",
+			"entrypoint-globs",
+			"include-ignored",
+		],
+		prose: "38d84b4e515ca50b3c88c0398eabbf31484c7240c4ef2d5229a2b741ea8221e1",
+	},
+	similar: {
+		help: "adfcc15f5e26b25882f3484cdd1cb6741b40f658675ae5b3348cf5846a4d46d9",
+		schema: "b93d0e41649a4ae44e83be95f5379fb6fc60b44cf1726468ca7779b300f2314c",
+		flags: [
+			"project",
+			"json",
+			"threshold",
+			"max-groups",
+			"strict",
+			"workspace",
+			"name-threshold",
+			"same-name-only",
+			"skip-same-file",
+			"only-related-to",
+			"min-lines",
+			"skip-directives",
+			"skip-wrappers",
+			"kinds",
+			"bucket",
+			"format",
+			"include-ignored",
+		],
+		prose: "3917d35d5128cdd6d145391e28305d93459238993116373b028d1c60838e0ee0",
+	},
+} as const;
+
+function stableContract(value: unknown): unknown {
+	if (Array.isArray(value)) {
+		return value.map(stableContract);
+	}
+	if (value && typeof value === "object") {
+		return Object.fromEntries(
+			Object.entries(value)
+				.sort(([left], [right]) => left.localeCompare(right))
+				.map(([key, item]) => [key, stableContract(item)])
+		);
+	}
+	return value;
+}
+
+function contractHash(value: unknown): string {
+	return new Bun.CryptoHasher("sha256")
+		.update(
+			typeof value === "string" ? value : JSON.stringify(stableContract(value))
+		)
+		.digest("hex");
+}
+
+for (const [name, baseline] of Object.entries(REPORT_BASELINE)) {
+	test(`${name} preserves its registered schema and exact CLI presentation`, () => {
+		const command = COMMANDS.find((candidate) => candidate.name === name);
+		const spec = COMMAND_SPECS.find((candidate) => candidate.name === name);
+		expect(command).toBeDefined();
+		expect(spec).toBeDefined();
+		expect(command?.options).toEqual(baseline.flags);
+		expect(contractHash(command?.helpText)).toBe(baseline.help);
+		expect(
+			contractHash([spec?.usage, spec?.summary, spec?.mcpDescription])
+		).toBe(baseline.prose);
+		expect(contractHash(z.toJSONSchema(z.object(registeredSchema(name))))).toBe(
+			baseline.schema
+		);
+	});
+}
+
+test("report MCP input cardinality and optionality remain independent of CLI parsing", () => {
+	const unused = z.object(registeredSchema("unused"));
+	for (const entrypointGlobs of ["hooks/**", ["hooks/**", "scripts/*"], []]) {
+		expect(
+			unused.parse({ directory: "", entrypointGlobs }).entrypointGlobs
+		).toEqual(entrypointGlobs);
+	}
+	expect(
+		unused.safeParse({ directory: ".", entrypointGlobs: 1 }).success
+	).toBeFalse();
+	expect(unused.parse({ directory: "." }).entrypointGlobs).toBeUndefined();
+	expect(unused.safeParse({}).success).toBeFalse();
+	const similar = z.object(registeredSchema("similar"));
+	expect(Object.keys(registeredSchema("similar"))).toHaveLength(11);
+	expect(Object.keys(registeredSchema("unused"))).toHaveLength(6);
+	expect(Object.keys(registeredSchema("barrel"))).toHaveLength(4);
+	expect(
+		similar.parse({
+			directory: ".",
+			threshold: -1,
+			maxGroups: 1.5,
+			minLines: -2,
+		})
+	).toMatchObject({ threshold: -1, maxGroups: 1.5, minLines: -2 });
+	expect(similar.parse({ directory: "." }).threshold).toBeUndefined();
+	for (const kinds of [[], ["function", "interface", "type"]]) {
+		expect(similar.parse({ directory: ".", kinds }).kinds).toEqual(kinds);
+	}
+	for (const kinds of ["function", ["invalid"], [1]]) {
+		expect(similar.safeParse({ directory: ".", kinds }).success).toBeFalse();
+	}
+	for (const bucket of ["exact", "high", "medium"]) {
+		expect(similar.parse({ directory: ".", bucket }).bucket).toBe(bucket);
+	}
+	for (const bucket of ["", "unknown", 1]) {
+		expect(similar.safeParse({ directory: ".", bucket }).success).toBeFalse();
+	}
+	for (const key of [
+		"json",
+		"strict",
+		"workspace",
+		"onlyRelatedTo",
+		"skipDirectives",
+		"skipWrappers",
+		"format",
+	]) {
+		expect(registeredSchema("similar")).not.toHaveProperty(key);
+	}
+});
 
 function registeredSchema(toolName: string): z.ZodRawShape {
 	const schema = REGISTERED_SCHEMAS.get(toolName);

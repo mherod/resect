@@ -4,15 +4,26 @@ import type { OptionName } from "./option-flags.ts";
 
 type RawCliValues = Partial<Record<OptionName, boolean | string | string[]>>;
 
+export type CliParseResult<Value = unknown> =
+	| { ok: true; value: Value }
+	| { ok: false; message: string };
+
+export type CliOptionParser = (raw: RawCliValues[OptionName]) => CliParseResult;
+
 export type DescriptorText = string | ((defaultValue: unknown) => string);
 
 export interface McpPresentation {
 	description: DescriptorText;
 	required?: true;
+	/** MCP cardinality is independent of parseArgs repeatability. */
+	cardinality?: "scalar" | "array" | "scalar-or-array";
 }
 
 export interface CliHelpPresentation {
 	description: DescriptorText;
+	column?: number;
+	continuationColumn?: number;
+	order?: number;
 }
 
 /** MCP-only positional input; never widens the CLI OptionName union. */
@@ -39,6 +50,8 @@ interface OptionDescriptorBase<
 	cliHelp?: CliHelpPresentation;
 	/** Omit to keep a CLI-only option out of the MCP shape. */
 	mcp?: McpPresentation;
+	/** Pure compatibility parsing; rendering and process exit stay in the CLI. */
+	parseCli?: CliOptionParser;
 }
 
 export interface BooleanOptionDescriptor<
@@ -142,10 +155,23 @@ type DescriptorScalar<Descriptor extends OptionDescriptor> =
 				: string;
 
 type DescriptorValue<Descriptor extends OptionDescriptor> = Descriptor extends {
-	multiple: true;
+	parseCli: infer Parser extends CliOptionParser;
 }
-	? DescriptorScalar<Descriptor>[]
-	: DescriptorScalar<Descriptor>;
+	? Extract<ReturnType<Parser>, { ok: true }>["value"]
+	: Descriptor extends { multiple: true }
+		? DescriptorScalar<Descriptor>[]
+		: DescriptorScalar<Descriptor>;
+
+/** Library inputs retain explicitly declared scalar-or-array contracts. */
+export type DescriptorInputOptions<
+	Descriptors extends readonly OptionDescriptor[],
+> = {
+	[Descriptor in Descriptors[number] as Descriptor["key"]]?: Descriptor extends {
+		mcp: { cardinality: "scalar-or-array" };
+	}
+		? DescriptorScalar<Descriptor> | DescriptorScalar<Descriptor>[]
+		: DescriptorValue<Descriptor>;
+};
 
 export type RegistryOptions<Descriptors extends readonly OptionDescriptor[]> = {
 	[Descriptor in Descriptors[number] as Descriptor["key"]]?: DescriptorValue<Descriptor>;
@@ -251,6 +277,14 @@ export function toRegistryOptions<
 
 	for (const descriptor of descriptors) {
 		const raw = values[descriptor.name];
+		if (descriptor.parseCli) {
+			const parsed = descriptor.parseCli(raw);
+			if (!parsed.ok) {
+				return parsed;
+			}
+			options[descriptor.key] = parsed.value;
+			continue;
+		}
 		if (raw === undefined || (descriptor.type === "number" && raw === "")) {
 			options[descriptor.key] = undefined;
 			continue;

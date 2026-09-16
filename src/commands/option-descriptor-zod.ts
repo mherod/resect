@@ -22,10 +22,14 @@ type ScalarSchema<Descriptor extends InputDescriptor> = Descriptor extends {
 			: z.ZodString;
 
 type ValueSchema<Descriptor extends InputDescriptor> = Descriptor extends {
-	multiple: true;
+	mcp: { cardinality: "scalar-or-array" };
 }
-	? z.ZodArray<ScalarSchema<Descriptor>>
-	: ScalarSchema<Descriptor>;
+	? z.ZodUnion<[ScalarSchema<Descriptor>, z.ZodArray<ScalarSchema<Descriptor>>]>
+	: Descriptor extends { mcp: { cardinality: "scalar" } }
+		? ScalarSchema<Descriptor>
+		: Descriptor extends { mcp: { cardinality: "array" } } | { multiple: true }
+			? z.ZodArray<ScalarSchema<Descriptor>>
+			: ScalarSchema<Descriptor>;
 
 type InputSchema<Descriptor extends InputDescriptor> = Descriptor extends {
 	mcp: { required: true };
@@ -73,7 +77,15 @@ export function toZodShape<
 			throw new Error(`Duplicate MCP input key: ${descriptor.key}`);
 		}
 		let schema = scalarSchema(descriptor);
-		if ("multiple" in descriptor && descriptor.multiple) {
+		const cardinality = descriptor.mcp.cardinality;
+		if (cardinality === "scalar-or-array") {
+			schema = z.union([schema, z.array(schema)]);
+		} else if (
+			cardinality === "array" ||
+			(cardinality === undefined &&
+				"multiple" in descriptor &&
+				descriptor.multiple)
+		) {
 			schema = z.array(schema);
 		}
 		if (!descriptor.mcp.required) {

@@ -3,12 +3,13 @@ import { logger } from "../cli-logger.ts";
 import type { SimilarityDiscoveryOptions } from "../core/similarity.ts";
 import { analyzeSimilarity } from "../core/similarity.ts";
 import type { SimilarityGroup, SimilarityReport } from "../types/similar.ts";
+import type { SimilarityBucket } from "./option-domains.ts";
 
 export interface SimilarOptions extends SimilarityDiscoveryOptions {
 	json?: boolean;
 	maxGroups?: number;
 	strict?: boolean;
-	bucket?: "exact" | "high" | "medium";
+	bucket?: SimilarityBucket;
 	format?: "compact";
 }
 

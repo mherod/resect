@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import { createSourceFileFromText } from "../core/source-file.ts";
+import type { UnusedOptions } from "../index.ts";
 import {
 	CLI,
 	cleanup,
@@ -1531,11 +1532,15 @@ describe("transitive dead-export chains", () => {
 
 		const withGlob = await makeFixture("transitive-entry-on", files);
 		try {
-			const report = await findUnusedExports(path.join(withGlob, "lib"), {
-				entrypointGlobs: "**/*.entry.ts",
-			});
-			expect(report.transitivelyDeadCount).toBe(0);
-			expect(report.excludedEntrypointFileCount).toBe(1);
+			for (const entrypointGlobs of ["**/*.entry.ts", ["**/*.entry.ts"]]) {
+				const options: UnusedOptions = {
+					directory: path.join(withGlob, "lib"),
+					entrypointGlobs,
+				};
+				const report = await findUnusedExports(options.directory, options);
+				expect(report.transitivelyDeadCount).toBe(0);
+				expect(report.excludedEntrypointFileCount).toBe(1);
+			}
 		} finally {
 			await cleanup(withGlob);
 		}

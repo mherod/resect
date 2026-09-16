@@ -20,6 +20,14 @@ import { mcpDescription } from "../commands/command-spec.ts";
 import { toZodShape } from "../commands/option-descriptor-zod.ts";
 import { FIND_TYPES } from "../commands/option-domains.ts";
 import {
+	BARREL_OPTION_DESCRIPTORS,
+	BARREL_POSITIONAL_DESCRIPTORS,
+	SIMILAR_OPTION_DESCRIPTORS,
+	SIMILAR_POSITIONAL_DESCRIPTORS,
+	UNUSED_OPTION_DESCRIPTORS,
+	UNUSED_POSITIONAL_DESCRIPTORS,
+} from "../commands/report-descriptors.ts";
+import {
 	analyzeTool,
 	auditTool,
 	barrelTool,
@@ -264,31 +272,10 @@ export function registerAnalysisTools(server: McpServer): void {
 		"barrel",
 		{
 			description: mcpDescription("barrel"),
-			inputSchema: {
-				directory: z
-					.string()
-					.describe(
-						"Absolute or cwd-relative path to the project directory to scan"
-					),
-				project: z
-					.string()
-					.optional()
-					.describe(
-						"Optional path to the project root or tsconfig.json. Omit to auto-resolve the tsconfig for `directory`"
-					),
-				workspace: z
-					.boolean()
-					.optional()
-					.describe(
-						"Scan barrels across every workspace package, not just the resolved tsconfig"
-					),
-				includeIgnored: z
-					.boolean()
-					.optional()
-					.describe(
-						"Analyse git-ignored files too (#202). Off by default: a file excluded from version control is not source, so build output cannot distort the result. Set true only to deliberately analyse generated output"
-					),
-			},
+			inputSchema: toZodShape([
+				...BARREL_POSITIONAL_DESCRIPTORS,
+				...BARREL_OPTION_DESCRIPTORS,
+			]),
 		},
 		async ({ directory, project, workspace, includeIgnored }) => {
 			return withErrorHandling(async () => {
@@ -305,43 +292,10 @@ export function registerAnalysisTools(server: McpServer): void {
 		"unused",
 		{
 			description: mcpDescription("unused"),
-			inputSchema: {
-				directory: z
-					.string()
-					.describe(
-						"Absolute or cwd-relative path to the project directory to scan"
-					),
-				project: z
-					.string()
-					.optional()
-					.describe(
-						"Optional path to the project root or tsconfig.json. Omit to auto-resolve the tsconfig for `directory`"
-					),
-				ignore: z
-					.string()
-					.optional()
-					.describe(
-						"Glob of files to exclude from the scan, e.g. '*.test.ts' to drop test files (which often hold the only references)"
-					),
-				entrypointGlobs: z
-					.union([z.string(), z.array(z.string())])
-					.optional()
-					.describe(
-						"Glob pattern(s) for convention entrypoints dispatched by filename (e.g. 'hooks/**', 'scripts/*') to exclude from dead-export candidates, e.g. \"hooks/**\""
-					),
-				workspace: z
-					.boolean()
-					.optional()
-					.describe(
-						"Merge sibling workspace packages into the usage graph so an export consumed only from another package is not reported dead. The report still covers `directory` only"
-					),
-				includeIgnored: z
-					.boolean()
-					.optional()
-					.describe(
-						"Analyse git-ignored files too (#202). Off by default: a file excluded from version control is not source, so build output cannot distort the result. Set true only to deliberately analyse generated output"
-					),
-			},
+			inputSchema: toZodShape([
+				...UNUSED_POSITIONAL_DESCRIPTORS,
+				...UNUSED_OPTION_DESCRIPTORS,
+			]),
 		},
 		async ({
 			directory,
@@ -368,73 +322,10 @@ export function registerAnalysisTools(server: McpServer): void {
 		"similar",
 		{
 			description: mcpDescription("similar"),
-			inputSchema: {
-				directory: z
-					.string()
-					.describe(
-						"Absolute or cwd-relative path to the project directory to scan"
-					),
-				project: z
-					.string()
-					.optional()
-					.describe(
-						"Optional path to the project root or tsconfig.json. Omit to auto-resolve the tsconfig for `directory`"
-					),
-				threshold: z
-					.number()
-					.optional()
-					.describe(
-						"Minimum structural similarity to group, 0.0–1.0 (default 0.8). Higher = only very-alike declarations; lower = more, looser matches"
-					),
-				maxGroups: z
-					.number()
-					.optional()
-					.describe(
-						"Cap on groups returned, highest-scoring first; 0 = unlimited (default 10)"
-					),
-				nameThreshold: z
-					.number()
-					.optional()
-					.describe(
-						"Also require member NAME similarity to meet this score (0.0–1.0), so only similarly-named declarations group together"
-					),
-				sameNameOnly: z
-					.boolean()
-					.optional()
-					.describe(
-						"Only group declarations that share an identical name (strictest name filter; overrides nameThreshold)"
-					),
-				skipSameFile: z
-					.boolean()
-					.optional()
-					.describe(
-						"Drop groups whose members all live in one file, leaving only cross-file duplication"
-					),
-				minLines: z
-					.number()
-					.optional()
-					.describe(
-						"Ignore declarations whose body has fewer than N lines, to skip trivial one-liners"
-					),
-				kinds: z
-					.array(z.enum(["function", "type", "interface"]))
-					.optional()
-					.describe(
-						"Limit to specific declaration kinds (default: all of function, type, interface)"
-					),
-				bucket: z
-					.enum(["exact", "high", "medium"])
-					.optional()
-					.describe(
-						"Only return groups in this similarity bucket (exact/high/medium)"
-					),
-				includeIgnored: z
-					.boolean()
-					.optional()
-					.describe(
-						"Analyse git-ignored files too (#202). Off by default: a file excluded from version control is not source, so build output cannot distort the result. Set true only to deliberately analyse generated output"
-					),
-			},
+			inputSchema: toZodShape([
+				...SIMILAR_POSITIONAL_DESCRIPTORS,
+				...SIMILAR_OPTION_DESCRIPTORS,
+			]),
 		},
 		async ({
 			directory,

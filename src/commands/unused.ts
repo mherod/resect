@@ -22,8 +22,9 @@ import { normalizePath } from "../core/resolver.ts";
 import { withSourceFile } from "../core/source-file.ts";
 import { buildWorkspaceGraphs } from "../core/workspace-graphs.ts";
 import type { ExportInfo } from "../types/analysis.ts";
-import type { ReadOnlyCommandOptions } from "../types/commands.ts";
 import type { ProgressCallback } from "../types/progress.ts";
+import type { DescriptorInputOptions } from "./command-descriptor.ts";
+import type { UNUSED_OPTION_DESCRIPTORS } from "./report-descriptors.ts";
 
 const UNUSED_SCHEMA_VERSION = "1-experimental" as const;
 
@@ -35,18 +36,20 @@ export {
 	isExportUsed,
 } from "../core/export-liveness.ts";
 
-export interface UnusedOptions extends ReadOnlyCommandOptions {
+export interface UnusedOptions
+	extends DescriptorInputOptions<typeof UNUSED_OPTION_DESCRIPTORS> {
 	directory: string;
-	ignore?: string;
-	entrypointGlobs?: string | string[];
-	/**
-	 * Analyse git-ignored files too (#202). Off by default: build output that
-	 * imports a source export makes that export look consumed, hiding a
-	 * genuinely dead one behind a file nobody edits.
-	 */
-	includeIgnored?: boolean;
 	onProgress?: ProgressCallback;
 }
+
+type UnusedAnalysisOptions = Omit<
+	UnusedOptions,
+	"directory" | "json" | "verbose"
+>;
+type UnusedGraphOptions = Pick<
+	UnusedAnalysisOptions,
+	"ignore" | "entrypointGlobs" | "includeIgnored"
+>;
 
 export interface UnusedExport {
 	file: string;
@@ -163,14 +166,7 @@ export interface ProjectGraphResult {
  */
 export async function findUnusedExports(
 	directory: string,
-	options?: {
-		project?: string;
-		ignore?: string;
-		workspace?: boolean;
-		entrypointGlobs?: string | string[];
-		includeIgnored?: boolean;
-		onProgress?: ProgressCallback;
-	}
+	options?: UnusedAnalysisOptions
 ): Promise<UnusedReport> {
 	const absoluteDir = path.resolve(directory);
 
@@ -220,11 +216,7 @@ export async function findUnusedExports(
 		onProgress: options?.onProgress,
 	});
 
-	return findUnusedExportsFromGraphs(directory, graphs, {
-		ignore: options?.ignore,
-		entrypointGlobs: options?.entrypointGlobs,
-		includeIgnored: options?.includeIgnored,
-	});
+	return findUnusedExportsFromGraphs(directory, graphs, options);
 }
 
 /**
@@ -236,11 +228,7 @@ export async function findUnusedExports(
 export async function findUnusedExportsFromGraphs(
 	directory: string,
 	graphs: ProjectGraphResult[],
-	options?: {
-		ignore?: string;
-		entrypointGlobs?: string | string[];
-		includeIgnored?: boolean;
-	}
+	options?: UnusedGraphOptions
 ): Promise<UnusedReport> {
 	const absoluteDir = path.resolve(directory);
 	const frameworkClassifier = await createFrameworkGeneratedArtifactClassifier(
@@ -456,7 +444,7 @@ function reportTransitivelyDead(
 }
 
 export async function unusedCommand(options: UnusedOptions): Promise<void> {
-	const { directory, json, verbose, ignore, entrypointGlobs } = options;
+	const { directory, json, verbose } = options;
 	const absoluteDir = path.resolve(directory);
 	const onProgress =
 		options.onProgress ?? logger.createFileScanProgress({ enabled: !json });
@@ -466,11 +454,7 @@ export async function unusedCommand(options: UnusedOptions): Promise<void> {
 	}
 
 	const report = await findUnusedExports(directory, {
-		project: options.project,
-		ignore,
-		workspace: options.workspace,
-		entrypointGlobs,
-		includeIgnored: options.includeIgnored,
+		...options,
 		onProgress,
 	});
 
@@ -576,7 +560,7 @@ export async function unusedCommand(options: UnusedOptions): Promise<void> {
 		const selfContainedCount = report.orphanFiles.filter(
 			(o) => o.selfContained
 		).length;
-		if (selfContainedCount > 0 && !entrypointGlobs) {
+		if (selfContainedCount > 0 && !options.entrypointGlobs) {
 			logger.info(
 				`\n💡 ${selfContainedCount} orphan file(s) import nothing from the project ` +
 					"— likely convention entrypoints dispatched by filename rather than " +

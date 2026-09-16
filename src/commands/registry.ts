@@ -33,6 +33,11 @@ export type { CliValues } from "./option-flags.ts";
 
 import { organiseCommand } from "./organise.ts";
 import { renameCommand } from "./rename.ts";
+import {
+	BARREL_OPTION_DESCRIPTORS,
+	SIMILAR_OPTION_DESCRIPTORS,
+	UNUSED_OPTION_DESCRIPTORS,
+} from "./report-descriptors.ts";
 import { similarCommand } from "./similar.ts";
 import { testRelocationCommand } from "./test-relocation.ts";
 import { parseTidyFixCategories, tidyCommand } from "./tidy.ts";
@@ -431,99 +436,17 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "similar",
 		helpText: cliHelp("similar"),
-		options: [
-			"project",
-			"json",
-			"threshold",
-			"max-groups",
-			"strict",
-			"workspace",
-			"name-threshold",
-			"same-name-only",
-			"skip-same-file",
-			"only-related-to",
-			"min-lines",
-			"skip-directives",
-			"skip-wrappers",
-			"kinds",
-			"bucket",
-			"format",
-			"include-ignored",
-		],
+		options: SIMILAR_OPTION_DESCRIPTORS.map(({ name }) => name),
 		run: async ([directory], values) => {
 			requireArg("similar", "<directory>", directory);
-			const rawThreshold = values.threshold;
-			const threshold = rawThreshold === undefined ? 0.8 : Number(rawThreshold);
-			if (Number.isNaN(threshold) || threshold < 0 || threshold > 1) {
-				logger.error("Error: --threshold must be a number between 0.0 and 1.0");
+			const parsed = toRegistryOptions(SIMILAR_OPTION_DESCRIPTORS, values);
+			if (!parsed.ok) {
+				logger.error(parsed.message);
 				process.exit(1);
 			}
-			const rawMaxGroups = values["max-groups"];
-			const maxGroups = rawMaxGroups === undefined ? 10 : Number(rawMaxGroups);
-			if (Number.isNaN(maxGroups) || maxGroups < 0) {
-				logger.error("Error: --max-groups must be a non-negative integer");
-				process.exit(1);
-			}
-			const rawNameThreshold = values["name-threshold"];
-			const nameThreshold =
-				rawNameThreshold === undefined ? undefined : Number(rawNameThreshold);
-			if (
-				nameThreshold !== undefined &&
-				(Number.isNaN(nameThreshold) || nameThreshold < 0 || nameThreshold > 1)
-			) {
-				logger.error(
-					"Error: --name-threshold must be a number between 0.0 and 1.0"
-				);
-				process.exit(1);
-			}
-			const validKinds = ["function", "type", "interface"] as const;
-			type ValidKind = (typeof validKinds)[number];
-			const kindsArg = values.kinds
-				? values.kinds
-						.split(",")
-						.map((k) => k.trim())
-						.filter((k): k is ValidKind =>
-							(validKinds as readonly string[]).includes(k)
-						)
-				: undefined;
-			const validBuckets = ["exact", "high", "medium"] as const;
-			type ValidBucket = (typeof validBuckets)[number];
-			const bucketArg = values.bucket as ValidBucket | undefined;
-			if (
-				bucketArg &&
-				!(validBuckets as readonly string[]).includes(bucketArg)
-			) {
-				logger.error("Error: --bucket must be 'exact', 'high', or 'medium'");
-				process.exit(1);
-			}
-			const formatArg = values.format;
-			if (formatArg !== undefined && formatArg !== "compact") {
-				logger.error("Error: --format must be 'compact'");
-				process.exit(1);
-			}
-			await similarCommand({
-				directory,
-				project: values.project,
-				json: values.json,
-				threshold,
-				maxGroups,
-				strict: values.strict,
-				workspace: values.workspace,
-				nameThreshold,
-				sameNameOnly: values["same-name-only"],
-				skipSameFile: values["skip-same-file"],
-				onlyRelatedTo: values["only-related-to"],
-				minLines: values["min-lines"] ? Number(values["min-lines"]) : undefined,
-				skipDirectives: values["skip-directives"],
-				skipWrappers: values["skip-wrappers"],
-				kinds: kindsArg,
-				bucket: bucketArg,
-				format: formatArg,
-				includeIgnored: values["include-ignored"],
-			});
+			await similarCommand({ directory, ...parsed.value });
 		},
 	},
-
 	{
 		name: "extract-common",
 		helpText: cliHelp("extract-common"),
@@ -900,53 +823,37 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "unused",
 		helpText: cliHelp("unused"),
-		options: [
-			"project",
-			"json",
-			"verbose",
-			"ignore",
-			"workspace",
-			"entrypoint-globs",
-			"include-ignored",
-		],
+		options: UNUSED_OPTION_DESCRIPTORS.map(({ name }) => name),
 		run: async ([directory], values) => {
 			requireArg("unused", "<directory>", directory);
+			const parsed = toRegistryOptions(UNUSED_OPTION_DESCRIPTORS, values);
+			if (!parsed.ok) {
+				logger.error(parsed.message);
+				process.exit(1);
+			}
 			const { unusedCommand: cmd } = await import("./unused.ts");
-			await cmd({
-				directory,
-				project: values.project,
-				json: values.json,
-				verbose: values.verbose,
-				ignore: values.ignore,
-				workspace: values.workspace,
-				entrypointGlobs: values["entrypoint-globs"],
-				includeIgnored: values["include-ignored"],
-			});
+			await cmd({ directory, ...parsed.value });
 		},
 	},
-
 	{
 		name: "barrel",
 		helpText: cliHelp("barrel"),
-		options: ["project", "json", "workspace", "verbose", "include-ignored"],
+		options: BARREL_OPTION_DESCRIPTORS.map(({ name }) => name),
 		run: async ([directory], values) => {
 			requireArg("barrel", "<directory>", directory);
+			const parsed = toRegistryOptions(BARREL_OPTION_DESCRIPTORS, values);
+			if (!parsed.ok) {
+				logger.error(parsed.message);
+				process.exit(1);
+			}
 			try {
-				await barrelCommand({
-					directory,
-					project: values.project,
-					json: values.json,
-					workspace: values.workspace,
-					verbose: values.verbose,
-					includeIgnored: values["include-ignored"],
-				});
+				await barrelCommand({ directory, ...parsed.value });
 			} catch (error) {
 				logger.error(error instanceof Error ? error.message : String(error));
 				process.exit(1);
 			}
 		},
 	},
-
 	{
 		name: "inline",
 		helpText: cliHelp("inline"),
