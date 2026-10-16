@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { resolve } from "node:path";
+import { readdir } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { toCliHelpOptions } from "./option-descriptor-help.ts";
 
 test("help generator renders aliases, defaults and continuation lines", () => {
@@ -55,13 +56,27 @@ test("command spec's runtime import graph stays zod-free", async () => {
 test("production zod-generator consumers stay in MCP registrations", async () => {
 	const sourceRoot = resolve(import.meta.dir, "..");
 	const consumers: string[] = [];
-	for await (const path of new Bun.Glob("**/*.ts").scan(sourceRoot)) {
-		if (path.endsWith(".test.ts") || path.includes("__fixtures__")) {
-			continue;
-		}
-		const source = await Bun.file(resolve(sourceRoot, path)).text();
-		if (/from\s+["'][^"']*option-descriptor-zod\.ts["']/.test(source)) {
-			consumers.push(path);
+	const directories = [""];
+	for (const directory of directories) {
+		for (const entry of await readdir(resolve(sourceRoot, directory), {
+			withFileTypes: true,
+		})) {
+			// Prune before traversal: other tests create and delete fixtures concurrently.
+			if (entry.name === "__fixtures__") {
+				continue;
+			}
+			const path = join(directory, entry.name);
+			if (entry.isDirectory()) {
+				directories.push(path);
+				continue;
+			}
+			if (!path.endsWith(".ts") || path.endsWith(".test.ts")) {
+				continue;
+			}
+			const source = await Bun.file(resolve(sourceRoot, path)).text();
+			if (/from\s+["'][^"']*option-descriptor-zod\.ts["']/.test(source)) {
+				consumers.push(path);
+			}
 		}
 	}
 	expect(consumers).toContain("mcp-tools/register-analysis.ts");
