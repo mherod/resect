@@ -13,8 +13,11 @@ Every command must reach:
 `src/index.test.ts` enforces CLI/library parity. Declare global flags in `OPTION_FLAGS` (`src/commands/option-flags.ts`); `option-flags.test.ts` guards drift.
 
 `command-descriptor.ts` is the zod-free owner for phased option declaration.
-Keep `OptionDescriptor.name` constrained to `OptionName`; numeric and enum
-semantics live on the descriptor while `toFlagSpec()` lowers them to the
+Keep `OptionDescriptor.name` constrained to `OptionName`.
+`OptionName` is owned by dependency-free `option-names.ts` and re-exported from
+`option-flags.ts` for compatibility. Descriptors must import the name type from
+`option-names.ts`, so flag generation does not create a type-only return edge.
+Numeric and enum semantics live on the descriptor while `toFlagSpec()` lowers them to the
 boolean/string types supported by `node:util` `parseArgs`.
 `toRegistryOptions()` owns pure coercion and validation and returns a structured
 failure; the registry renderer owns stderr and exit codes. Audit is the A1

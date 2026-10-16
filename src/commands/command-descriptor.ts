@@ -1,6 +1,6 @@
 import { MCP_DESCRIPTIONS } from "./mcp-descriptions.ts";
 import { isInDomain } from "./option-domains.ts";
-import type { OptionName } from "./option-flags.ts";
+import type { OptionName } from "./option-names.ts";
 
 type RawCliValues = Partial<Record<OptionName, boolean | string | string[]>>;
 

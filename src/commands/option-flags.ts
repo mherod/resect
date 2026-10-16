@@ -1,58 +1,9 @@
 import type { ParseArgsConfig } from "node:util";
 import { AUDIT_OPTION_DESCRIPTORS, toFlagSpec } from "./command-descriptor.ts";
 
-/** A canonical long-form option name accepted by the CLI parser. */
-export type OptionName =
-	| "help"
-	| "version"
-	| "verbose"
-	| "dry-run"
-	| "project"
-	| "type"
-	| "prefer"
-	| "alias-prefer"
-	| "rename-specifier"
-	| "force"
-	| "journal"
-	| "verify"
-	| "no-verify"
-	| "fix"
-	| "fix-category"
-	| "json"
-	| "threshold"
-	| "max-groups"
-	| "max-changes"
-	| "strict"
-	| "name-threshold"
-	| "same-name-only"
-	| "skip-same-file"
-	| "only-related-to"
-	| "min-lines"
-	| "skip-directives"
-	| "skip-wrappers"
-	| "kinds"
-	| "group"
-	| "output"
-	| "workspace"
-	| "experimental"
-	| "scope"
-	| "out"
-	| "bucket"
-	| "format"
-	| "fan-out-threshold"
-	| "fan-in-threshold"
-	| "export-threshold"
-	| "min-siblings"
-	| "majority-threshold"
-	| "case"
-	| "include-tests"
-	| "convention-threshold"
-	| "ignore"
-	| "entrypoint-globs"
-	| "transform"
-	| "batch"
-	| "extensions"
-	| "include-ignored";
+import type { OptionName } from "./option-names.ts";
+
+export type { OptionName } from "./option-names.ts";
 
 /** parseArgs option spec for a single flag, narrowed to what resect uses. */
 type FlagSpec =
