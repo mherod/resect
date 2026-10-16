@@ -161,7 +161,20 @@ bun src/cli.ts alias src --rename-specifier="@utils/Foo=@utils/foo"
 
 ## Move and cross-package behavior
 
-`moveModule()` detects destination-barrel and importer-binding conflicts. Keep a `fileMoved` flag so copy occurs with updated, unchanged, missing, or unparsable importers.
+`moveModule()` detects destination-barrel and importer-binding conflicts. Always
+plan the file relocation, including with unchanged, missing, or unparsable
+importers; reference edits do not determine whether the file itself moves.
+
+`moveModule()` delegates to the read-only `planMoveModule()` in
+`move-module-plan.ts`, then `applyMoveModulePlan()` in `move-apply.ts`.
+DO finish all content planning before the first move/write. Compose multiple
+roles for one file (especially a destination barrel that also imports the
+source) into one write and one preview edit against its original content.
+Keep these planning/application seams internal; the public `moveModule`
+signature and `MoveResult` remain unchanged. The applier owns case-safe moves,
+staging and bounded independent writes; `runMutation` continues to own guards,
+verification, journaling and rollback policy. Preserve recoverable analysis
+warnings versus fatal write failures, and await every write before verification.
 
 For cross-package moves:
 
