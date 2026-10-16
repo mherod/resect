@@ -19,6 +19,10 @@ import { inlineCommand } from "./inline.ts";
 import { mockCleanupCommand } from "./mock-cleanup.ts";
 import { moveCommand } from "./move.ts";
 import { moveBatchCommand } from "./move-batch.ts";
+import {
+	MOVE_OPTION_DESCRIPTORS,
+	parseMoveCliOptions,
+} from "./move-descriptors.ts";
 import { namingCommand } from "./naming.ts";
 import {
 	EXTENSION_POLICIES,
@@ -97,21 +101,7 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "move",
 		helpText: cliHelp("move"),
-		options: [
-			"batch",
-			"dry-run",
-			"force",
-			"journal",
-			"json",
-			"verbose",
-			"verify",
-			"no-verify",
-			"project",
-			"workspace",
-			"transform",
-			"prefer",
-			"extensions",
-		],
+		options: MOVE_OPTION_DESCRIPTORS.map(({ name }) => name),
 		run: async ([source, target], values) => {
 			if (values.batch && (source || target)) {
 				logger.error(
@@ -125,35 +115,16 @@ export const COMMANDS: CommandDef[] = [
 				logger.error(`Run '${CLI_NAME} move --help' for usage`);
 				process.exit(1);
 			}
-			const prefer = values.prefer;
-			if (prefer !== undefined && !isInDomain(PREFER_STRATEGIES, prefer)) {
-				logger.error(
-					"Error: --prefer must be 'alias', 'relative', or 'shortest'"
-				);
+			const parsed = parseMoveCliOptions(values);
+			if (!parsed.ok) {
+				logger.error(parsed.message);
 				process.exit(1);
 			}
-			const extensions = values.extensions;
-			if (
-				extensions !== undefined &&
-				!isInDomain(EXTENSION_POLICIES, extensions)
-			) {
-				logger.error("Error: --extensions must be 'preserve' or 'explicit'");
-				process.exit(1);
-			}
-			if (values.batch) {
+			const { batch, ...options } = parsed.value;
+			if (batch) {
 				await moveBatchCommand({
-					batch: values.batch,
-					dryRun: values["dry-run"],
-					force: values.force,
-					journal: values.journal,
-					json: values.json,
-					verbose: values.verbose,
-					verify: !values["no-verify"],
-					project: values.project,
-					workspace: values.workspace,
-					transform: values.transform,
-					prefer,
-					extensions,
+					batch,
+					...options,
 				});
 				return;
 			}
@@ -162,17 +133,7 @@ export const COMMANDS: CommandDef[] = [
 			await moveCommand({
 				source,
 				target,
-				dryRun: values["dry-run"],
-				force: values.force,
-				journal: values.journal,
-				json: values.json,
-				verbose: values.verbose,
-				verify: !values["no-verify"],
-				project: values.project,
-				workspace: values.workspace,
-				transform: values.transform,
-				prefer,
-				extensions,
+				...options,
 			});
 		},
 	},

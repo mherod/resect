@@ -40,6 +40,10 @@ import {
 	AUDIT_POSITIONAL_DESCRIPTORS,
 	type CommandDescriptor,
 } from "./command-descriptor.ts";
+import {
+	MOVE_OPTION_DESCRIPTORS,
+	MOVE_POSITIONAL_DESCRIPTORS,
+} from "./move-descriptors.ts";
 import { toCliHelpOptions } from "./option-descriptor-help.ts";
 import {
 	BARREL_OPTION_DESCRIPTORS,
@@ -357,6 +361,8 @@ Examples:
 	},
 	{
 		name: "move",
+		options: MOVE_OPTION_DESCRIPTORS,
+		positionals: MOVE_POSITIONAL_DESCRIPTORS,
 		usage: "<source> <target>",
 		summary: "Move a module and update all references",
 		cliHelp: `

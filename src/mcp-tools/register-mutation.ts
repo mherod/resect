@@ -14,6 +14,11 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { mcpDescription } from "../commands/command-spec.ts";
 import {
+	MOVE_MCP_OPTION_DESCRIPTORS,
+	MOVE_POSITIONAL_DESCRIPTORS,
+} from "../commands/move-descriptors.ts";
+import { toZodShape } from "../commands/option-descriptor-zod.ts";
+import {
 	EXTENSION_POLICIES,
 	PREFER_STRATEGIES,
 } from "../commands/option-domains.ts";
@@ -89,18 +94,7 @@ export function registerMutationTools(server: McpServer): void {
 		{
 			description: mcpDescription("move"),
 			inputSchema: {
-				source: z
-					.string()
-					.optional()
-					.describe(
-						"Absolute or cwd-relative path to one existing file. Required with target when batch is omitted"
-					),
-				target: z
-					.string()
-					.optional()
-					.describe(
-						"Absolute or cwd-relative destination for source. Required with source when batch is omitted"
-					),
+				...toZodShape(MOVE_POSITIONAL_DESCRIPTORS),
 				batch: z
 					.array(
 						z.object({
@@ -113,58 +107,7 @@ export function registerMutationTools(server: McpServer): void {
 					.describe(
 						"Sequential source/target pairs executed with one project graph, worktree check, and typecheck gate. Supply instead of source+target"
 					),
-				project: z
-					.string()
-					.optional()
-					.describe(
-						"Optional path to the project root or tsconfig.json. Omit to auto-resolve the nearest tsconfig that owns the source file"
-					),
-				dryRun: z
-					.boolean()
-					.optional()
-					.describe(
-						"Preview the move without writing files (default true). Set false to actually apply"
-					),
-				force: z
-					.boolean()
-					.optional()
-					.describe(
-						"Override the dirty-worktree guard (default false). Use with care — the guard prevents data loss on a clean commit boundary"
-					),
-				journal: z
-					.boolean()
-					.optional()
-					.describe(
-						"Record an applied move in `.resect/history.json` for a later undo"
-					),
-				verify: z
-					.boolean()
-					.optional()
-					.describe(
-						"Run `tsc --noEmit` before and after the move and return the diagnostic delta (default true). Ignored when dryRun=true"
-					),
-				verbose: z
-					.boolean()
-					.optional()
-					.describe("Include extra detail in the result (default false)"),
-				transform: z
-					.string()
-					.optional()
-					.describe(
-						"Path to a declarative `.resect/transforms.js` config (epic #103), resolved relative to the project root. Parsed/validated before the move; a missing or malformed config fails the move and writes nothing"
-					),
-				prefer: z
-					.enum(PREFER_STRATEGIES)
-					.optional()
-					.describe(
-						"Import-specifier style for rewritten references (#173). Omit to preserve each importer's existing style (relative stays relative, aliased stays aliased). 'relative' forces relative paths — needed when the output must run under `node --experimental-strip-types`, which does not resolve tsconfig paths"
-					),
-				extensions: z
-					.enum(EXTENSION_POLICIES)
-					.optional()
-					.describe(
-						"File-extension policy for rewritten specifiers (#175), orthogonal to `prefer`. 'preserve' (default) keeps each importer's existing convention; 'explicit' emits the target file's real extension. Pair with prefer='relative' for `node --experimental-strip-types`, whose loader cannot resolve an extensionless specifier"
-					),
+				...toZodShape(MOVE_MCP_OPTION_DESCRIPTORS),
 			},
 		},
 		async ({

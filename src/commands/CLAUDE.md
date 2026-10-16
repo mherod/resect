@@ -39,6 +39,15 @@ Core `SimilarityDiscoveryOptions` and `SimilarityFilterOptions` remain independe
 API types: core must not import command descriptors. Declaration migration does
 not authorize changing similarity scores, bucket boundaries or discovery seams.
 
+`move-descriptors.ts` owns move's scalar CLI/MCP option semantics. Both CLI
+single and batch routes use `parseMoveCliOptions`; keep positional validation
+before option parsing and preserve `--no-verify` precedence. MCP defaults stay
+in registration handlers, with optional schemas that do not insert defaults.
+Keep the batch schema transport-specific: CLI accepts a JSON file path, MCP a
+non-empty array of non-empty source/target pairs. Move's authored help retains
+its existing value labels and layout; do not widen other command contracts as
+part of this incremental migration.
+
 ## CLI examples
 
 ```bash

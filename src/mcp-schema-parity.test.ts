@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { makeFixture, parseMcpTextPayload } from "./commands/__test-helpers.ts";
 import { COMMAND_SPECS, cliHelp } from "./commands/command-spec.ts";
 import { MCP_DESCRIPTIONS } from "./commands/mcp-descriptions.ts";
 import { COMMANDS } from "./commands/registry.ts";
@@ -16,20 +18,30 @@ import { registerMutationTools } from "./mcp-tools/register-mutation.ts";
  * json/format remain CLI-only where MCP already returns structured JSON.
  */
 interface SchemaRecorder {
-	registerTool(name: string, config: { inputSchema?: z.ZodRawShape }): void;
+	registerTool(
+		name: string,
+		config: { inputSchema?: z.ZodRawShape },
+		handler: RecordedHandler
+	): void;
 }
+
+type RecordedHandler = (
+	args: Record<string, unknown>
+) => Promise<CallToolResult>;
+const REGISTERED_HANDLERS = new Map<string, RecordedHandler>();
 
 function recordInputSchemas(): Map<string, z.ZodRawShape> {
 	const schemas = new Map<string, z.ZodRawShape>();
 	const recorder: SchemaRecorder = {
-		registerTool(name, config) {
+		registerTool(name, config, handler) {
 			if (!config.inputSchema || schemas.has(name)) {
 				throw new Error(`Missing or duplicate schema for tool "${name}"`);
 			}
 			schemas.set(name, config.inputSchema);
+			REGISTERED_HANDLERS.set(name, handler);
 		},
 	};
-	// Only registerTool is exercised; handlers and transports are never started.
+	// Recording does not execute handlers or start transports.
 	const server = recorder as unknown as McpServer;
 	registerAnalysisTools(server);
 	registerHygieneTools(server);
@@ -43,6 +55,27 @@ const REGISTERED_SCHEMAS = recordInputSchemas();
 // receipts cover full schema descriptions/types/optionality and exact help bytes,
 // independently of descriptor derivation. Phase E still owns the EXPECTED table.
 const REPORT_BASELINE = {
+	// Move receipt captured at 2b60d77 before its scalar descriptor migration.
+	move: {
+		help: "1a5c660e11a325b6b41942650084dc3fe0f86fd186fac7032ee50e5b9878bdeb",
+		schema: "3772fc6a5cb53a7ac56743e5e355330eaa4ceffb53f650a3818cccf186248b74",
+		prose: "d44c3a7a90ba752524910f8d88dd8fec30b3539338133cdca64526bfd09e549a",
+		flags: [
+			"batch",
+			"dry-run",
+			"force",
+			"journal",
+			"json",
+			"verbose",
+			"verify",
+			"no-verify",
+			"project",
+			"workspace",
+			"transform",
+			"prefer",
+			"extensions",
+		],
+	},
 	audit: {
 		help: "423c239de021c7aa375bc8767c337f9eeaba2119d6964396809424d50fad7e8f",
 		schema: "cf6b850f63c8a362b4840bdadfaf4d9fa4f43a5001a8de2518a7e5954c9ac374",
@@ -141,6 +174,95 @@ for (const [name, baseline] of Object.entries(REPORT_BASELINE)) {
 		);
 	});
 }
+
+test("move MCP inputs retain optional scalars and non-empty structured batches", () => {
+	const schema = z.object(registeredSchema("move"));
+	expect(schema.parse({})).toEqual({});
+	for (const key of ["dryRun", "force", "journal", "verify", "verbose"]) {
+		expect(schema.parse({ [key]: false })).toEqual({ [key]: false });
+		expect(schema.safeParse({ [key]: "false" }).success).toBeFalse();
+	}
+	for (const prefer of ["alias", "relative", "shortest"]) {
+		expect(schema.parse({ prefer })).toEqual({ prefer });
+	}
+	for (const extensions of ["preserve", "explicit"]) {
+		expect(schema.parse({ extensions })).toEqual({ extensions });
+	}
+	for (const key of ["prefer", "extensions"]) {
+		for (const invalid of ["", "invalid", [], 1]) {
+			expect(schema.safeParse({ [key]: invalid }).success).toBeFalse();
+		}
+	}
+	for (const batch of [
+		[],
+		"moves.json",
+		[{}],
+		[{ source: "", target: "b.ts" }],
+		[{ source: "a.ts", target: "" }],
+	]) {
+		expect(schema.safeParse({ batch }).success).toBeFalse();
+	}
+	const batch = [
+		{ source: "a.ts", target: "b.ts" },
+		{ source: "c.ts", target: "d.ts" },
+	];
+	expect(schema.parse({ batch })).toEqual({ batch });
+	// Cross-field mode checks remain in the handler, not the scalar schema.
+	expect(schema.parse({ source: "", target: "", batch })).toEqual({
+		source: "",
+		target: "",
+		batch,
+	});
+	for (const key of ["json", "workspace", "noVerify"]) {
+		expect(registeredSchema("move")).not.toHaveProperty(key);
+	}
+});
+
+test("move registration keeps default previews and rejects mixed or missing modes", async () => {
+	const handler = REGISTERED_HANDLERS.get("move");
+	if (!handler) {
+		throw new Error("Move handler was not registered");
+	}
+	const sourceText = "export const value = 1;\n";
+	const dir = await makeFixture(
+		"move-mcp-descriptor-preview",
+		{
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: { module: "ESNext", moduleResolution: "Bundler" },
+				include: ["*.ts"],
+			}),
+			"source.ts": sourceText,
+		},
+		{ outsideRepo: true }
+	);
+	const source = `${dir}/source.ts`;
+	const target = `${dir}/moved.ts`;
+	const batch = [{ source, target }];
+	for (const mode of [{ source, target }, { batch }]) {
+		const response = await handler({ ...mode, project: dir });
+		expect(response.isError).not.toBeTrue();
+		expect(parseMcpTextPayload<{ success: boolean }>(response)).toMatchObject({
+			success: true,
+		});
+		expect(await Bun.file(source).text()).toBe(sourceText);
+		expect(await Bun.file(target).exists()).toBeFalse();
+	}
+	for (const mode of [
+		{},
+		{ source },
+		{ target },
+		{ source, batch },
+		{ target, batch },
+	]) {
+		const response = await handler(mode);
+		expect(response.isError).toBeTrue();
+		const expected =
+			"batch" in mode
+				? "Provide either batch or source+target for move, not both."
+				: "Move requires source+target or a non-empty batch.";
+		expect(response.content).toEqual([{ type: "text", text: expected }]);
+	}
+});
 
 test("report MCP input cardinality and optionality remain independent of CLI parsing", () => {
 	const unused = z.object(registeredSchema("unused"));
