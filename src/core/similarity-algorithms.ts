@@ -193,18 +193,23 @@ export function tokenBigrams(tokens: string[]): string[] {
  * Returns 1.0 for two empty inputs (treat as identical).
  */
 export function jaccardSimilarity(a: string[], b: string[]): number {
-	if (a.length === 0 && b.length === 0) {
-		return 1;
-	}
-	const setA = new Set(a);
-	const setB = new Set(b);
+	return jaccardSetSimilarity(new Set(a), new Set(b));
+}
+
+/** Reuse prepared token sets when comparing a declaration with many others. */
+export function jaccardSetSimilarity(
+	a: ReadonlySet<string>,
+	b: ReadonlySet<string>
+): number {
+	const smaller = a.size <= b.size ? a : b;
+	const larger = a.size <= b.size ? b : a;
 	let intersection = 0;
-	for (const token of setA) {
-		if (setB.has(token)) {
+	for (const token of smaller) {
+		if (larger.has(token)) {
 			intersection++;
 		}
 	}
-	const union = setA.size + setB.size - intersection;
+	const union = a.size + b.size - intersection;
 	return union === 0 ? 1 : intersection / union;
 }
 

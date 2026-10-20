@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	camelCaseTokenize,
 	extractContentTokens,
+	jaccardSetSimilarity,
 	jaccardSimilarity,
 	nameSimilarity,
 	normalizeBody,
@@ -10,6 +11,28 @@ import {
 } from "./similarity-algorithms";
 
 describe("jaccardSimilarity", () => {
+	test("prepared sets preserve exact scores for duplicates, empty inputs, and unequal sizes", () => {
+		const inputs = [
+			[],
+			["a"],
+			["a", "a", "b"],
+			["b", "c"],
+			["a", "b", "c", "d"],
+		];
+		for (const a of inputs) {
+			for (const b of inputs) {
+				const union = new Set([...a, ...b]);
+				const intersection = [...new Set(a)].filter((token) =>
+					b.includes(token)
+				);
+				const expected =
+					union.size === 0 ? 1 : intersection.length / union.size;
+				expect(jaccardSetSimilarity(new Set(a), new Set(b))).toBe(expected);
+				expect(jaccardSimilarity(a, b)).toBe(expected);
+			}
+		}
+	});
+
 	test("identical sets return 1.0", () => {
 		expect(jaccardSimilarity(["a", "b", "c"], ["a", "b", "c"])).toBe(1);
 	});

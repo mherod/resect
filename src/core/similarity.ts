@@ -20,8 +20,8 @@ import {
 } from "./non-source-files.ts";
 import { resolveTsConfig } from "./project.ts";
 import {
-	jaccardSimilarity,
-	nameSimilarity,
+	camelCaseTokenize,
+	jaccardSetSimilarity,
 	tokenBigrams,
 	tokenize,
 } from "./similarity-algorithms.ts";
@@ -152,17 +152,43 @@ export interface SimilarityScanStats {
  * bound follow two provably safe filters:
  *
  * - size window: `min(|A|,|B|) / max(|A|,|B|) >= jaccard >= bound`;
- * - overlap: a positive bound requires at least one shared bigram, served by
- *   an inverted bigram index (declarations with EMPTY bigram sets are mutual
- *   candidates because `jaccard(∅, ∅) = 1`, and never match non-empty sets).
+ * - overlap: a match must share at least ceil(bound * |A|) bigrams. Probe only
+ *   |A| - floor(bound * |A|) + 1 of A's rarest bigrams: the omitted suffix is
+ *   too short to contain all required overlap. With one global token order,
+ *   matching prefixes must intersect: otherwise the earlier-ending prefix has
+ *   no overlap at all, leaving only its insufficient suffix. Index prefixes on
+ *   both sides. The conservative floor retains an extra token at fractional
+ *   boundaries. Empty sets only match each other.
  *
  * Returns null when no positive bound exists (threshold too low) — the
  * caller must fall back to the exhaustive scan.
  */
 function buildCandidateIndex(
 	bigramSets: Set<string>[],
-	threshold: number
-): { candidatesFor(i: number): number[] } | null {
+	threshold: number,
+	names?: string[]
+): {
+	candidatesFor(i: number, assigned: ReadonlySet<number>): number[];
+} | null {
+	// An explicit same-name filter is more selective than structural tokens.
+	// Keep each bucket in input order to preserve greedy assignment and ties.
+	if (names) {
+		const byName = new Map<string, number[]>();
+		for (const [i, name] of names.entries()) {
+			const indices = byName.get(name);
+			if (indices) {
+				indices.push(i);
+			} else {
+				byName.set(name, [i]);
+			}
+		}
+		return {
+			candidatesFor: (i, assigned) =>
+				(byName.get(names[i] ?? "") ?? []).filter(
+					(j) => j > i && !assigned.has(j)
+				),
+		};
+	}
 	const LOW_THRESHOLD_BLEND_CAP = 0.2;
 	const bound =
 		threshold >= LOW_THRESHOLD_BLEND_CAP
@@ -172,6 +198,25 @@ function buildCandidateIndex(
 		return null;
 	}
 
+	const frequencies = new Map<string, number>();
+	for (const bigrams of bigramSets) {
+		for (const bigram of bigrams) {
+			frequencies.set(bigram, (frequencies.get(bigram) ?? 0) + 1);
+		}
+	}
+	// Stable frequency sorting establishes one total order, including tied tokens.
+	const orderedTokens = [...frequencies.keys()].sort(
+		(a, b) => (frequencies.get(a) ?? 0) - (frequencies.get(b) ?? 0)
+	);
+	const ranks = new Map(orderedTokens.map((token, rank) => [token, rank]));
+	const prefixes = bigramSets.map((bigrams) =>
+		[...bigrams]
+			.sort((a, b) => (ranks.get(a) ?? 0) - (ranks.get(b) ?? 0))
+			.slice(
+				0,
+				Math.max(0, bigrams.size - Math.floor(bound * bigrams.size) + 1)
+			)
+	);
 	const invertedIndex = new Map<string, number[]>();
 	const emptySetIndices: number[] = [];
 	for (let index = 0; index < bigramSets.length; index++) {
@@ -180,7 +225,7 @@ function buildCandidateIndex(
 			emptySetIndices.push(index);
 			continue;
 		}
-		for (const bigram of bigrams) {
+		for (const bigram of prefixes[index] ?? []) {
 			const postings = invertedIndex.get(bigram);
 			if (postings) {
 				postings.push(index);
@@ -191,27 +236,29 @@ function buildCandidateIndex(
 	}
 
 	return {
-		candidatesFor(i: number): number[] {
+		candidatesFor(i: number, assigned: ReadonlySet<number>): number[] {
 			const bigramsI = bigramSets[i];
 			if (!bigramsI || bigramsI.size === 0) {
 				// Mutually-empty sets score Jaccard 1; keep ascending j > i.
-				return emptySetIndices.filter((j) => j > i);
+				return emptySetIndices.filter((j) => j > i && !assigned.has(j));
 			}
 			const sizeI = bigramsI.size;
 			const seen = new Set<number>();
-			for (const bigram of bigramsI) {
+			const candidates: number[] = [];
+			for (const bigram of prefixes[i] ?? []) {
 				for (const j of invertedIndex.get(bigram) ?? []) {
-					if (j <= i || seen.has(j)) {
+					if (j <= i || assigned.has(j) || seen.has(j)) {
 						continue;
 					}
+					seen.add(j);
 					const sizeJ = bigramSets[j]?.size ?? 0;
 					if (Math.min(sizeI, sizeJ) / Math.max(sizeI, sizeJ) >= bound) {
-						seen.add(j);
+						candidates.push(j);
 					}
 				}
 			}
 			// Ascending order preserves the greedy assignment exactly.
-			return [...seen].sort((a, b) => a - b);
+			return candidates.sort((a, b) => a - b);
 		},
 	};
 }
@@ -248,15 +295,18 @@ export function findSimilarGroups(
 
 	// Precompute token artifacts for all candidates to avoid redundant
 	// tokenization and bigram generation inside the O(n^2) pairwise loop.
-	const preTokens: string[][] = [];
-	const preBigrams: string[][] = [];
+	const tokenCounts: number[] = [];
 	const preBigramSets: Set<string>[] = [];
+	const contentSets: Set<string>[] = [];
+	const nameSets: Set<string>[] = [];
+	const memberSets: Set<string>[] = [];
 	for (const fn of candidates) {
 		const tokens = tokenize(fn.normalizedBody);
-		preTokens.push(tokens);
-		const bigrams = tokenBigrams(tokens);
-		preBigrams.push(bigrams);
-		preBigramSets.push(new Set(bigrams));
+		tokenCounts.push(tokens.length);
+		preBigramSets.push(new Set(tokenBigrams(tokens)));
+		contentSets.push(new Set(fn.contentTokens));
+		nameSets.push(new Set(camelCaseTokenize(fn.name)));
+		memberSets.push(new Set(fn.memberNames));
 	}
 
 	// Exact candidate pruning (#246): only pairs that can still reach the
@@ -264,7 +314,11 @@ export function findSimilarGroups(
 	// original exhaustive scan when requested or when no safe bound exists.
 	const candidateIndex = opts.exhaustiveScan
 		? null
-		: buildCandidateIndex(preBigramSets, threshold);
+		: buildCandidateIndex(
+				preBigramSets,
+				threshold,
+				sameNameOnly ? candidates.map((fn) => fn.name) : undefined
+			);
 	const allIndicesAfter = (i: number): number[] => {
 		const rest: number[] = [];
 		for (let j = i + 1; j < candidates.length; j++) {
@@ -285,8 +339,13 @@ export function findSimilarGroups(
 		if (!fnI) {
 			continue;
 		}
-		const tokensI = preTokens[i];
-		const bigramsI = preBigrams[i];
+		const bigramsI = preBigramSets[i];
+		const contentISet = contentSets[i];
+		const nameISet = nameSets[i];
+		const memberISet = memberSets[i];
+		if (!(bigramsI && contentISet && nameISet && memberISet)) {
+			continue;
+		}
 		const group: FunctionInfo[] = [fnI];
 		let minScore = 1.0;
 		// A group is only an `exact` duplicate when every accepted pair matched
@@ -294,7 +353,7 @@ export function findSimilarGroups(
 		let allStructurallyIdentical = true;
 
 		const candidateJs = candidateIndex
-			? candidateIndex.candidatesFor(i)
+			? candidateIndex.candidatesFor(i, assigned)
 			: allIndicesAfter(i);
 		for (const j of candidateJs) {
 			if (assigned.has(j)) {
@@ -305,7 +364,11 @@ export function findSimilarGroups(
 			}
 
 			const fnJ = candidates[j];
-			if (!fnJ) {
+			const bigramsJ = preBigramSets[j];
+			const contentJSet = contentSets[j];
+			const nameJSet = nameSets[j];
+			const memberJSet = memberSets[j];
+			if (!(fnJ && bigramsJ && contentJSet && nameJSet && memberJSet)) {
 				continue;
 			}
 
@@ -317,7 +380,7 @@ export function findSimilarGroups(
 			}
 			if (
 				nameThresholdValue !== undefined &&
-				nameSimilarity(fnI.name, fnJ.name) < nameThresholdValue
+				jaccardSetSimilarity(nameISet, nameJSet) < nameThresholdValue
 			) {
 				continue;
 			}
@@ -344,10 +407,7 @@ export function findSimilarGroups(
 			// Skip composed type pairs — when one interface references the other
 			// by name in its members (e.g. SimilarityReport has a field of type
 			// SimilarityGroup[]), they are parent/child, not duplicates.
-			if (
-				fnI.memberNames.includes(fnJ.name) ||
-				fnJ.memberNames.includes(fnI.name)
-			) {
+			if (memberISet.has(fnJ.name) || memberJSet.has(fnI.name)) {
 				continue;
 			}
 
@@ -365,10 +425,9 @@ export function findSimilarGroups(
 			// ignores frequency, so functions with the same unique tokens but
 			// different lengths (e.g. a.has(b) vs a.b.has(c(d))) get a
 			// misleading 1.0 score.
-			const tokensJ = preTokens[j];
 			const tokenRatio =
-				Math.min(tokensI?.length ?? 0, tokensJ?.length ?? 0) /
-				Math.max(tokensI?.length ?? 1, tokensJ?.length ?? 1);
+				Math.min(tokenCounts[i] ?? 0, tokenCounts[j] ?? 0) /
+				Math.max(tokenCounts[i] ?? 1, tokenCounts[j] ?? 1);
 			if (tokenRatio < 0.75) {
 				continue;
 			}
@@ -403,13 +462,17 @@ export function findSimilarGroups(
 				score =
 					isTypeLike && !hasFingerprints
 						? 0.5 + 0.5 * UNKNOWN_CONTENT_EVIDENCE
-						: 0.5 +
-							0.5 * jaccardSimilarity(fnI.contentTokens, fnJ.contentTokens);
+						: 0.5 + 0.5 * jaccardSetSimilarity(contentISet, contentJSet);
 			} else {
 				// Use precomputed bigrams to capture token ordering — plain set
 				// Jaccard gives misleading 1.0 for functions with the same token
 				// vocabulary but different structure.
-				score = jaccardSimilarity(bigramsI ?? [], preBigrams[j] ?? []);
+				score = jaccardSetSimilarity(bigramsI, bigramsJ);
+				// Above 0.2 even the low-content blend cannot lift a sub-threshold
+				// bigram score to acceptance. Avoid semantic work on these misses.
+				if (threshold >= 0.2 && score < threshold) {
+					continue;
+				}
 
 				// Penalise structural lookalikes whose semantic content is completely
 				// disjoint. Zod literal unions, string-enum-like patterns, and config
@@ -422,7 +485,7 @@ export function findSimilarGroups(
 				const contentI = fnI.contentTokens;
 				const contentJ = fnJ.contentTokens;
 				if (contentI.length >= 2 && contentJ.length >= 2) {
-					const contentSim = jaccardSimilarity(contentI, contentJ);
+					const contentSim = jaccardSetSimilarity(contentISet, contentJSet);
 					if (contentSim === 0) {
 						// Completely disjoint — strong reduction to push below threshold
 						score *= 0.65;
@@ -439,7 +502,10 @@ export function findSimilarGroups(
 			// functions that each map one struct to another). Blending in a name
 			// signal reduces these false positives while leaving same-file pairs
 			// and pairs with any shared name token unaffected.
-			if (fnI.file !== fnJ.file && nameSimilarity(fnI.name, fnJ.name) < 0.1) {
+			if (
+				fnI.file !== fnJ.file &&
+				jaccardSetSimilarity(nameISet, nameJSet) < 0.1
+			) {
 				score *= 0.85;
 			}
 
@@ -461,7 +527,7 @@ export function findSimilarGroups(
 				fnI.memberNames.length > 0 &&
 				fnJ.memberNames.length > 0
 			) {
-				const memberSim = jaccardSimilarity(fnI.memberNames, fnJ.memberNames);
+				const memberSim = jaccardSetSimilarity(memberISet, memberJSet);
 				if (memberSim < 0.5) {
 					score *= 0.7 + 0.3 * memberSim;
 				}

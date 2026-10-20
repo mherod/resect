@@ -226,6 +226,19 @@ Include the worker entrypoint in all compiled and library build commands. Verify
 worker execution from the installed shims, standalone binaries, and built library
 outside the source directory; source-only tests cannot catch missing worker assets.
 
+### Similarity grouping
+
+Prepare bigram, content, name, and member sets once per scan. Sift candidates
+with exact-name buckets when requested, otherwise probe a rare-token prefix
+whose omitted suffix cannot contain the required Jaccard overlap. Preserve the
+low-threshold content-blend bound, empty-set behavior, and ascending candidate
+order; greedy assignment makes both membership and ordering observable.
+
+DON'T partition mixed declarations by kind unless the caller requested a kind
+filter, or discard common tokens without an overlap bound. Verify pruning
+against the exhaustive scan across filters and threshold boundaries, and compare
+complete real-project groups, scores, and order when benchmarking changes.
+
 ### Concurrent writes
 
 Use `mapConcurrent(updates, writer, { concurrency: 4 })` from `src/core/concurrency.ts` for independent move/rename/alias writes. DON'T use sequential `await` loops or unbounded `Promise.all`, which can exhaust file descriptors.
