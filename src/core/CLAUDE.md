@@ -206,6 +206,26 @@ DO write invalidation regressions first in `graph.test.ts` or `tsconfig-discover
 
 DON'T use async `Bun.file().lastModified` or content hashing in validity checks; both caused full rebuilds and timeouts.
 
+### Parallel analysis
+
+`similarity-collection.ts` owns source parsing and declaration normalization for
+both the main thread and `analysis-worker.ts`. `collectFunctionsFromFiles()`
+uses workers for scans of at least 2,048 files on multicore hosts, with at least
+1,024 files per worker and a process-wide cap of four. Smaller scans retain
+bounded I/O on the main thread. Preserve input order, duplicate inputs, missing
+file handling, and the `collectFunctions` compatibility export from `similarity.ts`.
+
+Workers exchange plain paths and declaration records. Never send ASTs, programs,
+checkers, or callbacks through structured clone. Keep greedy similarity grouping
+in its original order and reuse graph-owned programs for graph scans; reparsing
+their ASTs in workers adds overhead. Each analysis releases its workers on
+success, failure, or timeout; infrastructure failures must reject rather than
+silently report an empty successful scan.
+
+Include the worker entrypoint in all compiled and library build commands. Verify
+worker execution from the installed shims, standalone binaries, and built library
+outside the source directory; source-only tests cannot catch missing worker assets.
+
 ### Concurrent writes
 
 Use `mapConcurrent(updates, writer, { concurrency: 4 })` from `src/core/concurrency.ts` for independent move/rename/alias writes. DON'T use sequential `await` loops or unbounded `Promise.all`, which can exhaust file descriptors.
