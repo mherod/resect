@@ -7,6 +7,7 @@ import ts from "typescript";
 import type { FunctionInfo } from "../types/similar.ts";
 import { analysisWorkerCount, runAnalysisJobs } from "./analysis-workers.ts";
 import { collectFunctions, collectFunctionsFromFiles } from "./similarity.ts";
+import { collectFileFunctions } from "./similarity-collection.ts";
 
 let directory: string;
 let workerUrl: URL;
@@ -66,7 +67,7 @@ test("runs on multiple threads, preserves order, and caps concurrent callers tog
 	}
 	expect(new Int32Array(state)[0]).toBe(0);
 	expect(new Int32Array(state)[1]).toBeGreaterThan(1);
-	expect(new Int32Array(state)[1]).toBeLessThanOrEqual(4);
+	expect(new Int32Array(state)[1]).toBeLessThanOrEqual(2);
 });
 
 test.each([
@@ -96,6 +97,34 @@ test("empty and small scans avoid worker startup", async () => {
 		functions: [],
 		totalFiles: 0,
 	});
+});
+
+test("parentless collection preserves mixed declaration metadata", async () => {
+	const file = path.join(directory, "mixed.ts");
+	const text = `
+/** The source text and positions must survive without parent links. */
+export function transform(value: number) { "use server"; const next = value + 2; return next * next; }
+export function isValue(value: unknown): value is string { return typeof value === "string" && value.length > 0; }
+export const wrapper = (value: number) => { return transform(value); };
+export const expression = function(value: number) { return value * value + 4; };
+export type Result = { name: string; value: number; status: "ready" | "pending" };
+export interface Record extends Result { items: Array<Result>; label: string; }
+export class Ignored { method() { return 1; } }
+`;
+	await Bun.write(file, text);
+	const expected = collectFunctions(
+		ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true),
+		file
+	);
+	expect(expected.map((fn) => fn.kind)).toEqual([
+		"function",
+		"function",
+		"function",
+		"function",
+		"type",
+		"interface",
+	]);
+	expect(await collectFileFunctions(file)).toEqual(expected);
 });
 
 test("large function scans match serial parsing including missing files and duplicate inputs", async () => {

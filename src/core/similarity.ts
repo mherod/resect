@@ -21,9 +21,8 @@ import {
 import { resolveTsConfig } from "./project.ts";
 import {
 	camelCaseTokenize,
+	fingerprintTokens,
 	jaccardSetSimilarity,
-	tokenBigrams,
-	tokenize,
 } from "./similarity-algorithms.ts";
 import { collectFileFunctions } from "./similarity-collection.ts";
 import { discoverProject } from "./tsconfig-discovery.ts";
@@ -235,6 +234,8 @@ function buildCandidateIndex(
 		}
 	}
 
+	// One marker array replaces a fresh hash set for every declaration's query.
+	const seenAt = new Uint32Array(bigramSets.length);
 	return {
 		candidatesFor(i: number, assigned: ReadonlySet<number>): number[] {
 			const bigramsI = bigramSets[i];
@@ -243,14 +244,14 @@ function buildCandidateIndex(
 				return emptySetIndices.filter((j) => j > i && !assigned.has(j));
 			}
 			const sizeI = bigramsI.size;
-			const seen = new Set<number>();
+			const generation = i + 1;
 			const candidates: number[] = [];
 			for (const bigram of prefixes[i] ?? []) {
 				for (const j of invertedIndex.get(bigram) ?? []) {
-					if (j <= i || assigned.has(j) || seen.has(j)) {
+					if (j <= i || assigned.has(j) || seenAt[j] === generation) {
 						continue;
 					}
-					seen.add(j);
+					seenAt[j] = generation;
 					const sizeJ = bigramSets[j]?.size ?? 0;
 					if (Math.min(sizeI, sizeJ) / Math.max(sizeI, sizeJ) >= bound) {
 						candidates.push(j);
@@ -301,9 +302,9 @@ export function findSimilarGroups(
 	const nameSets: Set<string>[] = [];
 	const memberSets: Set<string>[] = [];
 	for (const fn of candidates) {
-		const tokens = tokenize(fn.normalizedBody);
-		tokenCounts.push(tokens.length);
-		preBigramSets.push(new Set(tokenBigrams(tokens)));
+		const { tokenCount, bigrams } = fingerprintTokens(fn.normalizedBody);
+		tokenCounts.push(tokenCount);
+		preBigramSets.push(bigrams);
 		contentSets.push(new Set(fn.contentTokens));
 		nameSets.push(new Set(camelCaseTokenize(fn.name)));
 		memberSets.push(new Set(fn.memberNames));

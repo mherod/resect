@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
 	camelCaseTokenize,
+	countTokens,
 	extractContentTokens,
+	fingerprintTokens,
 	jaccardSetSimilarity,
 	jaccardSimilarity,
 	nameSimilarity,
@@ -9,6 +11,26 @@ import {
 	tokenBigrams,
 	tokenize,
 } from "./similarity-algorithms";
+
+test("streamed fingerprints match materialized tokens across repeated calls and large bodies", () => {
+	const bodies = [
+		"",
+		" \n\t",
+		"$I",
+		"{ return $I.$I($S, $N); }",
+		"foo_2 $$ $ISN 123.45 => === ?. é 😀",
+		"{ const $I = $N; return $I + $I; }\n".repeat(20_000),
+	];
+	for (const body of [...bodies, ...bodies.toReversed()]) {
+		const tokens = tokenize(body);
+		expect(countTokens(body)).toBe(tokens.length);
+		expect(fingerprintTokens(body)).toEqual({
+			tokenCount: tokens.length,
+			bigrams: new Set(tokenBigrams(tokens)),
+		});
+		expect(tokenize(body)).toEqual(tokens);
+	}
+});
 
 describe("jaccardSimilarity", () => {
 	test("prepared sets preserve exact scores for duplicates, empty inputs, and unequal sizes", () => {

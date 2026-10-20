@@ -1,7 +1,9 @@
 import { availableParallelism } from "node:os";
 import { isMainThread, Worker } from "node:worker_threads";
 
-const MAX_ANALYSIS_WORKERS = 4;
+// Each parser VM owns a TypeScript runtime and transient ASTs. Bound their
+// combined memory across concurrent library/MCP callers, not just each scan.
+const MAX_ANALYSIS_WORKERS = 2;
 // Parsing small projects is cheaper than starting TypeScript in another VM.
 const MIN_FILES_PER_WORKER = 1024;
 const WORKER_TIMEOUT_MS = 120_000;

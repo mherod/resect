@@ -211,9 +211,17 @@ DON'T use async `Bun.file().lastModified` or content hashing in validity checks;
 `similarity-collection.ts` owns source parsing and declaration normalization for
 both the main thread and `analysis-worker.ts`. `collectFunctionsFromFiles()`
 uses workers for scans of at least 2,048 files on multicore hosts, with at least
-1,024 files per worker and a process-wide cap of four. Smaller scans retain
+1,024 files per worker and a process-wide cap of two. Smaller scans retain
 bounded I/O on the main thread. Preserve input order, duplicate inputs, missing
 file handling, and the `collectFunctions` compatibility export from `similarity.ts`.
+
+Parser workers collect in 64-file batches and synchronously reclaim discarded
+ASTs between batches. Keep this collection inside the dedicated worker VM;
+DON'T force collection in a library/MCP caller's heap or restart TypeScript for
+each batch. Collection needs no AST parent links: pass the source file explicitly
+for text and position queries. Measure fresh-process peak RSS and elapsed time
+on the same inputs before changing the worker cap or batch size; include all
+worker threads and preserve exact result parity.
 
 Workers exchange plain paths and declaration records. Never send ASTs, programs,
 checkers, or callbacks through structured clone. Keep greedy similarity grouping
@@ -228,6 +236,9 @@ outside the source directory; source-only tests cannot catch missing worker asse
 
 ### Similarity grouping
 
+Count collection tokens without retaining full token arrays. Stream grouping
+bigrams directly into unique sets and reuse a query-marker array for candidate
+deduplication. Preserve the shared tokenizer's exact grammar and token counts.
 Prepare bigram, content, name, and member sets once per scan. Sift candidates
 with exact-name buckets when requested, otherwise probe a rare-token prefix
 whose omitted suffix cannot contain the required Jaccard overlap. Preserve the

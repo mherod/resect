@@ -1,10 +1,10 @@
 import ts from "typescript";
 import type { DeclarationKind, FunctionInfo } from "../types/similar.ts";
 import {
+	countTokens,
 	extractAllIdentifiers,
 	extractContentTokens,
 	normalizeBody,
-	tokenize,
 } from "./similarity-algorithms.ts";
 
 const MIN_TOKEN_COUNT = 8;
@@ -47,7 +47,7 @@ function makeFunctionInfo(
 	character: number,
 	bodyText: string,
 	normalized: string,
-	tokens: string[],
+	tokenCount: number,
 	hasDirective: boolean,
 	isWrapper: boolean,
 	isTypeGuard: boolean,
@@ -70,7 +70,7 @@ function makeFunctionInfo(
 		line,
 		column: character,
 		normalizedBody: normalized,
-		tokenCount: tokens.length,
+		tokenCount,
 		bodyLength: bodyText.length,
 		bodyLines: bodyText.split("\n").length,
 		hasDirective,
@@ -97,8 +97,8 @@ export function collectFunctions(
 		if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body) {
 			const bodyText = stmt.body.getText(sourceFile);
 			const normalized = normalizeBody(bodyText);
-			const tokens = tokenize(normalized);
-			if (tokens.length >= MIN_TOKEN_COUNT) {
+			const tokenCount = countTokens(normalized);
+			if (tokenCount >= MIN_TOKEN_COUNT) {
 				const { line, character } = sourceFile.getLineAndCharacterOfPosition(
 					stmt.getStart(sourceFile)
 				);
@@ -111,7 +111,7 @@ export function collectFunctions(
 						character,
 						bodyText,
 						normalized,
-						tokens,
+						tokenCount,
 						DIRECTIVE_PATTERN.test(bodyText),
 						isWrapperBody(stmt.body),
 						stmt.type != null && ts.isTypePredicateNode(stmt.type)
@@ -132,8 +132,8 @@ export function collectFunctions(
 				) {
 					const bodyText = init.body.getText(sourceFile);
 					const normalized = normalizeBody(bodyText);
-					const tokens = tokenize(normalized);
-					if (tokens.length >= MIN_TOKEN_COUNT) {
+					const tokenCount = countTokens(normalized);
+					if (tokenCount >= MIN_TOKEN_COUNT) {
 						const { line, character } =
 							sourceFile.getLineAndCharacterOfPosition(
 								stmt.getStart(sourceFile)
@@ -147,7 +147,7 @@ export function collectFunctions(
 								character,
 								bodyText,
 								normalized,
-								tokens,
+								tokenCount,
 								DIRECTIVE_PATTERN.test(bodyText),
 								isWrapperBody(init.body),
 								init.type != null && ts.isTypePredicateNode(init.type)
@@ -161,8 +161,8 @@ export function collectFunctions(
 		else if (ts.isTypeAliasDeclaration(stmt)) {
 			const bodyText = stmt.type.getText(sourceFile);
 			const normalized = normalizeBody(bodyText);
-			const tokens = tokenize(normalized);
-			if (tokens.length >= MIN_TYPE_TOKEN_COUNT) {
+			const tokenCount = countTokens(normalized);
+			if (tokenCount >= MIN_TYPE_TOKEN_COUNT) {
 				const { line, character } = sourceFile.getLineAndCharacterOfPosition(
 					stmt.getStart(sourceFile)
 				);
@@ -175,7 +175,7 @@ export function collectFunctions(
 						character,
 						bodyText,
 						normalized,
-						tokens,
+						tokenCount,
 						false,
 						false,
 						false
@@ -191,8 +191,8 @@ export function collectFunctions(
 				heritageClauses?.[0]?.getStart(sourceFile) ?? stmt.members.pos;
 			const bodyText = sourceFile.text.slice(bodyStart, stmt.end).trim();
 			const normalized = normalizeBody(bodyText);
-			const tokens = tokenize(normalized);
-			if (tokens.length >= MIN_TYPE_TOKEN_COUNT) {
+			const tokenCount = countTokens(normalized);
+			if (tokenCount >= MIN_TYPE_TOKEN_COUNT) {
 				const { line, character } = sourceFile.getLineAndCharacterOfPosition(
 					stmt.getStart(sourceFile)
 				);
@@ -235,7 +235,7 @@ export function collectFunctions(
 						character,
 						bodyText,
 						normalized,
-						tokens,
+						tokenCount,
 						false,
 						false,
 						false,
@@ -256,11 +256,13 @@ export async function collectFileFunctions(
 ): Promise<FunctionInfo[]> {
 	try {
 		const content = await Bun.file(filePath).text();
+		// Collection walks children and passes source explicitly for text/positions;
+		// parent links and the extra traversal needed to populate them are unused.
 		const source = ts.createSourceFile(
 			filePath,
 			content,
 			ts.ScriptTarget.Latest,
-			true
+			false
 		);
 		return collectFunctions(source, filePath);
 	} catch {

@@ -165,14 +165,43 @@ export function normalizeBody(text: string): string {
 	return s;
 }
 
+const TOKEN_PATTERN = /\$[ISN]|[a-zA-Z_$][a-zA-Z0-9_$]*|\d+|[^\s\w$]/g;
+
 /**
  * Tokenize a normalized body into individual tokens.
  * Handles placeholders ($I, $S, $N), keywords/identifiers, and punctuation.
  */
 export function tokenize(normalized: string): string[] {
-	return (
-		normalized.match(/\$[ISN]|[a-zA-Z_$][a-zA-Z0-9_$]*|\d+|[^\s\w$]/g) ?? []
-	);
+	return normalized.match(TOKEN_PATTERN) ?? [];
+}
+
+/** Count without retaining an array of every token in a large declaration. */
+export function countTokens(normalized: string): number {
+	const pattern = new RegExp(TOKEN_PATTERN);
+	let count = 0;
+	while (pattern.test(normalized)) {
+		count++;
+	}
+	return count;
+}
+
+/** Build only the unique bigrams, without full token and bigram arrays. */
+export function fingerprintTokens(normalized: string): {
+	tokenCount: number;
+	bigrams: Set<string>;
+} {
+	const bigrams = new Set<string>();
+	let previous: string | undefined;
+	let tokenCount = 0;
+	for (const match of normalized.matchAll(TOKEN_PATTERN)) {
+		const token = match[0];
+		if (previous !== undefined) {
+			bigrams.add(`${previous} ${token}`);
+		}
+		previous = token;
+		tokenCount++;
+	}
+	return { tokenCount, bigrams };
 }
 
 /**
