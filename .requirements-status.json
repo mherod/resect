@@ -3,8 +3,8 @@
   "projectId": "mherod/resect",
   "requirementsFile": "REQUIREMENTS.md",
   "requirementsSha256": "3acb61623315658a837ed8c1e9e29693ceef3f014f6c6314e9a153e4fdb77f01",
-  "sourceCommit": "1b89d8e434831f7d42c8ffda4ec0b89db96953fc",
-  "generatedAt": "2026-10-21T12:29:54Z",
+  "sourceCommit": "7b7687cacb33c5e45c7998a08e5526e40f1eae23",
+  "generatedAt": "2026-10-21T12:47:08Z",
   "validator": {
     "name": "generate-requirements",
     "version": "2.0.0",
@@ -17,8 +17,8 @@
       "validator": "validate-bdd",
       "validatorVersion": "2.0.0",
       "requirementsSha256": "3acb61623315658a837ed8c1e9e29693ceef3f014f6c6314e9a153e4fdb77f01",
-      "sourceCommit": "1b89d8e434831f7d42c8ffda4ec0b89db96953fc",
-      "generatedAt": "2026-10-21T12:29:54Z",
+      "sourceCommit": "7b7687cacb33c5e45c7998a08e5526e40f1eae23",
+      "generatedAt": "2026-10-21T12:47:08Z",
       "counts": {
         "checked": 82,
         "errors": 0,
@@ -34,8 +34,8 @@
       "validator": "generate-requirements-manual-review",
       "validatorVersion": "2.0.0",
       "requirementsSha256": "3acb61623315658a837ed8c1e9e29693ceef3f014f6c6314e9a153e4fdb77f01",
-      "sourceCommit": "1b89d8e434831f7d42c8ffda4ec0b89db96953fc",
-      "generatedAt": "2026-10-21T12:29:54Z",
+      "sourceCommit": "7b7687cacb33c5e45c7998a08e5526e40f1eae23",
+      "generatedAt": "2026-10-21T12:47:08Z",
       "counts": {
         "checked": 82,
         "errors": 0,
@@ -54,17 +54,17 @@
       "validator": "bun-test-plus-clause-audit",
       "validatorVersion": "1.4.3+generate-requirements-2.0.0",
       "requirementsSha256": "3acb61623315658a837ed8c1e9e29693ceef3f014f6c6314e9a153e4fdb77f01",
-      "sourceCommit": "1b89d8e434831f7d42c8ffda4ec0b89db96953fc",
-      "generatedAt": "2026-10-21T12:29:54Z",
+      "sourceCommit": "7b7687cacb33c5e45c7998a08e5526e40f1eae23",
+      "generatedAt": "2026-10-21T12:47:08Z",
       "counts": {
         "checked": 82,
         "errors": 0,
         "warnings": 0
       },
       "notes": [
-        "Audited all 82 IDs at source commit 1b89d8e434831f7d42c8ffda4ec0b89db96953fc. Current code and test locators below provide clause evidence instead of new BDD anchors; all IDs VERIFIED, zero regressions or soft-only boundaries.",
-        "Local full suite: 1334 pass, 0 fail, 4708 assertions, 107 files, 56.82 seconds. The first parallel attempt had one temporary-fixture enumeration race in mutation-pipeline-enforcement.test.ts; its isolated five-test run and the full recheck passed.",
-        "GitHub CI https://github.com/mherod/resect/actions/runs/39598412339 passed for the audited source, including typecheck, lint, tests and package size. Receipt-only commit verification is recorded separately by the PR workflow.",
+        "Revalidated all 82 IDs at source commit 7b7687cacb33c5e45c7998a08e5526e40f1eae23, retaining the prior full clause audit and reviewing the complete implementation delta. Current code and test locators below provide clause evidence instead of new BDD anchors; all IDs VERIFIED, zero regressions or soft-only boundaries.",
+        "Final local full suite: 1336 pass, 0 fail, 4746 assertions, 107 files, 61.43 seconds. Typecheck, lint, compiled CLI/MCP builds, library build and package-size validation pass. ESLint was rerun after the suite because its concurrent attempt encountered a deleted temporary test fixture.",
+        "Prior-source GitHub CI https://github.com/mherod/resect/actions/runs/39598412339 passed. Final-head remote CI is verified separately by the PR workflow; this receipt does not claim that prior run validates subsequent commits.",
         "MOVE-001 through MOVE-005: src/commands/move.ts#moveCommand and src/commands/move-apply.ts#applyMoveModulePlan; src/commands/move.test.ts:99,140,171,246,269 cover destination/importer edits, fatal writes, recoverable warnings, import-equals and path-scoped Git staging.",
         "REN-001: src/commands/rename.ts#planRenameSymbol; src/commands/rename.test.ts:177 covers the export-equals declaration and assignment.",
         "TIDY-001 through TIDY-002: src/core/mutation-pipeline.ts#runMutation and src/commands/tidy-apply.ts; src/commands/tidy.test.ts:400,462 cover forced-dirty truthful failure and thrown closing verification rollback.",
@@ -82,6 +82,7 @@
         "CLI-001 through CLI-007: src/cli-stream-errors.ts, src/cli-logger.ts and src/commands/registry.ts; src/cli.test.ts:161,172,240,278,313, src/cli-stream-errors.test.ts:44,54,62, src/cli-logger.test.ts:72,97,103 and audit/unused/tidy progress forwarding tests cover quiet expected EPIPE, visible unexpected errors, throttled stderr progress, JSON/non-TTY suppression and report formatting.",
         "SIM-001 through SIM-003: src/core/similarity.ts#findSimilarGroups; src/core/similarity.test.ts:471,1822,1854,1895 and src/core/similarity-pruning.test.ts cover genuine small/large duplicates, shared-shape suppression, honest high/exact buckets and exhaustive candidate parity.",
         "Worker/process parity, clean-exit/error/cancellation handling, incremental graph invalidation, missing-type verification preflight, and bounded similarity-cache tests also passed. VS Code performance measurements remain in docs/vscode-performance-plan.md and were not rerun for this documentation repair.",
+        "Final delta audit: src/mcp-tools/isolated-read-only.ts now sizes resolved ancestor/explicit projects and deduplicated workspace sources; all five read-only adapters await this decision. src/mcp-tools/isolated-read-only.test.ts proves small-project retention and exact process/in-process report parity, including workspace audit/unused. src/core/graph-incremental.test.ts gives each invalidating edit a distinct timestamp. Analysis and output clauses retain their prior behavior and all corresponding tests pass.",
         "Report-only audit fingerprint matched before/after: branch/HEAD, binary worktree/index diffs, untracked path/type/content manifest and both artifact hashes. Receipts were persisted only after returning to the authorized generation step."
       ]
     }
