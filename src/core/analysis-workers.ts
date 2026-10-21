@@ -121,6 +121,7 @@ async function executeWorkerJob<Input, Output>(
 	onDispatched?: (job: Input) => void
 ): Promise<Output> {
 	let worker: Worker | undefined;
+	let exited = false;
 	let cleanupRequest: (() => void) | undefined;
 	try {
 		signal.throwIfAborted();
@@ -169,6 +170,7 @@ async function executeWorkerJob<Input, Output>(
 				reject(error);
 			});
 			running.once("exit", (code) => {
+				exited = true;
 				cleanup();
 				if (code === 0 && received) {
 					resolve(received.result);
@@ -183,7 +185,11 @@ async function executeWorkerJob<Input, Output>(
 	} finally {
 		cleanupRequest?.();
 		if (worker) {
-			await worker.terminate();
+			// Terminating an already-exited Bun worker can block the caller's
+			// thread on Linux CI (oven-sh/bun#11335); only stop a live worker.
+			if (!exited) {
+				await worker.terminate();
+			}
 			worker.removeAllListeners();
 		}
 	}
