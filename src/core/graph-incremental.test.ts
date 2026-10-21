@@ -1,10 +1,20 @@
 import { expect, test } from "bun:test";
-import { rename, unlink } from "node:fs/promises";
+import { rename, stat, unlink, utimes } from "node:fs/promises";
 import path from "node:path";
 import { cleanup, makeFixture } from "../commands/__test-helpers.ts";
 import { buildDependencyGraph } from "./graph.ts";
 import { loadProject } from "./project.ts";
 import { discoverProject } from "./tsconfig-discovery.ts";
+
+async function rewriteWithLaterMtime(
+	file: string,
+	content: string
+): Promise<void> {
+	const previous = await stat(file);
+	await Bun.write(file, content);
+	const next = new Date(previous.mtimeMs + 2000);
+	await utimes(file, next, next);
+}
 
 test("successive edits bound incremental rebuilding and reparse the changed file", async () => {
 	const dir = await makeFixture("incremental-history", {
@@ -15,7 +25,7 @@ test("successive edits bound incremental rebuilding and reparse the changed file
 		const project = loadProject(path.join(dir, "tsconfig.json"));
 		await buildDependencyGraph(project, { retainProgram: false });
 		for (let edit = 1; edit <= 33; edit++) {
-			await Bun.write(
+			await rewriteWithLaterMtime(
 				path.join(dir, "src/value.ts"),
 				`export const value = ${edit};`
 			);
@@ -95,7 +105,7 @@ test("edits reuse unchanged plain records without mutating the previous graph", 
 		const first = await buildDependencyGraph(project, { retainProgram: false });
 		const a = path.join(dir, "src/a.ts");
 		const b = path.join(dir, "src/b.ts");
-		await Bun.write(a, "export const changed = 2;");
+		await rewriteWithLaterMtime(a, "export const changed = 2;");
 		const next = await buildDependencyGraph(project, { retainProgram: false });
 		expect(next).not.toBe(first);
 		expect(next.imports.get(b)).toBe(first.imports.get(b));
@@ -124,7 +134,7 @@ test("changes outside include invalidate export metadata and unresolved imports"
 		const project = loadProject(path.join(dir, "tsconfig.json"));
 		await buildDependencyGraph(project, { retainProgram: false });
 		const outside = path.join(dir, "outside/value.ts");
-		await Bun.write(outside, "export const after = 2;");
+		await rewriteWithLaterMtime(outside, "export const after = 2;");
 		const changed = await buildDependencyGraph(project, {
 			retainProgram: false,
 		});
@@ -164,7 +174,7 @@ test("package main changes invalidate resolution even when source files do not c
 		expect(first.imports.get(consumer)?.[0]?.resolvedPath).toBe(
 			path.join(dir, "package/one.ts")
 		);
-		await Bun.write(
+		await rewriteWithLaterMtime(
 			path.join(dir, "package/package.json"),
 			JSON.stringify({ main: "two.ts" })
 		);
