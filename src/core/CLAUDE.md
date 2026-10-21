@@ -339,7 +339,9 @@ opaque tokens so a caller retaining an old array cannot pin an evicted snapshot.
 
 Only projects at `project-scale.ts`'s 2,048-source-file threshold use
 disposable processes: standalone MCP audit/analyze/unused/find/similar calls,
-sized from cached `discoverProject()` ownership, and mutation planners. Smaller
+sized from cached `discoverProject()` ownership at the resolved tsconfig root
+and deduplicated workspace package sources, and mutation planners. Never size
+graph analysis from the requested report subdirectory alone. Smaller
 projects stay warm; never add a second cutoff. Transfer only completed
 reports and edits; copying graphs between processes retains native
 allocations. Reserve both scheduler slots per process job. Keep the thread path

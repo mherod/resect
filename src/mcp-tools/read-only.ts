@@ -67,7 +67,7 @@ export async function findTool(
 	type: "file" | "export" | "all" = "all"
 ): Promise<CallToolResult> {
 	const job: ReadOnlyWorkerJob = { kind: "find", args: [query, project, type] };
-	if (shouldIsolateReadOnlyTool(job)) {
+	if (await shouldIsolateReadOnlyTool(job)) {
 		return runIsolatedReadOnlyTool(job);
 	}
 	const absoluteProject = path.resolve(project);
@@ -92,7 +92,7 @@ export async function analyzeTool(
 	} = {}
 ): Promise<CallToolResult> {
 	const job: ReadOnlyWorkerJob = { kind: "analyze", args: [file, options] };
-	if (shouldIsolateReadOnlyTool(job)) {
+	if (await shouldIsolateReadOnlyTool(job)) {
 		return runIsolatedReadOnlyTool(job);
 	}
 	const absolutePath = path.resolve(file);
@@ -246,7 +246,7 @@ export async function auditTool(
 	}
 ): Promise<CallToolResult> {
 	const job: ReadOnlyWorkerJob = { kind: "audit", args: [directory, options] };
-	if (shouldIsolateReadOnlyTool(job)) {
+	if (await shouldIsolateReadOnlyTool(job)) {
 		return runIsolatedReadOnlyTool(job);
 	}
 	const absoluteDir = path.resolve(directory);
@@ -299,7 +299,7 @@ export async function unusedTool(
 	}
 ): Promise<CallToolResult> {
 	const job: ReadOnlyWorkerJob = { kind: "unused", args: [directory, options] };
-	if (shouldIsolateReadOnlyTool(job)) {
+	if (await shouldIsolateReadOnlyTool(job)) {
 		return runIsolatedReadOnlyTool(job);
 	}
 	const absoluteDir = path.resolve(directory);
@@ -412,7 +412,7 @@ export async function similarTool(
 		kind: "similar",
 		args: [directory, options],
 	};
-	if (shouldIsolateReadOnlyTool(job)) {
+	if (await shouldIsolateReadOnlyTool(job)) {
 		return runIsolatedReadOnlyTool(job);
 	}
 	const absoluteDir = path.resolve(directory);

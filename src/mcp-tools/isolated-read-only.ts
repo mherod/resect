@@ -5,6 +5,7 @@ import { runAnalysisJobs } from "../core/analysis-workers.ts";
 import { resolveTsConfig } from "../core/project.ts";
 import { isLargeProject } from "../core/project-scale.ts";
 import { discoverProject } from "../core/tsconfig-discovery.ts";
+import { discoverWorkspace } from "../core/workspace.ts";
 import { bunRuntime, getRuntime } from "../runtime/index.ts";
 import type {
 	analyzeTool,
@@ -33,12 +34,14 @@ export function setIsolatedReadOnlyTools(value: boolean): void {
  * server's warm caches. Discovery is cached and reused by the in-process
  * path, so sizing the project does not add a second scan.
  */
-export function shouldIsolateReadOnlyTool(job: ReadOnlyWorkerJob): boolean {
+export async function shouldIsolateReadOnlyTool(
+	job: ReadOnlyWorkerJob
+): Promise<boolean> {
 	return (
 		enabled &&
 		typeof Bun !== "undefined" &&
 		getRuntime() === bunRuntime &&
-		isLargeProject(countJobSourceFiles(job))
+		isLargeProject(await countJobSourceFiles(job))
 	);
 }
 
@@ -52,22 +55,50 @@ function jobProjectDirectory(job: ReadOnlyWorkerJob): string | undefined {
 		return tsconfig ? path.dirname(tsconfig) : undefined;
 	}
 	if (job.kind === "find") {
-		return job.args[1];
+		return path.resolve(job.args[1]);
 	}
-	// audit, similar and unused take their directory first.
-	return job.args[0];
+	// The report directory can be below (or outside) the project being loaded.
+	const [directory, options] = job.args;
+	const tsconfig = resolveTsConfig(options.project, path.resolve(directory));
+	if (tsconfig) {
+		return path.dirname(tsconfig);
+	}
+	// Similarity also discovers descendant configs without an ancestor config.
+	return job.kind === "similar" ? path.resolve(directory) : undefined;
 }
 
-function countJobSourceFiles(job: ReadOnlyWorkerJob): number {
-	const directory = jobProjectDirectory(job);
-	if (!directory) {
-		return 0;
-	}
+async function countJobSourceFiles(job: ReadOnlyWorkerJob): Promise<number> {
 	try {
-		return discoverProject(directory).fileOwnership.size;
+		const directory = jobProjectDirectory(job);
+		if (!directory) {
+			return 0;
+		}
+		const ownership = discoverProject(directory).fileOwnership;
+		if (
+			(job.kind !== "audit" && job.kind !== "unused") ||
+			!job.args[1].workspace
+		) {
+			return ownership.size;
+		}
+		const [reportDirectory, options] = job.args;
+		const workspace = await discoverWorkspace(
+			options.project ? directory : path.resolve(reportDirectory)
+		);
+		const sources = new Set(ownership.keys());
+		for (const pkg of workspace?.packages ?? []) {
+			if (!pkg.tsconfigPath) {
+				continue;
+			}
+			const discovery = discoverProject(path.dirname(pkg.tsconfigPath));
+			for (const source of discovery.fileOwnership.keys()) {
+				sources.add(source);
+			}
+		}
+		return sources.size;
 	} catch {
-		// The in-process tool reports the same discovery failure.
-		return 0;
+		// Unknown scope must not authorize retaining a potentially large graph.
+		// The worker still owns the command's ordinary discovery error/report.
+		return Number.POSITIVE_INFINITY;
 	}
 }
 
