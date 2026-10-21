@@ -1,12 +1,12 @@
 import path from "node:path";
-import { isMainThread } from "node:worker_threads";
 import ts from "typescript";
 import type { ExportInfo } from "../types/analysis.ts";
 import type { ModuleReference } from "../types/graph.ts";
 import type { ProgressCallback } from "../types/progress.ts";
 import type { ProjectConfig } from "../types.ts";
+import { isAnalysisWorkerContext } from "./analysis-context.ts";
 import type { GraphScanJob } from "./analysis-worker.ts";
-import { runAnalysisJobs } from "./analysis-workers.ts";
+import { ANALYSIS_BATCH_SIZE, runAnalysisJobs } from "./analysis-workers.ts";
 import {
 	createCacheResetter,
 	enforceCacheLimit,
@@ -26,8 +26,32 @@ import {
 	scanExports,
 	scanModuleReferences,
 } from "./scanner.ts";
-import { createFileScopeProgram, withSourceFile } from "./source-file.ts";
+import {
+	createFileScopeProgram,
+	parseSourceFile,
+	withSourceFile,
+} from "./source-file.ts";
 import { discoverProject, toProjectConfig } from "./tsconfig-discovery.ts";
+
+/** Read one covered file's syntax without retaining a whole-program AST. */
+export function getGraphSyntaxFile(
+	graph: DependencyGraph,
+	filePath: string
+): ts.SourceFile | undefined {
+	const retained = graph.program?.getSourceFile(filePath);
+	if (retained) {
+		return retained;
+	}
+	for (const program of graph.programs ?? []) {
+		const sourceFile = program.getSourceFile(filePath);
+		if (sourceFile) {
+			return sourceFile;
+		}
+	}
+	return graph.sourceMetadata?.has(normalizePath(filePath))
+		? (parseSourceFile(filePath) ?? undefined)
+		: undefined;
+}
 
 /**
  * Run `callback` with the parsed source file for `filePath` from the
@@ -311,8 +335,7 @@ export async function buildDependencyGraph(
 			: undefined;
 	let result: DependencyGraph;
 	if (
-		!(retainProgram || previous) &&
-		isMainThread &&
+		!(retainProgram || previous || isAnalysisWorkerContext()) &&
 		files.length >= MIN_GRAPH_WORKER_FILES
 	) {
 		const [workerGraph] = await runAnalysisJobs<GraphScanJob, DependencyGraph>(
@@ -423,7 +446,16 @@ async function scanDependencyGraph(
 				skipped: true,
 				normalizedFile: normalizePath(file),
 			}),
-			onProgress: options.onProgress,
+			onProgress: (done, total) => {
+				if (
+					isAnalysisWorkerContext() &&
+					typeof Bun !== "undefined" &&
+					done % ANALYSIS_BATCH_SIZE === 0
+				) {
+					Bun.gc(true);
+				}
+				options.onProgress?.(done, total);
+			},
 		}
 	);
 
@@ -515,14 +547,11 @@ async function scanDependencyGraph(
 	return result;
 }
 
-/**
- * Find all files that reference a given file (directly or through barrels)
- * recursing up through chain of re-exports
- */
-export function findAllReferences(
+/** Ordered target and transitive re-export barrels, including cycles once. */
+export function findReExportingFiles(
 	filePath: string,
 	graph: DependencyGraph
-): ModuleReference[] {
+): Set<string> {
 	const normalizedPath = normalizePath(filePath);
 
 	// Track files that effectively represent the target module
@@ -553,11 +582,20 @@ export function findAllReferences(
 		}
 	}
 
+	return reExportingFiles;
+}
+
+/** Find direct and transitive barrel consumers in their original order. */
+export function findAllReferences(
+	filePath: string,
+	graph: DependencyGraph
+): ModuleReference[] {
+	const normalizedPath = normalizePath(filePath);
 	const allRefs: ModuleReference[] = [];
 	const seenRefs = new Set<string>(); // avoid duplicates
 
 	// Collect references to any file in the re-export chain
-	for (const exportedFile of reExportingFiles) {
+	for (const exportedFile of findReExportingFiles(filePath, graph)) {
 		const consumers = graph.importedBy.get(exportedFile) ?? [];
 
 		for (const ref of consumers) {

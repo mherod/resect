@@ -1,8 +1,72 @@
 import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 export const MEMORY_LIMIT_BYTES = 2_000_000_000;
 export const TIMEOUT_MS = 120_000;
+
+function withWorkerProbe(command: string[]): string[] {
+	return [
+		command[0] ?? process.execPath,
+		"--preload",
+		fileURLToPath(new URL("./worker-memory-probe.ts", import.meta.url)),
+		...command.slice(1),
+	];
+}
+
+/** Sum disjoint native high-water marks for a conservative whole-job bound. */
+export async function processMemoryReceipt(
+	reportedPeak: number | undefined,
+	stderr: string,
+	parentSample?: number
+) {
+	const events: Array<{ time: number; bytes: number }> = [];
+	let missing = false;
+	let workerCount = 0;
+	let parentPeak = parentSample ?? 0;
+	for (const line of (await Bun.file(stderr).text()).split("\n")) {
+		if (
+			line.startsWith('{"benchmarkParentMemory":true,') &&
+			line.endsWith("}")
+		) {
+			const sample = JSON.parse(line);
+			if (typeof sample.peakRssBytes === "number") {
+				parentPeak = Math.max(parentPeak, sample.peakRssBytes);
+			}
+			continue;
+		}
+		if (
+			!(line.startsWith('{"benchmarkWorkerMemory":true,') && line.endsWith("}"))
+		) {
+			continue;
+		}
+		const usage = JSON.parse(line);
+		workerCount++;
+		if (!(typeof usage.peakRssBytes === "number" && usage.peakRssBytes > 0)) {
+			missing = true;
+			continue;
+		}
+		events.push({ time: usage.startedAt, bytes: usage.peakRssBytes });
+		events.push({ time: usage.finishedAt, bytes: -usage.peakRssBytes });
+	}
+	// At equal timestamps include both peaks; never undercount a short overlap.
+	events.sort((a, b) => a.time - b.time || b.bytes - a.bytes);
+	let active = 0;
+	let workerPeak = 0;
+	for (const event of events) {
+		active += event.bytes;
+		workerPeak = Math.max(workerPeak, active);
+	}
+	return {
+		// wait4-based resourceUsage can include the largest waited-for child.
+		// Keep it as evidence, never mistake it for the parent's own RSS.
+		reportedPeakRssBytes: reportedPeak ?? null,
+		parentPeakRssBytes: parentPeak || null,
+		workerPeakRssBytes: workerPeak,
+		workerCount,
+		peakRssBytes: parentPeak && !missing ? parentPeak + workerPeak : null,
+	};
+}
 
 export function outputHash(text: string, fixture: string): string {
 	return createHash("sha256")
@@ -17,7 +81,7 @@ export async function measureProcess(
 	timeoutMs = TIMEOUT_MS
 ) {
 	const start = performance.now();
-	const child = Bun.spawn(command, {
+	const child = Bun.spawn(withWorkerProbe(command), {
 		cwd,
 		stdout: Bun.file(`${output}.stdout`),
 		stderr: Bun.file(`${output}.stderr`),
@@ -34,7 +98,10 @@ export async function measureProcess(
 			exitCode,
 			timedOut,
 			elapsedMs: performance.now() - start,
-			peakRssBytes: child.resourceUsage()?.maxRSS ?? null,
+			...(await processMemoryReceipt(
+				child.resourceUsage()?.maxRSS,
+				`${output}.stderr`
+			)),
 		};
 	} finally {
 		clearTimeout(timer);
@@ -60,7 +127,7 @@ export function startMcp(
 	stderr: string,
 	timeoutMs = TIMEOUT_MS
 ) {
-	const child = Bun.spawn(command, {
+	const child = Bun.spawn(withWorkerProbe(command), {
 		cwd,
 		stdin: "pipe",
 		stdout: "pipe",
@@ -147,7 +214,10 @@ export function startMcp(
 				await reader;
 				return {
 					exitCode,
-					peakRssBytes: child.resourceUsage()?.maxRSS ?? null,
+					...(await processMemoryReceipt(
+						child.resourceUsage()?.maxRSS,
+						stderr
+					)),
 				};
 			} finally {
 				clearTimeout(timer);

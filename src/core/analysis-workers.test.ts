@@ -5,12 +5,17 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
 import type { FunctionInfo, SimilarityGroup } from "../types/similar.ts";
-import type { SimilarityGroupJob } from "./analysis-worker.ts";
+import type {
+	SimilarityGroupJob,
+	SimilarityReportJob,
+} from "./analysis-worker.ts";
 import { analysisWorkerCount, runAnalysisJobs } from "./analysis-workers.ts";
+import { type NonSourceFile, nonSourceWarning } from "./non-source-files.ts";
 import {
 	collectFunctions,
 	collectFunctionsFromFiles,
 	findSimilarGroups,
+	type SimilarityFileReport,
 } from "./similarity.ts";
 import { collectFileFunctions } from "./similarity-collection.ts";
 
@@ -227,6 +232,61 @@ export class Ignored { method() { return 1; } }
 		"interface",
 	]);
 	expect(await collectFileFunctions(file)).toEqual(expected);
+});
+
+test("one worker preserves complete reports while omitting non-source declarations", async () => {
+	const first = path.join(directory, "report-first.ts");
+	const second = path.join(directory, "report-second.ts");
+	const ignored = path.join(directory, "report-ignored.ts");
+	const empty = path.join(directory, "report-empty.ts");
+	const source =
+		"export function transform(value: number) { const next = value + 2; return next * next; }\nexport interface Item { name: string; value: number; active: boolean; }\n";
+	for (const file of [first, second, ignored]) {
+		await Bun.write(file, source);
+	}
+	await Bun.write(empty, "export const empty = 1;");
+	const files = [
+		first,
+		second,
+		ignored,
+		empty,
+		path.join(directory, "report-missing.ts"),
+		first,
+	];
+	const ignoredEntry: NonSourceFile = {
+		file: ignored,
+		directory,
+		reason: "git-ignored",
+	};
+	const excludedFiles: NonSourceFile[] = [
+		{ ...ignoredEntry, file: empty },
+		ignoredEntry,
+	];
+	const functions = (await Promise.all(files.map(collectFileFunctions)))
+		.flat()
+		.filter((fn) => fn.file !== ignored);
+	const filterOptions = { threshold: 0.8, skipSameFile: true };
+	const [result] = await runAnalysisJobs<
+		SimilarityReportJob,
+		SimilarityFileReport
+	>(
+		[
+			{
+				kind: "similarity-report",
+				files,
+				options: { filterOptions, excludedFiles },
+			},
+		],
+		{ exclusive: true }
+	);
+	expect(result?.report).toEqual({
+		groups: findSimilarGroups(functions, filterOptions),
+		totalFunctions: functions.length,
+		totalFiles: files.length,
+		warnings: [nonSourceWarning([ignoredEntry])],
+	});
+	expect(result?.declarationFiles).toEqual([first, second, ignored]);
+	expect(result?.excludedKey).toBe(JSON.stringify([ignoredEntry]));
 });
 
 test("large function scans match serial parsing including missing files and duplicate inputs", async () => {

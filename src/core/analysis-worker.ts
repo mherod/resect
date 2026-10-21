@@ -1,15 +1,17 @@
 import { parentPort, workerData } from "node:worker_threads";
 import type { FunctionInfo } from "../types/similar.ts";
 import type { ProjectConfig } from "../types.ts";
+import { withAnalysisWorkerContext } from "./analysis-context.ts";
 import { ANALYSIS_BATCH_SIZE } from "./analysis-workers.ts";
-import { mapConcurrent } from "./concurrency.ts";
 import { type ExportIndexEntry, scanFileExports } from "./export-scan.ts";
 import { buildDependencyGraph, clearGraphCache } from "./graph.ts";
 import {
+	buildSimilarityFileReport,
 	findSimilarGroups,
+	type SimilarityFileOptions,
 	type SimilarityFilterOptions,
 } from "./similarity.ts";
-import { collectFileFunctions } from "./similarity-collection.ts";
+import { collectFunctionBatches } from "./similarity-collection.ts";
 
 export interface FunctionScanJob {
 	kind: "functions";
@@ -32,10 +34,17 @@ export interface ExportScanJob {
 	files: string[];
 }
 
+export interface SimilarityReportJob {
+	kind: "similarity-report";
+	files: string[];
+	options: SimilarityFileOptions;
+}
+
 type AnalysisJob =
 	| FunctionScanJob
 	| GraphScanJob
 	| SimilarityGroupJob
+	| SimilarityReportJob
 	| ExportScanJob;
 
 function reclaimHeap(): void {
@@ -44,7 +53,20 @@ function reclaimHeap(): void {
 	}
 }
 
-async function runJob(job: AnalysisJob) {
+export async function runProcessJob(
+	job: AnalysisJob,
+	onProgress: (done: number, total: number) => void
+) {
+	return withAnalysisWorkerContext(async () => runJob(job, onProgress));
+}
+
+async function runJob(
+	job: AnalysisJob,
+	onProgress: (done: number, total: number) => void
+) {
+	if (job.kind === "similarity-report") {
+		return buildSimilarityFileReport(job.files, job.options, reclaimHeap);
+	}
 	if (job.kind === "exports") {
 		const entries: ExportIndexEntry[] = [];
 		for (const file of job.files) {
@@ -64,28 +86,19 @@ async function runJob(job: AnalysisJob) {
 			retainProgram: false,
 			onProgress: (done, total) => {
 				if (done % ANALYSIS_BATCH_SIZE === 0 || done === total) {
-					reclaimHeap();
-					parentPort?.postMessage({ type: "analysis-progress", done, total });
+					onProgress(done, total);
 				}
 			},
 		});
 	}
 
-	const results: FunctionInfo[][] = [];
-	for (
-		let offset = 0;
-		offset < job.files.length;
-		offset += ANALYSIS_BATCH_SIZE
-	) {
-		const files = job.files.slice(offset, offset + ANALYSIS_BATCH_SIZE);
-		results.push(...(await mapConcurrent(files, collectFileFunctions)));
-		reclaimHeap();
-	}
-	return results;
+	return collectFunctionBatches(job.files, reclaimHeap);
 }
 
 async function publishJob(job: AnalysisJob): Promise<void> {
-	const result = await runJob(job);
+	const result = await runProcessJob(job, (done, total) => {
+		parentPort?.postMessage({ type: "analysis-progress", done, total });
+	});
 	parentPort?.postMessage(result);
 }
 
@@ -101,6 +114,8 @@ async function executeJob(job: AnalysisJob): Promise<void> {
 		job.files.length = 0;
 	}
 	clearGraphCache();
+	// Let completed promise frames and the outgoing message leave the stack.
+	await new Promise<void>((resolve) => setTimeout(resolve, 0));
 	reclaimHeap();
 }
 

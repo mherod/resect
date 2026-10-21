@@ -49,6 +49,10 @@ import { discoverWorkspace } from "../core/workspace.ts";
 import type { FilenameCasing } from "../types/naming.ts";
 import type { TidyFixCategory } from "../types/tidy.ts";
 import {
+	runIsolatedReadOnlyTool,
+	shouldIsolateReadOnlyTool,
+} from "./isolated-read-only.ts";
+import {
 	checkWorktree,
 	errorText,
 	jsonText,
@@ -61,6 +65,12 @@ export async function findTool(
 	project: string,
 	type: "file" | "export" | "all" = "all"
 ): Promise<CallToolResult> {
+	if (shouldIsolateReadOnlyTool()) {
+		return runIsolatedReadOnlyTool({
+			kind: "find",
+			args: [query, project, type],
+		});
+	}
 	const absoluteProject = path.resolve(project);
 	const discovery = discoverProject(absoluteProject);
 	if (discovery.configs.length === 0) {
@@ -82,6 +92,9 @@ export async function analyzeTool(
 		entrypointGlobs?: string | string[];
 	} = {}
 ): Promise<CallToolResult> {
+	if (shouldIsolateReadOnlyTool()) {
+		return runIsolatedReadOnlyTool({ kind: "analyze", args: [file, options] });
+	}
 	const absolutePath = path.resolve(file);
 	const tsconfigPath = resolveTsConfig(
 		options.project,
@@ -232,6 +245,12 @@ export async function auditTool(
 		workspace?: boolean;
 	}
 ): Promise<CallToolResult> {
+	if (shouldIsolateReadOnlyTool()) {
+		return runIsolatedReadOnlyTool({
+			kind: "audit",
+			args: [directory, options],
+		});
+	}
 	const absoluteDir = path.resolve(directory);
 	const analysis = await analyzeAudit({
 		directory: absoluteDir,
@@ -281,6 +300,12 @@ export async function unusedTool(
 		includeIgnored?: boolean;
 	}
 ): Promise<CallToolResult> {
+	if (shouldIsolateReadOnlyTool()) {
+		return runIsolatedReadOnlyTool({
+			kind: "unused",
+			args: [directory, options],
+		});
+	}
 	const absoluteDir = path.resolve(directory);
 	const report = await findUnusedExports(directory, {
 		project: options.project,
@@ -387,6 +412,12 @@ export async function similarTool(
 		includeIgnored?: boolean;
 	}
 ): Promise<CallToolResult> {
+	if (shouldIsolateReadOnlyTool()) {
+		return runIsolatedReadOnlyTool({
+			kind: "similar",
+			args: [directory, options],
+		});
+	}
 	const absoluteDir = path.resolve(directory);
 	const rawReport = await analyzeSimilarity({
 		directory: absoluteDir,

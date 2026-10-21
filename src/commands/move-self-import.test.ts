@@ -55,6 +55,32 @@ const WORKSPACE = {
 } as const;
 
 describe("move intra-package self-import rewrite (#121)", () => {
+	test.each([
+		0, 128,
+	])("resolves wildcard barrel siblings outside include with %s filler files", async (fillers) => {
+		const config = JSON.parse(WORKSPACE["tsconfig.json"]);
+		config.include = ["apps/**/*.ts"];
+		const files: Record<string, string> = {
+			...WORKSPACE,
+			"tsconfig.json": JSON.stringify(config),
+		};
+		for (let index = 0; index < fillers; index++) {
+			files[`apps/web/filler${index}.ts`] =
+				`export const filler${index} = ${index};`;
+		}
+		const dir = await fixture("barrel-outside-include", files);
+		const result = await moveInFixture(
+			dir,
+			"apps/web/lib/analytics/base-provider.ts",
+			"packages/web-analytics/src/base-provider.ts"
+		);
+		expect(result.success).toBe(true);
+		const moved = await Bun.file(
+			path.join(dir, "packages/web-analytics/src/base-provider.ts")
+		).text();
+		expect(moved).toContain('from "./types"');
+	});
+
 	test("rewrites a moved-in file's barrel self-import to the defining sibling", async () => {
 		const dir = await fixture("barrel-to-sibling", { ...WORKSPACE });
 		const result = await moveInFixture(

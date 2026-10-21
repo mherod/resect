@@ -6,9 +6,13 @@ import {
 	compareDeclarations,
 	describeComparison,
 } from "../core/duplicate-detection.ts";
-import { buildDependencyGraph, findAllReferences } from "../core/graph.ts";
+import {
+	buildDependencyGraph,
+	type DependencyGraph,
+	findAllReferences,
+	getGraphSyntaxFile,
+} from "../core/graph.ts";
 import { runMutation } from "../core/mutation-pipeline.ts";
-import { createProgram } from "../core/project.ts";
 import { normalizePath } from "../core/resolver.ts";
 import {
 	createGitFilesRollbackStrategy,
@@ -16,7 +20,7 @@ import {
 	tryRestoreRollback,
 } from "../core/rollback.ts";
 import { getNameNode, hasExportModifier } from "../core/scanner.ts";
-import { parentOf } from "../core/source-file.ts";
+import { createFileScopeProgram, parentOf } from "../core/source-file.ts";
 import {
 	applyTextChanges,
 	createStructuredEdit,
@@ -34,6 +38,12 @@ import type { ModuleReference } from "../types/graph.ts";
 import type { UpdatedReference } from "../types/move.ts";
 import type { MutatingCommandOptions, ProjectConfig } from "../types.ts";
 import { setupCommandContext } from "./command-context.ts";
+import {
+	createCompactStructuredEdit,
+	createPlannedWriteReader,
+	runMutationPlanning,
+	shouldUsePlanningWorker,
+} from "./mutation-planning.ts";
 
 export interface RenameOptions extends MutatingCommandOptions {
 	file: string;
@@ -234,8 +244,109 @@ export async function renameSymbol(
 	extraProjects: ProjectConfig[] = [],
 	force = false
 ): Promise<RenameResult> {
+	const args: Parameters<typeof planRenameSymbol> = [
+		filePath,
+		oldName,
+		newName,
+		project,
+		verbose,
+		extraProjects,
+		force,
+	];
+	const plan = shouldUsePlanningWorker([project, ...extraProjects])
+		? await runMutationPlanning({
+				kind: "rename",
+				args,
+				previewOnly: dryRun,
+				compactWrites: !dryRun,
+			})
+		: await planRenameSymbol(...args);
+	if (!dryRun) {
+		await applyRenamePlan(plan);
+	}
+	return plan.result;
+}
+
+export interface RenamePlan {
+	result: RenameResult;
+	writes: {
+		file: string;
+		content?: string;
+		source: boolean;
+		errorIndex: number;
+	}[];
+}
+
+/** Apply only after planning has completed and any worker has exited cleanly. */
+export async function applyRenamePlan(plan: RenamePlan): Promise<void> {
+	const rt = getRuntime();
+	const readWrite = createPlannedWriteReader(plan.result.edits);
+	let writeErrors = 0;
+	for (const write of plan.writes) {
+		if (write.source) {
+			await rt.fs.writeFile(write.file, await readWrite(write));
+			continue;
+		}
+		try {
+			await rt.fs.writeFile(write.file, await readWrite(write));
+		} catch (error) {
+			plan.result.errors.splice(write.errorIndex + writeErrors, 0, {
+				file: write.file,
+				message: error instanceof Error ? error.message : String(error),
+			});
+			writeErrors++;
+			plan.result.success = false;
+		}
+	}
+}
+
+export async function planRenameSymbol(
+	filePath: string,
+	oldName: string,
+	newName: string,
+	project: ProjectConfig,
+	verbose: boolean,
+	extraProjects: ProjectConfig[] = [],
+	force = false,
+	readSyntaxFile = getGraphSyntaxFile,
+	providedGraphs?: DependencyGraph[],
+	retainContents = true
+): Promise<RenamePlan> {
+	const writes: RenamePlan["writes"] = [];
+	const result = await collectRenamePlan(
+		filePath,
+		oldName,
+		newName,
+		project,
+		verbose,
+		extraProjects,
+		force,
+		writes,
+		readSyntaxFile,
+		providedGraphs,
+		retainContents
+	);
+	return { result, writes };
+}
+
+async function collectRenamePlan(
+	filePath: string,
+	oldName: string,
+	newName: string,
+	project: ProjectConfig,
+	verbose: boolean,
+	extraProjects: ProjectConfig[],
+	force: boolean,
+	writes: RenamePlan["writes"],
+	readSyntaxFile: typeof getGraphSyntaxFile,
+	providedGraphs?: DependencyGraph[],
+	retainContents = true
+): Promise<RenameResult> {
 	const errors: { file: string; message: string }[] = [];
 	const edits: StructuredEdit[] = [];
+	const createEdit = retainContents
+		? createStructuredEdit
+		: createCompactStructuredEdit;
 	const updatedReferences: UpdatedReference[] = [];
 	const rt = getRuntime();
 
@@ -254,37 +365,43 @@ export async function renameSymbol(
 	if (verbose) {
 		logger.info("Building dependency graph...");
 	}
-	const graph = await buildDependencyGraph(project);
-	const extraPrograms: ts.Program[] = [];
+	const graph =
+		providedGraphs?.[0] ??
+		(await buildDependencyGraph(project, { retainProgram: false }));
+	const graphs = [graph];
 
 	// Find all files that import from this file
 	const references = findAllReferences(filePath, graph);
 
 	// Also find references from workspace packages
-	for (const extraProject of extraProjects) {
-		try {
-			const extraGraph = await buildDependencyGraph(extraProject);
-			extraPrograms.push(extraGraph.program ?? createProgram(extraProject));
-			const extraRefs = findAllReferences(filePath, extraGraph);
-			references.push(...extraRefs);
-		} catch {
-			// Skip packages that fail to build graph
+	const extraGraphs = providedGraphs?.slice(1) ?? [];
+	if (!providedGraphs) {
+		for (const extraProject of extraProjects) {
+			try {
+				extraGraphs.push(
+					await buildDependencyGraph(extraProject, { retainProgram: false })
+				);
+			} catch {
+				// Skip packages that fail to build graph
+			}
 		}
+	}
+	for (const extraGraph of extraGraphs) {
+		graphs.push(extraGraph);
+		references.push(...findAllReferences(filePath, extraGraph));
 	}
 	if (verbose) {
 		logger.info(`Found ${references.length} references to check`);
 	}
 
-	// Create program for parsing — reuse the graph's program when available
-	// (buildDependencyGraph sets it for project-loaded graphs; fallback covers
-	// test-constructed graphs that bypass it).
-	const program = graph.program ?? createProgram(project);
-	const programs = [program, ...extraPrograms];
+	// Only the declaration file needs symbol identity. Importers use syntax
+	// and resolved graph edges; type verification remains a separate compiler run.
+	const program = createFileScopeProgram(filePath, project.compilerOptions);
 	const sourceFileFromProjects = (
 		candidate: string
 	): ts.SourceFile | undefined => {
-		for (const candidateProgram of programs) {
-			const sourceFile = candidateProgram.getSourceFile(candidate);
+		for (const candidateGraph of graphs) {
+			const sourceFile = readSyntaxFile(candidateGraph, candidate);
 			if (sourceFile) {
 				return sourceFile;
 			}
@@ -318,39 +435,40 @@ export async function renameSymbol(
 	}
 
 	// Check for all conflicts (export name + binding) in a single call
-	const importingFiles: Array<{
+	function* importingFiles(): Generator<{
 		sourceFile: ts.SourceFile;
 		specifier: string;
 		bindings: Array<{ name: string; alias?: string }>;
-	}> = [];
-	for (const ref of references) {
-		if (normalizePath(ref.sourceFile) === normalizePath(filePath)) {
-			continue;
+	}> {
+		for (const ref of references) {
+			if (normalizePath(ref.sourceFile) === normalizePath(filePath)) {
+				continue;
+			}
+			if (!ref.bindings) {
+				continue;
+			}
+			const hasUnaliasedImport = ref.bindings.some(
+				(b) => b.name === oldName && !b.alias
+			);
+			if (!hasUnaliasedImport) {
+				continue;
+			}
+			const importingAst = sourceFileFromProjects(ref.sourceFile);
+			if (!importingAst) {
+				continue;
+			}
+			yield {
+				sourceFile: importingAst,
+				specifier: ref.specifier,
+				bindings: ref.bindings.map((b) => ({ name: b.name, alias: b.alias })),
+			};
 		}
-		if (!ref.bindings) {
-			continue;
-		}
-		const hasUnaliasedImport = ref.bindings.some(
-			(b) => b.name === oldName && !b.alias
-		);
-		if (!hasUnaliasedImport) {
-			continue;
-		}
-		const importingAst = sourceFileFromProjects(ref.sourceFile);
-		if (!importingAst) {
-			continue;
-		}
-		importingFiles.push({
-			sourceFile: importingAst,
-			specifier: ref.specifier,
-			bindings: ref.bindings.map((b) => ({ name: b.name, alias: b.alias })),
-		});
 	}
 
 	const conflictResult = checkAllConflicts({
 		exportNames: [newName],
 		targetSourceFile: sourceAst,
-		importingFiles,
+		importingFiles: importingFiles(),
 		skipImportedName: oldName,
 	});
 
@@ -399,20 +517,19 @@ export async function renameSymbol(
 		renamedSymbol: renamedSymbol ?? undefined,
 	});
 	if (sourceResult.changes.length > 0) {
-		const edit = createStructuredEdit(
-			filePath,
-			sourceAst.text,
-			sourceResult.newContent
-		);
+		const edit = createEdit(filePath, sourceAst.text, sourceResult.newContent);
 		if (edit) {
 			edits.push(edit);
 		}
 		updatedReferences.push(
 			...sourceResult.updates.map((u) => ({ ...u, file: filePath }))
 		);
-		if (!dryRun) {
-			await rt.fs.writeFile(filePath, sourceResult.newContent);
-		}
+		writes.push({
+			file: filePath,
+			content: retainContents ? sourceResult.newContent : undefined,
+			source: true,
+			errorIndex: errors.length,
+		});
 	}
 
 	// Group references by file
@@ -442,20 +559,19 @@ export async function renameSymbol(
 				newName
 			);
 			if (result.updates.length > 0) {
-				const edit = createStructuredEdit(
-					importingFile,
-					fileAst.text,
-					result.newContent
-				);
+				const edit = createEdit(importingFile, fileAst.text, result.newContent);
 				if (edit) {
 					edits.push(edit);
 				}
 				updatedReferences.push(
 					...result.updates.map((u) => ({ ...u, file: importingFile }))
 				);
-				if (!dryRun) {
-					await rt.fs.writeFile(importingFile, result.newContent);
-				}
+				writes.push({
+					file: importingFile,
+					content: retainContents ? result.newContent : undefined,
+					source: false,
+					errorIndex: errors.length,
+				});
 			}
 		} catch (error) {
 			errors.push({

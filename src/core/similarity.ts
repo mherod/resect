@@ -8,8 +8,14 @@ import type {
 	SimilarityGroup,
 	SimilarityReport,
 } from "../types/similar.ts";
-import type { FunctionScanJob, SimilarityGroupJob } from "./analysis-worker.ts";
+import { isAnalysisProcessHost } from "./analysis-context.ts";
+import type {
+	FunctionScanJob,
+	SimilarityGroupJob,
+	SimilarityReportJob,
+} from "./analysis-worker.ts";
 import {
+	ANALYSIS_WORKER_TIMEOUT_MS,
 	analysisWorkerCount,
 	partitionAnalysis,
 	runAnalysisJobs,
@@ -18,6 +24,7 @@ import { TS_JS_VUE_EXTENSIONS } from "./constants.ts";
 import { declarationScanCache } from "./declaration-scan-cache.ts";
 import {
 	createNonSourceClassifier,
+	type NonSourceFile,
 	nonSourceWarning,
 } from "./non-source-files.ts";
 import { snapshotMtimes } from "./path-utils.ts";
@@ -28,7 +35,10 @@ import {
 	jaccardSetSimilarity,
 	jaccardSortedTokens,
 } from "./similarity-algorithms.ts";
-import { collectFileFunctions } from "./similarity-collection.ts";
+import {
+	collectFileFunctions,
+	collectFunctionBatches,
+} from "./similarity-collection.ts";
 import { discoverProject } from "./tsconfig-discovery.ts";
 
 export { collectFunctions } from "./similarity-collection.ts";
@@ -40,6 +50,7 @@ export { collectFunctions } from "./similarity-collection.ts";
  */
 const UNKNOWN_CONTENT_EVIDENCE = 0.5;
 const PREPARATION_BATCH_SIZE = 512;
+const CANDIDATE_BATCH_SIZE = 2048;
 
 /** True for the declaration kinds whose content tokens come from a type body. */
 function isTypeOrInterface(kind: FunctionInfo["kind"]): boolean {
@@ -170,7 +181,8 @@ export interface SimilarityScanStats {
 function buildCandidateIndex(
 	bigramSets: Uint32Array[],
 	threshold: number,
-	names?: string[]
+	names?: string[],
+	onPreparationBatch?: () => void
 ): {
 	candidatesFor(i: number, assigned: ReadonlySet<number>): number[];
 } | null {
@@ -213,13 +225,17 @@ function buildCandidateIndex(
 		(a, b) => (frequencies.get(a) ?? 0) - (frequencies.get(b) ?? 0)
 	);
 	const ranks = new Map(orderedTokens.map((token, rank) => [token, rank]));
-	const sharedPrefixes = new WeakMap<Uint32Array, number[]>();
-	const prefixes = bigramSets.map((bigrams) => {
+	const sharedPrefixes = new WeakMap<Uint32Array, Uint32Array>();
+	const prefixes = bigramSets.map((bigrams, index) => {
+		if (index % CANDIDATE_BATCH_SIZE === 0) {
+			onPreparationBatch?.();
+		}
 		const cached = sharedPrefixes.get(bigrams);
 		if (cached) {
 			return cached;
 		}
-		const prefix = [...bigrams]
+		const prefix = bigrams
+			.slice()
 			.sort((a, b) => (ranks.get(a) ?? 0) - (ranks.get(b) ?? 0))
 			.slice(
 				0,
@@ -231,6 +247,9 @@ function buildCandidateIndex(
 	const invertedIndex = new Map<number, number[]>();
 	const emptySetIndices: number[] = [];
 	for (let index = 0; index < bigramSets.length; index++) {
+		if (index % CANDIDATE_BATCH_SIZE === 0) {
+			onPreparationBatch?.();
+		}
 		const bigrams = bigramSets[index];
 		if (!bigrams || bigrams.length === 0) {
 			emptySetIndices.push(index);
@@ -359,7 +378,8 @@ export function findSimilarGroups(
 		: buildCandidateIndex(
 				preBigramSets,
 				threshold,
-				sameNameOnly ? candidates.map((fn) => fn.name) : undefined
+				sameNameOnly ? candidates.map((fn) => fn.name) : undefined,
+				onPreparationBatch
 			);
 	onPreparationBatch?.();
 	const allIndicesAfter = (i: number): number[] => {
@@ -374,6 +394,9 @@ export function findSimilarGroups(
 	const assigned = new Set<number>();
 
 	for (let i = 0; i < candidates.length; i++) {
+		if (i % CANDIDATE_BATCH_SIZE === 0) {
+			onPreparationBatch?.();
+		}
 		if (assigned.has(i)) {
 			continue;
 		}
@@ -708,10 +731,10 @@ function resolveExplicitProjectRoot(
  *   TypeScript's `--project` contract. When omitted, the nearest tsconfig.json
  *   ancestor of `directory` is used.
  */
-export async function scanProjectFunctions(
+function discoverProjectFunctionFiles(
 	directory: string,
 	projectRoot?: string
-): Promise<{ functions: FunctionInfo[]; totalFiles: number }> {
+): string[] {
 	const absoluteDir = path.resolve(directory);
 	let rootDir = findProjectRoot(absoluteDir);
 	if (projectRoot) {
@@ -723,7 +746,18 @@ export async function scanProjectFunctions(
 		(f) => TS_JS_VUE_EXTENSIONS.test(f) && f.startsWith(absoluteDir)
 	);
 
-	return collectFunctionsFromFiles(allFiles, true);
+	return allFiles;
+}
+
+export async function scanProjectFunctions(
+	directory: string,
+	projectRoot?: string
+): Promise<{ functions: FunctionInfo[]; totalFiles: number }> {
+	const result = await collectFunctionsFromFiles(
+		discoverProjectFunctionFiles(directory, projectRoot),
+		true
+	);
+	return result;
 }
 
 /**
@@ -732,9 +766,8 @@ export async function scanProjectFunctions(
  * Each package's tsconfig is used for file discovery when available, falling
  * back to directory-based discovery.
  */
-export async function scanWorkspaceFunctions(directory: string): Promise<{
-	functions: FunctionInfo[];
-	totalFiles: number;
+async function discoverWorkspaceFunctionFiles(directory: string): Promise<{
+	files: string[];
 	packageCount: number;
 }> {
 	const { discoverWorkspace, filterToWorkspaceBoundary } = await import(
@@ -743,12 +776,12 @@ export async function scanWorkspaceFunctions(directory: string): Promise<{
 	const absDir = path.resolve(directory);
 	const workspace = await discoverWorkspace(absDir);
 	if (!workspace || workspace.packages.length === 0) {
-		return { functions: [], totalFiles: 0, packageCount: 0 };
+		return { files: [], packageCount: 0 };
 	}
 
 	// Guard: reject if directory is outside workspace root
 	if (filterToWorkspaceBoundary([absDir], workspace.root).length === 0) {
-		return { functions: [], totalFiles: 0, packageCount: 0 };
+		return { files: [], packageCount: 0 };
 	}
 
 	const { mapConcurrent } = await import("./concurrency.ts");
@@ -775,8 +808,18 @@ export async function scanWorkspaceFunctions(directory: string): Promise<{
 	}
 
 	const bounded = filterToWorkspaceBoundary(allFiles, workspace.root);
-	const result = await collectFunctionsFromFiles(bounded, true);
-	return Object.assign(result, { packageCount: workspace.packages.length });
+	return { files: bounded, packageCount: workspace.packages.length };
+}
+
+export async function scanWorkspaceFunctions(directory: string): Promise<{
+	functions: FunctionInfo[];
+	totalFiles: number;
+	packageCount: number;
+}> {
+	const { files, packageCount } =
+		await discoverWorkspaceFunctionFiles(directory);
+	const result = await collectFunctionsFromFiles(files, true);
+	return Object.assign(result, { packageCount });
 }
 
 /**
@@ -803,6 +846,129 @@ export interface SimilarityDiscoveryOptions extends SimilarityFilterOptions {
 export type AnalyzeSimilarityOptions = SimilarityDiscoveryOptions;
 
 const MIN_GROUPING_WORKER_DECLARATIONS = 2048;
+const MIN_REPORT_WORKER_FILES = 2048;
+
+export interface SimilarityFileOptions {
+	filterOptions: SimilarityFilterOptions;
+	excludedFiles: readonly NonSourceFile[];
+}
+
+export interface SimilarityFileReport {
+	report: SimilarityReport;
+	declarationFiles: string[];
+	excludedKey: string;
+}
+
+function filterClassifiedFunctions(
+	functions: FunctionInfo[],
+	excluded: readonly NonSourceFile[]
+) {
+	const declarationFiles = [...new Set(functions.map((fn) => fn.file))];
+	const byFile = new Map(excluded.map((entry) => [entry.file, entry]));
+	const relevant = declarationFiles
+		.map((file) => byFile.get(file))
+		.filter((entry): entry is NonSourceFile => entry !== undefined);
+	return {
+		functions: relevant.length
+			? functions.filter((fn) => !byFile.has(fn.file))
+			: functions,
+		declarationFiles,
+		excludedKey: JSON.stringify(relevant),
+		warnings: relevant.length ? [nonSourceWarning(relevant)] : [],
+	};
+}
+
+/** Collection and grouping share a dedicated VM; no declaration round trip. */
+export async function buildSimilarityFileReport(
+	files: string[],
+	options: SimilarityFileOptions,
+	reclaim: () => void
+): Promise<SimilarityFileReport> {
+	const functions = (await collectFunctionBatches(files, reclaim)).flat();
+	const filtered = filterClassifiedFunctions(functions, options.excludedFiles);
+	if (filtered.functions !== functions) {
+		functions.length = 0;
+	}
+	const totalFunctions = filtered.functions.length;
+	await new Promise<void>((resolve) => setTimeout(resolve, 0));
+	reclaim();
+	const groups = findSimilarGroups(
+		filtered.functions,
+		options.filterOptions,
+		reclaim
+	);
+	return {
+		report: {
+			groups,
+			totalFunctions,
+			totalFiles: files.length,
+			warnings: filtered.warnings,
+		},
+		declarationFiles: filtered.declarationFiles,
+		excludedKey: filtered.excludedKey,
+	};
+}
+
+async function analyzeSimilarityInWorker(
+	files: string[],
+	directory: string,
+	filterOptions: SimilarityFilterOptions,
+	includeIgnored: boolean
+): Promise<SimilarityReport> {
+	const key = JSON.stringify([
+		process.cwd(),
+		path.resolve(directory),
+		filterOptions,
+		includeIgnored,
+	]);
+	const cached = declarationScanCache.getReport(files, key);
+	if (cached) {
+		const excluded = includeIgnored
+			? []
+			: (await createNonSourceClassifier(cached.declarationFiles, directory))
+					.excluded;
+		if (JSON.stringify(excluded) === cached.excludedKey) {
+			return cached.report;
+		}
+	}
+	// Keep Git/process work in the request's cancellation scope on the caller.
+	const excludedFiles = includeIgnored
+		? []
+		: (await createNonSourceClassifier(files, directory)).excluded;
+	const mtimes = snapshotMtimes(files);
+	if (isAnalysisProcessHost() && typeof Bun !== "undefined") {
+		// This process already owns a disposable VM; avoid cloning the complete
+		// declaration/group report through another thread before formatting it.
+		const result = await buildSimilarityFileReport(
+			files,
+			{ filterOptions, excludedFiles },
+			() => {
+				Bun.gc(true);
+			}
+		);
+		declarationScanCache.setReport(files, mtimes, key, result);
+		return result.report;
+	}
+	const [result] = await runAnalysisJobs<
+		SimilarityReportJob,
+		SimilarityFileReport
+	>(
+		[
+			{
+				kind: "similarity-report",
+				files,
+				options: { filterOptions, excludedFiles },
+			},
+		],
+		// Preserve the combined allowance of the former two worker phases.
+		{ exclusive: true, timeoutMs: ANALYSIS_WORKER_TIMEOUT_MS * 2 }
+	);
+	if (!result) {
+		throw new Error("Similarity report worker returned no result");
+	}
+	declarationScanCache.setReport(files, mtimes, key, result);
+	return result.report;
+}
 
 async function groupCollectedFunctions(
 	functions: FunctionInfo[],
@@ -870,26 +1036,32 @@ export async function analyzeSimilarity(
 		functions: FunctionInfo[]
 	): Promise<{ functions: FunctionInfo[]; warnings: string[] }> => {
 		if (opts.includeIgnored) {
-			return { functions, warnings: [] };
+			return filterClassifiedFunctions(functions, []);
 		}
 		const classifier = await createNonSourceClassifier(
 			functions.map((fn) => fn.file),
 			dir
 		);
-		if (classifier.excluded.length === 0) {
-			return { functions, warnings: [] };
-		}
-		return {
-			functions: functions.filter((fn) => !classifier.classify(fn.file)),
-			warnings: [nonSourceWarning(classifier.excluded)],
-		};
+		return filterClassifiedFunctions(functions, classifier.excluded);
 	};
 
-	const scan = ws
-		? await scanWorkspaceFunctions(dir)
-		: await scanProjectFunctions(dir, pr);
+	const discovery = ws
+		? await discoverWorkspaceFunctionFiles(dir)
+		: { files: discoverProjectFunctionFiles(dir, pr) };
 	const packageInfo =
-		"packageCount" in scan ? { packageCount: scan.packageCount as number } : {};
+		"packageCount" in discovery ? { packageCount: discovery.packageCount } : {};
+	if (isMainThread && discovery.files.length >= MIN_REPORT_WORKER_FILES) {
+		return {
+			...(await analyzeSimilarityInWorker(
+				discovery.files,
+				dir,
+				filterOpts,
+				opts.includeIgnored ?? false
+			)),
+			...packageInfo,
+		};
+	}
+	const scan = await collectFunctionsFromFiles(discovery.files, true);
 	const groupKey = JSON.stringify([process.cwd(), filterOpts]);
 	const summary = declarationScanCache.getSummary(scan, groupKey);
 	if (summary) {

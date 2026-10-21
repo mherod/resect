@@ -13,6 +13,7 @@ import {
 	type DependencyGraph,
 	findAllReferences,
 	findBarrelReExports,
+	getGraphSyntaxFile,
 } from "../core/graph.ts";
 import {
 	applyDependencyAdditions,
@@ -20,7 +21,6 @@ import {
 	normalizeRestrictedDependencies,
 	serializePackageJson,
 } from "../core/package-deps.ts";
-import { createProgram } from "../core/project.ts";
 import { isCrossPackageMove, normalizePath } from "../core/resolver.ts";
 import { scanExports, scanModuleReferences } from "../core/scanner.ts";
 import { createSourceFileFromText } from "../core/source-file.ts";
@@ -49,6 +49,11 @@ import type { ProjectConfig } from "../types.ts";
 import type { CrossPackageDependencyPlan } from "./move-cross-package.ts";
 import { planCrossPackageDependencies } from "./move-cross-package.ts";
 import { updateInternalImports } from "./move-plan.ts";
+import {
+	createCompactStructuredEdit,
+	runMutationPlanning,
+	shouldUsePlanningWorker,
+} from "./mutation-planning.ts";
 import type { ExtensionPolicy, PreferStrategy } from "./option-domains.ts";
 
 /** Internal execution data; only the MoveResult is exposed by public adapters. */
@@ -63,6 +68,7 @@ export interface MoveModulePlan {
 	result: MoveResult;
 	movedContent?: string;
 	writes: PlannedMoveWrite[];
+	writeTargets?: Pick<PlannedMoveWrite, "file" | "kind">[];
 }
 
 /** Compare existing paths without the filesystem probe used by the applier. */
@@ -104,6 +110,8 @@ export interface MoveModuleContext {
 	readFile: (filePath: string) => Promise<string>;
 	exists: (filePath: string) => Promise<boolean>;
 	getSourceFile: (filePath: string) => Promise<ts.SourceFile | undefined>;
+	/** Discard completed independent importer contents while retaining edits. */
+	compactWrites?: boolean;
 }
 
 /** Compute the entire move before any source, importer, barrel or manifest is written. */
@@ -117,10 +125,28 @@ export async function planMoveModule(
 	transformRules: TransformRule[] = [],
 	prefer?: PreferStrategy,
 	extensions?: ExtensionPolicy,
-	context?: MoveModuleContext
+	context?: MoveModuleContext,
+	readSyntaxFile = getGraphSyntaxFile
 ): Promise<MoveModulePlan> {
+	if (!context && shouldUsePlanningWorker([project])) {
+		return runMutationPlanning({
+			kind: "move",
+			args: [
+				sourcePath,
+				targetPath,
+				project,
+				verbose,
+				workspace,
+				force,
+				transformRules,
+				prefer,
+				extensions,
+			],
+		});
+	}
 	const errors: MoveError[] = [];
 	const writes = new Map<string, PlannedMoveWrite>();
+	const compactEdits = new Map<string, StructuredEdit>();
 	const queueWrite = (
 		file: string,
 		before: string,
@@ -128,6 +154,20 @@ export async function planMoveModule(
 		kind: PlannedMoveWrite["kind"]
 	): void => {
 		const key = normalizePath(file);
+		// Only the destination barrel can receive another composed write later.
+		// Each other reference is visited once across the importer/barrel loops.
+		if (
+			context?.compactWrites &&
+			kind === "reference" &&
+			key !== destinationBarrelKey
+		) {
+			const edit = createCompactStructuredEdit(file, before, content);
+			if (edit) {
+				compactEdits.set(key, edit);
+			}
+			writes.set(key, { file, before: "", content: "", kind });
+			return;
+		}
 		writes.set(key, {
 			file,
 			before: writes.get(key)?.before ?? before,
@@ -207,12 +247,20 @@ export async function planMoveModule(
 	if (verbose) {
 		logger.info("Building dependency graph...");
 	}
-	const graph = context?.graph ?? (await buildDependencyGraph(project));
+	const graph =
+		context?.graph ??
+		(await buildDependencyGraph(project, { retainProgram: false }));
 
 	// Determine if this is a cross-package move early (needed for ref collection strategy)
 	const crossPackage = workspace
 		? isCrossPackageMove(sourcePath, targetPath, workspace)
 		: false;
+	const destinationBarrel = workspace
+		? findDestinationBarrel(targetPath, workspace)
+		: undefined;
+	const destinationBarrelKey = destinationBarrel
+		? normalizePath(destinationBarrel)
+		: undefined;
 
 	// Find all files that reference the source file.
 	// For cross-package moves: include indirect barrel consumers because the source
@@ -241,10 +289,10 @@ export async function planMoveModule(
 	}
 
 	// Also need to update imports WITHIN the file being moved.
-	// Reuse the graph's program when available — buildDependencyGraph always
-	// sets it for project-loaded graphs, so the fallback only fires for
-	// test-constructed graphs that bypass buildDependencyGraph.
-	const program = graph.program ?? createProgram(project);
+	// Syntax and barrel export names need no repository-wide type checker.
+	const program = {
+		getSourceFile: (file: string) => readSyntaxFile(graph, file),
+	};
 	const getSourceFile =
 		context?.getSourceFile ?? ((file) => program.getSourceFile(file));
 	const sourceAst = await getSourceFile(sourcePath);
@@ -271,11 +319,12 @@ export async function planMoveModule(
 			}
 		}
 
-		const importingFiles: Array<{
-			sourceFile: ts.SourceFile;
-			specifier: string;
-			bindings: Array<{ name: string; alias?: string }>;
-		}> = [];
+		const exportNames = movedFileExports.map((e) => e.name);
+		const conflictResult = checkAllConflicts({
+			exportNames,
+			targetSourceFile: targetBarrelAst,
+			importingFiles: [],
+		});
 		for (const ref of references) {
 			if (normalizePath(ref.sourceFile) === normalizePath(sourcePath)) {
 				continue;
@@ -287,21 +336,19 @@ export async function planMoveModule(
 			if (!importingAst) {
 				continue;
 			}
-			importingFiles.push({
-				sourceFile: importingAst,
-				specifier: ref.specifier,
-				bindings: ref.bindings.map((b) => ({
-					name: b.name,
-					alias: b.alias,
-				})),
+			const importerConflicts = checkAllConflicts({
+				exportNames,
+				importingFiles: [
+					{
+						sourceFile: importingAst,
+						specifier: ref.specifier,
+						bindings: ref.bindings,
+					},
+				],
 			});
+			conflictResult.conflicts.push(...importerConflicts.conflicts);
 		}
-
-		const conflictResult = checkAllConflicts({
-			exportNames: movedFileExports.map((e) => e.name),
-			targetSourceFile: targetBarrelAst,
-			importingFiles,
-		});
+		conflictResult.hasConflict = conflictResult.conflicts.length > 0;
 
 		if (conflictResult.hasConflict) {
 			// Enrich each conflict with a duplicate-similarity verdict. When the
@@ -604,14 +651,24 @@ export async function planMoveModule(
 		},
 		...writes.values(),
 	]) {
-		const edit = createStructuredEdit(write.file, write.before, write.content);
+		const edit =
+			compactEdits.get(normalizePath(write.file)) ??
+			createStructuredEdit(write.file, write.before, write.content);
 		if (edit) {
 			edits.push(edit);
 		}
 	}
 	return {
 		movedContent: finalizedMovedContent,
-		writes: [...writes.values()],
+		writes: context?.compactWrites ? [] : [...writes.values()],
+		...(context?.compactWrites
+			? {
+					writeTargets: [...writes.values()].map(({ file, kind }) => ({
+						file,
+						kind,
+					})),
+				}
+			: {}),
 		result: {
 			success: errors.every((error) => error.recoverable),
 			movedFile: { from: sourcePath, to: targetPath },

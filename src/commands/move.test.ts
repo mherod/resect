@@ -141,16 +141,12 @@ describe("moveModule", () => {
 		const { consumerPath, sourcePath, targetPath, tsconfigPath } =
 			await makeMutationCliProject({ operation: "move" });
 		const project = loadProject(tsconfigPath);
-		const graph = await buildDependencyGraph(project);
-		const program = graph.program;
-		if (!program) {
-			throw new Error("Expected the dependency graph to retain its TS program");
+		const graph = await buildDependencyGraph(project, { retainProgram: false });
+		const metadata = graph.sourceMetadata?.get(consumerPath);
+		if (!metadata) {
+			throw new Error("Expected source metadata for the importer");
 		}
-		const getSourceFile = program.getSourceFile.bind(program);
-		program.getSourceFile = (filePath) =>
-			path.resolve(filePath) === path.resolve(consumerPath)
-				? undefined
-				: getSourceFile(filePath);
+		graph.sourceMetadata?.delete(consumerPath);
 
 		try {
 			const result = await moveModule(
@@ -168,7 +164,7 @@ describe("moveModule", () => {
 				recoverable: true,
 			});
 		} finally {
-			program.getSourceFile = getSourceFile;
+			graph.sourceMetadata?.set(consumerPath, metadata);
 		}
 	});
 

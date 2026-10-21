@@ -1,7 +1,10 @@
 # VS Code performance work
 
 Fixture: microsoft/vscode at `225a0fa530ceff3013168a5c023290d0e8a4024b`.
-Read-only acceptance ceiling: 2,000,000,000 bytes of whole-process peak RSS.
+Acceptance ceiling: 2,000,000,000 bytes of peak RSS including the caller and
+all analysis workers, for read-only analysis and move/rename operations. The
+mutation ceiling was made explicit after Job 5 exposed a 6.96 GB rename preview;
+that result is rejected.
 The existing results and their limitations are in [project memory](../.memory/MEMORY.md).
 
 Each job follows baseline → focused change → correctness checks → three fresh
@@ -12,11 +15,11 @@ warnings, not just counts. Local verification and commits do not imply a push.
 
 | Order | Job | Work and completion evidence | Status |
 |---|---|---|---|
-| 1 | Regression fixture | Repository-owned harness, pinned revision/cleanliness checks, baseline comparison, time/RSS receipts, repeated and concurrent MCP requests, timeout/failure tests | Harness verified; memory regression detected |
+| 1 | Regression fixture | Repository-owned harness, pinned revision/cleanliness checks, baseline comparison, time/RSS receipts, repeated and concurrent MCP requests, timeout/failure tests | Complete: harness detected the original regression |
 | 2 | MCP costs | First bound retained memory in mixed sessions; then identical-input find discovery/search/serialization/transport attribution, measured fix or explanation, exact ordered report parity | Verified: mixed session 1.868 GB; exact reports |
 | 3 | Small edits | Edit/add/delete/rename/mixed changes; unchanged metadata reuse; config and dependency-resolution invalidation; fresh-process parity and reparse/latency receipts | Verified: 21 graph comparisons; mixed MCP 1.876 GB |
 | 4 | Unused evidence | Explain unknown entrypoints; improve only provable cases; seed known public/used/internal/dead exports; keep unresolved cases conservative | Verified: prior fields exact; mixed MCP 1.954 GB |
-| 5 | Mutation acceptance | Real heavily referenced move/rename, barrel/alias/config boundaries, conflicts, verification delta, rollback, time and RSS in disposable copies | Pending |
+| 5 | Mutation acceptance | Real heavily referenced move/rename, barrel/alias/config boundaries, conflicts, verification delta, rollback, time and RSS in disposable copies | Verified: mutation CLI 1.010 GB; applied MCP 1.776 GB; previews 1.417 GB |
 
 ## Execution plans
 
@@ -48,8 +51,9 @@ warnings, not just counts. Local verification and commits do not imply a push.
    with applied edits, and exercise a naming conflict. Keep verification enabled
    and record its baseline/delta, incomplete verification and rollback behavior.
    Save diffs before restoring only files owned by the experiment. Require both
-   copies clean afterward. Record mutation memory separately from the read-only
-   budget, and identify compiler subprocesses excluded from a process RSS figure.
+   copies clean afterward. Bound mutation memory to the same 2 GB ceiling;
+   preserve exact edits and verification rather than accepting the full-program
+   memory cost. Identify and measure compiler subprocesses separately as well.
 
 Failure paths are part of each job: wrong/dirty fixture, crashed or timed-out
 children, output drift, missing/deleted files, stale configuration, unresolved
@@ -168,3 +172,182 @@ peak: 1,306,083,328 bytes. CLI median seconds in audit/analyze/unused/find/simil
 order: 9.40/30.27/35.28/9.84/19.22. Evidence:
 `/private/tmp/resect-vscode-job4-all`, with the strict transition comparison in
 `/private/tmp/resect-job4-parity.log`.
+
+## Job 5 mutation acceptance
+
+The current ordinary 21-call applied MCP acceptance passes at
+**1,775,960,064 bytes**, conservatively combining the native parent peak
+(614,596,608) and largest overlapping worker peak (1,161,363,456). All reports,
+ordered edits, applied bytes and rollback checks pass; both copies finish clean.
+Evidence: `/private/tmp/resect-vscode-job5-candidate-applied-mcp`.
+Three complete similarity CLI runs also match every baseline group, score and
+member order: worst peak 1,101,348,864 bytes, median 18.01 seconds, 3,809 groups.
+Evidence: `/private/tmp/resect-vscode-job5-candidate-full-groups`.
+All 15 fresh mutation CLI cases pass, including exact complete baseline reports
+and applied bytes. Worst combined peak: **1,010,335,744 bytes**.
+
+| Case | Median seconds | Worst combined peak bytes |
+|---|---:|---:|
+| Rename preview | 15.28 | 905,379,840 |
+| Rename name conflict | 10.57 | 898,351,104 |
+| Rename with verification | 15.96 | 985,317,376 |
+| Move preview | 18.22 | 873,136,128 |
+| Move with verification | 18.39 | 1,010,335,744 |
+
+Evidence: `/private/tmp/resect-vscode-job5-process-cli-final`. Against the
+one-run corrected full-program baseline, rename/move previews use 87%/84% less
+memory and take approximately 5.2/7.9 seconds longer. This is the measured
+memory/time tradeoff, not a speed improvement.
+
+Standalone MCP now serializes these analysis jobs and releases their parser
+caches on process exit. Repeated audit/analyze/unused/find/similar calls in the
+applied session have medians of 9.47/29.66/35.53/9.82/18.14 seconds. Job 4's
+two warm repetitions took approximately 1.7/1.2/5.8/3.5/2.3 seconds. This is a
+substantial warm-call latency regression in exchange for bounded retention;
+ordinary library callers retain their existing graph and discovery caches.
+
+All 15 fresh read-only CLI and 20 MCP reports match Job 4's complete baseline.
+The read-only MCP session, including five simultaneous requests, passes at
+**1,330,790,400 bytes**. The last queued concurrent request completes in
+103.14 seconds; the memory budget serializes heavy analysis rather than
+retaining multiple parser processes. Evidence:
+`/private/tmp/resect-vscode-job5-process-analysis-final`.
+
+| CLI analysis | Median seconds | Worst native peak bytes |
+|---|---:|---:|
+| Audit | 9.47 | 865,632,256 |
+| Analyze | 29.69 | 1,099,087,872 |
+| Unused | 35.05 | 1,190,543,360 |
+| Find | 9.77 | 764,723,200 |
+| Similar | 17.31 | 1,014,513,664 |
+
+The separate 21-call mixed preview session also passes, at
+**1,417,379,840 bytes** (native parent 238,305,280 plus worker 1,179,074,560).
+Evidence: `/private/tmp/resect-vscode-job5-process-preview-final`.
+
+Large mutation planners build streamed graphs in disposable processes, retain
+local symbol identity, and return compact edits after clean exit. The caller
+owns application, verification and rollback. Similarity collects and groups
+in one VM, uses typed candidate prefixes, and reclaims temporary comparison
+buffers between bounded batches. These changes preserve every compared
+report, group, score, edit and applied byte.
+
+The full suite passed 1,330 tests with 4,664 assertions. The final bundled-path
+fix then passed 32 focused tests with 287 assertions, typecheck and ESLint.
+Library and standalone builds pass; source/built library/compiled CLI/compiled
+MCP reports match outside the checkout. Installed shims return version 1.8.2,
+and the installed MCP command answers a real `initialize` request on stdout.
+Memory measurements use the checkout-backed Bun shims; built entrypoints also
+receive functional acceptance. This is measured fixture acceptance, not an
+OS-enforced limit for arbitrary projects or compiler runs with dependencies.
+
+The rejected experiments below are historical evidence, not the current
+acceptance result.
+
+The first streamed implementation passed fresh CLI measurements below but
+failed the broader 21-call MCP session at **2,296,741,888 bytes**. A first
+disposable-planner experiment preserved every report but regressed to
+**3,837,673,472 bytes**. Neither is accepted. Both failed receipts remain in
+`/private/tmp/resect-vscode-job5-mixed-mcp` and
+`/private/tmp/resect-vscode-job5-worker-mcp`. Subsequent experiments reclaim
+importer syntax in worker-owned batches, reuse plain graphs, and transfer compact
+write targets with stale-span checks. Application and rollback stay in the caller.
+
+The stronger acceptance runs actual mutations in one initialized MCP server:
+three rounds of audit/analyze/unused/find/similar, rename with rollback, and a
+move followed by exact byte checks and restoration. All 21 reports remain exact.
+The memory gate rejected these earlier runs.
+
+| Experiment | Peak RSS bytes | Evidence directory suffix under `/private/tmp/resect-vscode-job5-` |
+|---|---:|---|
+| Bounded preview worker | 2,006,237,184 | bounded-profile |
+| Plain graph reuse, previews | 2,007,580,672 | graph-reuse-mcp |
+| Compact writes, actual applications | 2,506,964,992 | compact-applied-mcp |
+| Serialized similarity, actual applications | 2,930,360,320 | serialized-applied-mcp |
+| Serialized similarity, profiled repetition | 2,729,869,312 | serialized-applied-profile |
+| Worker cleanup after an event-loop turn | 2,359,001,088 | yield-applied-mcp |
+| Global 16-file parser batches | 2,356,805,632 | batch16-applied-mcp |
+| Background standalone MCP idle collection | 2,429,009,920 | idle-applied-mcp |
+| Compact plans during collection, detached edit spans | 2,785,230,848 | streamed-plan-applied-mcp |
+| Standalone host collection after worker teardown | 2,459,353,088 | host-cleanup-applied-mcp |
+| Binary worker results decoded after clean exit | 2,483,322,880 | binary-applied-mcp |
+| Graph cache capped at 16,384 source files | 2,610,511,872 | weighted-cache-applied-mcp |
+| Minimal mutation graph, partial diagnostic | 2,280,652,800 | planning-graph-applied-mcp |
+| Compressed snapshot, partial diagnostic | 2,021,261,312 | compressed-cache-applied-mcp |
+| Compressed snapshot plus host collection, partial diagnostic | 2,088,239,104 | compressed-cleanup-applied-mcp |
+| Single-worker similarity, partial diagnostic (seven calls) | 2,057,158,656 | single-worker-applied-mcp |
+| Low-level subprocesses, combined bound | 3,252,207,616 | process-applied-mcp |
+| Direct process jobs and unused-scope isolation, combined bound | 3,683,647,488 | direct-process-applied-mcp |
+| Complete tool isolation, partial diagnostic (14 calls), corrected bound | 2,045,411,328 | whole-job-applied-mcp |
+| Similarity directly inside tool process, partial diagnostic (14 calls) | 2,018,263,040 | direct-similar-applied-mcp |
+
+The serialized similarity experiment was removed because it regressed memory.
+The smaller global batch and background idle collection were also removed:
+neither established the cap, and smaller batches slowed cold analysis.
+Discarding independent importer contents during planning and detaching retained
+edit spans did not establish the session cap either. Standalone host collection
+after worker teardown and binary result transport also failed the cap; both
+were removed. Reducing graph cache coverage increased repeated `unused` time
+from roughly 6–7 to 34 seconds and still failed; the original cache policy was
+restored. Five controlled repeated graph scans with incremental semantic hashes
+peaked near 0.98 GB under both disposable and reused workers, so no persistent
+pool was introduced. Mutation-worker graph inputs are now narrowed to the
+source's imports and complete direct/transitive barrel consumers, preserving
+syntax coverage. Native current RSS is sampled separately
+because Bun's JavaScript memory report substantially understates process RSS.
+These failures are retained; none establishes the requested 2 GB acceptance.
+The final architecture isolates large jobs in subprocesses, and counts both parent
+and child native peaks. Parent-only RSS is never acceptance for that design.
+The complete-tool diagnostic's original post-exit receipt double-counted the
+largest child as the parent; native `RUSAGE_SELF` samples establish the corrected
+bound above, which still fails. A separate native counter probe also confirmed
+that Bun's JavaScript `process.resourceUsage()` understates Darwin memory.
+The harness now records the native parent peak at exit and keeps the raw
+subprocess receipt separately. The last 14-call diagnostic has that corrected
+receipt and still fails; none of the historical measurements in this table is accepted.
+
+The initial lifecycle rename preview peaked at 6,962,970,624 bytes; the user
+explicitly rejected a separate, higher mutation budget. Move, batch move and
+rename now use streamed graphs and parse affected files on demand. Rename
+retains local symbol identity in the declaration file. Importer conflict checks
+no longer accumulate ASTs. Existing nested local shadowing no longer falsely
+blocks a move, while rename retains capture checks. CLI and MCP move reports
+use the verified outcome rather than reporting successful application as a
+successful verified operation.
+
+The earlier streamed CLI implementation had three fresh sequential processes
+per case, with the same runtime/hardware and no competing benchmarks/builds/tests.
+These measurements predate disposable mutation workers and must be rerun for
+the final implementation:
+
+| Case | Earlier median seconds | Worst peak bytes | References |
+|---|---:|---:|---:|
+| Rename preview | 13.97 | 973,848,576 | 1,188 |
+| Rename name conflict | 10.50 | 891,453,440 | 0 |
+| Rename with verification | 14.36 | 979,845,120 | 1,188 |
+| Move preview | 15.56 | 1,193,508,864 | 4,219 |
+| Move with verification | 15.57 | 1,197,768,704 | 4,219 |
+
+The corrected full-program baseline had one run per case: rename preview
+10.08 seconds / 6.900 GB, and move preview 10.28 seconds / 5.512 GB. Earlier
+previews trade roughly 39–51% more time for 78–86% less memory. All 15 earlier
+reports preserve baseline fields and ordered edits, apart from the explicitly
+checked verification explanation below. The move's 4,213 edited files match
+the planned bytes. Rename rolls back on incomplete verification; plain move
+keeps its existing leave-applied policy until the harness restores it. Original
+and disposable checkouts finish clean.
+
+VS Code's seven explicit type dependencies are absent. The baseline full
+compiler aborted; a fresh TypeScript resolution preflight now identifies the
+missing inputs before allocating it, respecting explicit `typeRoots`. Both
+before and after checks remain **incomplete**, and an invocation probe confirms
+no full compiler starts in this fixture. This proves bounded planning and
+failure handling, not a successful VS Code typecheck or memory acceptance with
+dependencies installed. Small real compiler fixtures still cover successful
+verification, pre-existing diagnostics, new errors and rollback.
+
+Evidence: `/private/tmp/resect-vscode-job5-final`, compared against
+`/private/tmp/resect-vscode-job5-correctness-baseline`. The earlier diagnostic
+and first acceptance directories are retained, including the original failed
+baseline. The full suite passed 1,305 tests; focused `typeRoots` and verification
+checks passed after the final preflight adjustment.

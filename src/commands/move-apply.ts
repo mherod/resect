@@ -22,6 +22,11 @@ import {
 	type MoveModulePlan,
 	planMoveModule,
 } from "./move-module-plan.ts";
+import {
+	createPlannedWriteReader,
+	runMutationPlanning,
+	shouldUsePlanningWorker,
+} from "./mutation-planning.ts";
 import type { ExtensionPolicy, PreferStrategy } from "./option-domains.ts";
 
 export type { MoveModuleContext } from "./move-module-plan.ts";
@@ -40,7 +45,7 @@ export async function moveModule(
 	extensions?: ExtensionPolicy,
 	context?: MoveModuleContext
 ): Promise<MoveResult> {
-	const plan = await planMoveModule(
+	const args: Parameters<typeof planMoveModule> = [
 		sourcePath,
 		targetPath,
 		project,
@@ -50,15 +55,24 @@ export async function moveModule(
 		transformRules,
 		prefer,
 		extensions,
-		context
-	);
+		context,
+	];
+	const plan =
+		!context && shouldUsePlanningWorker([project])
+			? await runMutationPlanning({
+					kind: "move",
+					args,
+					previewOnly: dryRun,
+					compactWrites: !dryRun,
+				})
+			: await planMoveModule(...args);
 	if (dryRun || !plan.result.success) {
 		return plan.result;
 	}
 	return applyMoveModulePlan(plan, verbose);
 }
 
-/** Apply only precomputed contents. Safety, verification and rollback remain with runMutation. */
+/** Apply precomputed contents or edits. Safety, verification and rollback remain with runMutation. */
 export async function applyMoveModulePlan(
 	plan: MoveModulePlan,
 	verbose = false
@@ -67,15 +81,17 @@ export async function applyMoveModulePlan(
 		return plan.result;
 	}
 	const rt = getRuntime();
+	const readWrite = createPlannedWriteReader(plan.result.edits);
+	const writes = plan.writeTargets ?? plan.writes;
 	const { from, to } = plan.result.movedFile;
 	// Keep the move/staging phase causal; independent destination writes follow it.
 	// A source move failure still throws, as it did before the planner split.
 	await moveFileWithContent(rt, from, to, plan.movedContent);
 	const failures = await mapConcurrent(
-		plan.writes,
+		writes,
 		async (write): Promise<MoveError | undefined> => {
 			try {
-				await rt.fs.writeFile(write.file, write.content);
+				await rt.fs.writeFile(write.file, await readWrite(write));
 				if (verbose && write.kind === "destination-barrel") {
 					logger.info(`Added export to destination barrel: ${write.file}`);
 				}
@@ -102,7 +118,7 @@ export async function applyMoveModulePlan(
 	for (const [index, failure] of failures.entries()) {
 		if (failure) {
 			errors.push(failure);
-			const write = plan.writes[index];
+			const write = writes[index];
 			if (write?.kind === "dependencies") {
 				failedManifests.add(write.file);
 			}

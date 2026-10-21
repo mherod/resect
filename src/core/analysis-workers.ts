@@ -1,6 +1,10 @@
 import { availableParallelism } from "node:os";
-import { isMainThread, Worker } from "node:worker_threads";
+import { Worker } from "node:worker_threads";
+import { effectiveCancellationSignal } from "../runtime/cancellation.ts";
 import type { ProgressCallback } from "../types/progress.ts";
+import { isAnalysisWorkerContext } from "./analysis-context.ts";
+import { resolveAnalysisEntrypoint } from "./analysis-entrypoint.ts";
+import { executeAnalysisProcess } from "./analysis-process.ts";
 
 export const ANALYSIS_BATCH_SIZE = 64;
 
@@ -28,21 +32,20 @@ function isAnalysisProgress(message: unknown): message is AnalysisProgress {
 const MAX_ANALYSIS_WORKERS = 2;
 // Parsing small projects is cheaper than starting TypeScript in another VM.
 const MIN_FILES_PER_WORKER = 1024;
-const WORKER_TIMEOUT_MS = 120_000;
+export const ANALYSIS_WORKER_TIMEOUT_MS = 120_000;
 let activeSlots = 0;
 const waiting: Array<{ slots: number; resolve: () => void }> = [];
 
-// Source modules live in core/; bundled entrypoints and shared chunks live at
-// the output root. Both library and executable builds include this entrypoint.
-export const analysisWorkerUrl = new URL(
-	import.meta.url.endsWith(".ts")
-		? "./analysis-worker.ts"
-		: "./core/analysis-worker.js",
+// Both library and executable builds include this worker asset. Nested
+// compiled entrypoints resolve it from the same output root as shared chunks.
+export const analysisWorkerUrl = resolveAnalysisEntrypoint(
+	"./analysis-worker.ts",
+	"./core/analysis-worker.js",
 	import.meta.url
 );
 
 export function analysisWorkerCount(fileCount: number): number {
-	if (!isMainThread) {
+	if (isAnalysisWorkerContext()) {
 		return 0;
 	}
 	const count = Math.min(
@@ -62,16 +65,44 @@ export function partitionAnalysis<T>(items: T[], count: number): T[][] {
 	return batches;
 }
 
-async function acquireWorker(slots: number): Promise<void> {
+async function acquireWorker(
+	slots: number,
+	signal: AbortSignal
+): Promise<void> {
+	if (signal.aborted) {
+		throw new Error("Analysis worker cancelled", { cause: signal.reason });
+	}
 	if (waiting.length === 0 && activeSlots + slots <= MAX_ANALYSIS_WORKERS) {
 		activeSlots += slots;
 		return;
 	}
-	await new Promise<void>((resolve) => waiting.push({ slots, resolve }));
+	await new Promise<void>((resolve, reject) => {
+		const entry = {
+			slots,
+			resolve: () => {
+				signal.removeEventListener("abort", abort);
+				resolve();
+			},
+		};
+		const abort = () => {
+			const index = waiting.indexOf(entry);
+			if (index >= 0) {
+				waiting.splice(index, 1);
+			}
+			reject(new Error("Analysis worker cancelled", { cause: signal.reason }));
+			dispatchWaitingWorkers();
+		};
+		signal.addEventListener("abort", abort, { once: true });
+		waiting.push(entry);
+	});
 }
 
 function releaseWorker(slots: number): void {
 	activeSlots -= slots;
+	dispatchWaitingWorkers();
+}
+
+function dispatchWaitingWorkers(): void {
 	while (waiting[0] && activeSlots + waiting[0].slots <= MAX_ANALYSIS_WORKERS) {
 		const next = waiting.shift();
 		if (next) {
@@ -81,16 +112,14 @@ function releaseWorker(slots: number): void {
 	}
 }
 
-async function runWorkerJob<Input, Output>(
+async function executeWorkerJob<Input, Output>(
 	job: Input,
 	url: URL,
 	signal: AbortSignal,
 	timeoutMs: number,
-	slots: number,
 	onProgress?: ProgressCallback,
 	onDispatched?: (job: Input) => void
 ): Promise<Output> {
-	await acquireWorker(slots);
 	let worker: Worker | undefined;
 	let cleanupRequest: (() => void) | undefined;
 	try {
@@ -157,6 +186,31 @@ async function runWorkerJob<Input, Output>(
 			await worker.terminate();
 			worker.removeAllListeners();
 		}
+	}
+}
+
+async function runWorkerJob<Input, Output>(
+	job: Input,
+	url: URL,
+	signal: AbortSignal,
+	timeoutMs: number,
+	slots: number,
+	isolateProcess: boolean,
+	onProgress?: ProgressCallback,
+	onDispatched?: (job: Input) => void
+): Promise<Output> {
+	await acquireWorker(slots, signal);
+	try {
+		const execute = isolateProcess ? executeAnalysisProcess : executeWorkerJob;
+		return await execute<Input, Output>(
+			job,
+			url,
+			signal,
+			timeoutMs,
+			onProgress,
+			onDispatched
+		);
+	} finally {
 		releaseWorker(slots);
 	}
 }
@@ -169,19 +223,25 @@ export async function runAnalysisJobs<Input, Output>(
 		timeoutMs?: number;
 		onProgress?: ProgressCallback;
 		exclusive?: boolean;
+		/** Release the native parser heap with the process; always reserves both slots. */
+		isolateProcess?: boolean;
 		/** Called after the input has been copied into the worker. */
 		onDispatched?: (job: Input) => void;
 	} = {}
 ): Promise<Output[]> {
 	const controller = new AbortController();
+	const signal =
+		effectiveCancellationSignal(controller.signal) ?? controller.signal;
+	const isolateProcess = options.isolateProcess ?? false;
 	const pending = jobs.map(async (job) => {
 		try {
 			return await runWorkerJob<Input, Output>(
 				job,
 				options.url ?? analysisWorkerUrl,
-				controller.signal,
-				options.timeoutMs ?? WORKER_TIMEOUT_MS,
-				options.exclusive ? MAX_ANALYSIS_WORKERS : 1,
+				signal,
+				options.timeoutMs ?? ANALYSIS_WORKER_TIMEOUT_MS,
+				options.exclusive || isolateProcess ? MAX_ANALYSIS_WORKERS : 1,
+				isolateProcess,
 				options.onProgress,
 				options.onDispatched
 			);

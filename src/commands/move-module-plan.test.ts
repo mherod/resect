@@ -13,6 +13,7 @@ import {
 	rollbackTransformMove,
 } from "./move-apply.ts";
 import { planMoveModule } from "./move-module-plan.ts";
+import { runMutationPlanning } from "./mutation-planning.ts";
 
 afterEach(() => {
 	setRuntime(bunRuntime);
@@ -154,7 +155,10 @@ test("planning performs no writes and applying consumes precomputed contents", a
 	);
 });
 
-test("mixed barrel removal, destination addition and manifest edits match the preview", async () => {
+test.each([
+	false,
+	true,
+])("mixed barrel removal, destination addition and manifest edits match the preview (compact: %s)", async (compact) => {
 	const { source, target, project, workspace, barrel, manifest, dir, files } =
 		await workspaceFixture();
 	const preview = await moveModule(
@@ -179,14 +183,15 @@ test("mixed barrel removal, destination addition and manifest edits match the pr
 			await Bun.file(edit.file === target ? source : edit.file).text()
 		);
 	}
-	const result = await moveModule(
-		source,
-		target,
-		project,
-		false,
-		false,
-		workspace
-	);
+	const plan = compact
+		? await runMutationPlanning({
+				kind: "move",
+				args: [source, target, project, false, workspace],
+				compactWrites: true,
+			})
+		: await planMoveModule(source, target, project, false, workspace);
+	expect(plan.result).toEqual(preview);
+	const result = await applyMoveModulePlan(plan);
 	expect(result).toEqual(preview);
 	for (const [file, original] of originals) {
 		expect(await Bun.file(file).text()).toBe(
@@ -365,10 +370,19 @@ test("independent writes are bounded and drained even after a partial failure", 
 	expect(await Bun.file(failedFile).text()).toBe(failedFileBefore);
 });
 
-test("failed manifest writes remain fatal without claiming dependency additions", async () => {
+test.each([
+	false,
+	true,
+])("failed manifest writes remain fatal without claiming dependency additions (compact=%s)", async (compact) => {
 	const { source, target, project, workspace, manifest, barrel } =
 		await workspaceFixture();
-	const plan = await planMoveModule(source, target, project, false, workspace);
+	const plan = compact
+		? await runMutationPlanning({
+				kind: "move",
+				args: [source, target, project, false, workspace],
+				compactWrites: true,
+			})
+		: await planMoveModule(source, target, project, false, workspace);
 	const before = await Bun.file(manifest).text();
 	setRuntime({
 		...bunRuntime,

@@ -1,9 +1,36 @@
 import { describe, expect, test } from "bun:test";
 import {
+	checkAllConflicts,
 	checkBindingConflicts,
 	findLocalBinding,
 } from "./conflict-detection.ts";
 import { createSourceFileFromText } from "./source-file.ts";
+
+test("moving an import preserves nested shadowing while rename still detects capture", () => {
+	const sourceFile = createSourceFileFromText(
+		"consumer.ts",
+		[
+			'import { dispose } from "./lifecycle";',
+			"class Store { add() { const dispose = () => {}; dispose(); } }",
+			"function another() { function dispose() {} dispose(); }",
+			"{ const dispose = 1; console.log(dispose); }",
+		].join("\n")
+	);
+	const importingFiles = [
+		{ sourceFile, specifier: "./lifecycle", bindings: [{ name: "dispose" }] },
+	];
+	expect(checkBindingConflicts(importingFiles, new Set(["dispose"]))).toEqual({
+		hasConflict: false,
+		conflicts: [],
+	});
+	expect(
+		checkAllConflicts({
+			importingFiles,
+			exportNames: ["dispose"],
+			skipImportedName: "dispose",
+		}).hasConflict
+	).toBe(true);
+});
 
 describe("findLocalBinding", () => {
 	test("returns accurate line and column for variable declaration", () => {

@@ -55,9 +55,9 @@
   ],
   "scripts": {
     "dev": "bun run src/cli.ts",
-    "build": "bun build src/cli.ts src/core/analysis-worker.ts --compile --outfile bin/resect-bin && bun build src/mcp-server.ts src/core/analysis-worker.ts --compile --outfile bin/resect-mcp-bin",
-    "build:mcp": "bun build src/mcp-server.ts src/core/analysis-worker.ts --compile --outfile bin/resect-mcp-bin",
-    "build:lib": "tsc -p tsconfig.build.json && bun build src/index.ts src/core/analysis-worker.ts src/runtime/bun.ts src/runtime/node.ts src/runtime/index.ts --outdir dist --target bun --format esm --external typescript --splitting",
+    "build": "bun build src/cli.ts src/core/analysis-worker.ts src/commands/mutation-worker.ts --compile --outfile bin/resect-bin && bun build src/mcp-server.ts src/core/analysis-worker.ts src/commands/mutation-worker.ts src/mcp-tools/read-only-worker.ts --compile --outfile bin/resect-mcp-bin",
+    "build:mcp": "bun build src/mcp-server.ts src/core/analysis-worker.ts src/commands/mutation-worker.ts src/mcp-tools/read-only-worker.ts --compile --outfile bin/resect-mcp-bin",
+    "build:lib": "tsc -p tsconfig.build.json && bun build src/index.ts src/core/analysis-worker.ts src/core/analysis-process-host.ts src/commands/mutation-worker.ts src/runtime/bun.ts src/runtime/node.ts src/runtime/index.ts --outdir dist --target bun --format esm --external typescript --splitting",
     "test": "bun test --timeout=20000",
     "lint": "pnpm exec biome check --write . && pnpm run lint:eslint",
     "lint:eslint": "eslint src --max-warnings 0",

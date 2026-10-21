@@ -1,6 +1,10 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
 import {
+	isAnalysisProcessHost,
+	isAnalysisWorkerContext,
+} from "../core/analysis-context.ts";
+import {
 	type ExportLivenessCandidate,
 	evaluateExportLiveness,
 } from "../core/export-liveness.ts";
@@ -309,7 +313,15 @@ export async function findUnusedExportsFromGraphs(
 	const ignorePattern = options?.ignore ? new Bun.Glob(options.ignore) : null;
 	const skippedFiles = new Set(graph.skippedFiles);
 	const prepareCandidates = function* (): Generator<ExportLivenessCandidate> {
+		let visited = 0;
 		for (const file of candidateFiles) {
+			if (
+				(isAnalysisWorkerContext() || isAnalysisProcessHost()) &&
+				visited++ % 16 === 0 &&
+				typeof Bun !== "undefined"
+			) {
+				Bun.gc(true);
+			}
 			if (
 				ignorePattern?.match(file) ||
 				ignorePattern?.match(path.basename(file))

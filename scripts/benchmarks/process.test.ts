@@ -2,10 +2,53 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { measureProcess, outputHash, startMcp } from "./process.ts";
+import {
+	measureProcess,
+	outputHash,
+	processMemoryReceipt,
+	startMcp,
+} from "./process.ts";
 import { toolText, validateFixture } from "./vscode.ts";
 
 const sessions: ReturnType<typeof startMcp>[] = [];
+
+test("memory receipts include child peaks conservatively and reject missing evidence", async () => {
+	const output = await mkdtemp(path.join(tmpdir(), "resect-memory-receipt-"));
+	const stderr = path.join(output, "stderr");
+	const records = [
+		{ startedAt: 1, finishedAt: 3, peakRssBytes: 400 },
+		{ startedAt: 2, finishedAt: 4, peakRssBytes: 300 },
+		{ startedAt: 5, finishedAt: 6, peakRssBytes: 600 },
+	];
+	await Bun.write(
+		stderr,
+		`${JSON.stringify({ benchmarkParentMemory: true, peakRssBytes: 500 })}\n` +
+			records
+				.map((record) =>
+					JSON.stringify({ benchmarkWorkerMemory: true, ...record })
+				)
+				.join("\n")
+	);
+	expect(await processMemoryReceipt(900, stderr)).toEqual({
+		reportedPeakRssBytes: 900,
+		parentPeakRssBytes: 500,
+		workerPeakRssBytes: 700,
+		workerCount: 3,
+		peakRssBytes: 1200,
+	});
+	await Bun.write(
+		stderr,
+		JSON.stringify({
+			benchmarkWorkerMemory: true,
+			startedAt: 1,
+			finishedAt: 2,
+			peakRssBytes: null,
+		})
+	);
+	expect((await processMemoryReceipt(500, stderr)).peakRssBytes).toBeNull();
+	await Bun.write(stderr, "");
+	expect((await processMemoryReceipt(900, stderr)).peakRssBytes).toBeNull();
+});
 afterEach(async () => {
 	for (const session of sessions.splice(0)) {
 		await session.close();

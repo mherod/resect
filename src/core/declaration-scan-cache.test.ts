@@ -96,3 +96,80 @@ test("edits, additions, deletions and edits racing collection invalidate the sca
 		await cleanup(dir);
 	}
 });
+
+test("lazy snapshots retain exact Unicode after eviction and keep the decoded-size budget", async () => {
+	const dir = await makeFixture("declaration-cache-unicode", {
+		"value.ts":
+			"export function value(input: number) { return input + input * 2; }",
+	});
+	try {
+		const file = path.join(dir, "value.ts");
+		const functions = await collectFileFunctions(file);
+		const declaration = functions[0];
+		if (!declaration) {
+			throw new Error("Expected a declaration");
+		}
+		declaration.normalizedBody = "\ud800😀\r\n".repeat(4096);
+		const result = { functions, totalFiles: 1 };
+		const expected = structuredClone(result);
+		const cache = new DeclarationScanCache();
+		cache.set([file], snapshotMtimes([file]), result);
+		const lazy = cache.get([file]);
+		expect(lazy).toBeDefined();
+		expect(cache.get([])).toBeUndefined();
+		declaration.normalizedBody = "changed by caller";
+		expect(lazy?.functions).toEqual(expected.functions);
+		const bounded = new DeclarationScanCache(4096);
+		bounded.set([file], snapshotMtimes([file]), expected);
+		expect(bounded.get([file])).toBeUndefined();
+	} finally {
+		await cleanup(dir);
+	}
+});
+
+test("reports and declarations share one immutable budget with membership, option and mtime invalidation", async () => {
+	const dir = await makeFixture("report-cache", {
+		"a.ts":
+			"export function value(input: number) { return input + input * 2; }",
+	});
+	try {
+		const file = path.join(dir, "a.ts");
+		const files = [file];
+		const functions = await collectFileFunctions(file);
+		const scan = { functions, totalFiles: 1 };
+		const report = {
+			groups: [{ bucket: "exact" as const, score: 1, functions }],
+			totalFiles: 1,
+			totalFunctions: functions.length,
+			warnings: [],
+		};
+		const result = { report, declarationFiles: files, excludedKey: "[]" };
+		const before = snapshotMtimes(files);
+		const cache = new DeclarationScanCache();
+		cache.set(files, before, scan);
+		cache.setReport(files, before, "one", result);
+		expect(cache.get(files)).toBeUndefined();
+		const warm = cache.getReport(files, "one");
+		expect(warm?.report).toEqual(report);
+		warm?.report.groups[0]?.functions.splice(0);
+		warm?.declarationFiles.splice(0);
+		expect(cache.getReport(files, "one")?.report).toEqual(report);
+		expect(cache.getReport(files, "one")?.declarationFiles).toEqual(files);
+		expect(cache.getReport(files, "two")).toBeUndefined();
+		cache.setReport(files, before, "one", result);
+		expect(cache.getReport([...files, "missing.ts"], "one")).toBeUndefined();
+		cache.setReport(files, before, "one", result);
+		cache.set(files, before, scan);
+		expect(cache.getReport(files, "one")).toBeUndefined();
+		cache.setReport(files, before, "one", result);
+		await Bun.write(file, "export const changed = 2;");
+		const later = new Date(Date.now() + 2000);
+		await utimes(file, later, later);
+		expect(cache.getReport(files, "one")).toBeUndefined();
+		const tiny = new DeclarationScanCache(1);
+		tiny.setReport(files, before, "one", result);
+		expect(tiny.getReport(files, "one")).toBeUndefined();
+	} finally {
+		await cleanup(dir);
+	}
+});

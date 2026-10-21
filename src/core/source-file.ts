@@ -2,7 +2,8 @@ import ts from "typescript";
 import { extractVueScript } from "./vue-sfc.ts";
 
 /** Bind one file's lexical scopes without loading its imports or ambient libraries.
- * This is for local symbol identity, never for type checking or mutation planning. */
+ * This is for local symbol identity, including rename within the declaration
+ * file. Cross-file resolution and type verification must use their own seams. */
 export function createFileScopeProgram(
 	filePath: string,
 	compilerOptions: ts.CompilerOptions

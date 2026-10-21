@@ -202,7 +202,7 @@ export async function moveTool(args: {
 	if (outcome.blocked || !outcome.result) {
 		return errorText(WORKTREE_BLOCKED_MESSAGE);
 	}
-	const { delta, journalEntry, rolledBack: transformRolledBack } = outcome;
+	const { delta, journalEntry, rolledBack, success } = outcome;
 	const result = outcome.result;
 
 	const root = project.rootDir;
@@ -210,7 +210,9 @@ export async function moveTool(args: {
 		dryRun: args.dryRun,
 		force: args.force,
 		worktreeDirty: outcome.dirty,
-		success: result.success,
+		success,
+		rolledBack,
+		worktreeDirtyRollbackDisabled: outcome.worktreeDirtyRollbackDisabled,
 		movedFile: {
 			from: path.relative(root, result.movedFile.from),
 			to: path.relative(root, result.movedFile.to),
@@ -251,7 +253,7 @@ export async function moveTool(args: {
 			message: e.message,
 			recoverable: e.recoverable,
 		})),
-		transformRolledBack,
+		transformRolledBack: rolledBack,
 		typecheck: delta,
 		journalEntryId: journalEntry?.id,
 	});
