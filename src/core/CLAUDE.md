@@ -337,13 +337,14 @@ before using cached groups. Return independent records to callers, and decode
 declarations lazily when a cached report already suffices. Cache ownership uses
 opaque tokens so a caller retaining an old array cannot pin an evicted snapshot.
 
-The standalone MCP server isolates audit/analyze/unused/find/similar calls in
-disposable processes. Large mutation planners build their own graphs inside a
-disposable process. Transfer only completed reports and edits to the host;
-copying entire graphs between processes retains large native allocations.
-Reserve both scheduler slots for each process job, and preserve the thread
-path for ordinary library analysis. Keep imported tool handlers inert unless
-the standalone server explicitly enables isolation.
+Only projects at `project-scale.ts`'s 2,048-source-file threshold use
+disposable processes: standalone MCP audit/analyze/unused/find/similar calls,
+sized from cached `discoverProject()` ownership, and mutation planners. Smaller
+projects stay warm; never add a second cutoff. Transfer only completed
+reports and edits; copying graphs between processes retains native
+allocations. Reserve both scheduler slots per process job. Keep the thread path
+for library analysis; imported tool handlers stay inert unless the standalone
+server enables isolation.
 
 Write a process result to its private temporary directory and decode only after
 clean child exit. A posted result followed by failure must reject. Acknowledge

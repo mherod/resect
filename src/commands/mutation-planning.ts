@@ -4,6 +4,7 @@ import { isAnalysisWorkerContext } from "../core/analysis-context.ts";
 import { resolveAnalysisEntrypoint } from "../core/analysis-entrypoint.ts";
 import { runAnalysisJobs } from "../core/analysis-workers.ts";
 import { buildDependencyGraph, type DependencyGraph } from "../core/graph.ts";
+import { isLargeProject } from "../core/project-scale.ts";
 import {
 	applyStructuredEdits,
 	createStructuredEdit,
@@ -15,7 +16,6 @@ import type { MoveModulePlan, planMoveModule } from "./move-module-plan.ts";
 import { createMutationPlanningGraph } from "./mutation-graph.ts";
 import type { planRenameSymbol, RenamePlan } from "./rename.ts";
 
-const MIN_PLANNING_WORKER_FILES = 128;
 const mutationWorkerUrl = resolveAnalysisEntrypoint(
 	"./mutation-worker.ts",
 	"./commands/mutation-worker.js",
@@ -87,9 +87,7 @@ export function shouldUsePlanningWorker(projects: ProjectConfig[]): boolean {
 		!isAnalysisWorkerContext() &&
 		typeof Bun !== "undefined" &&
 		getRuntime() === bunRuntime &&
-		projects.some(
-			(project) => project.files.length >= MIN_PLANNING_WORKER_FILES
-		)
+		projects.some((project) => isLargeProject(project.files.length))
 	);
 }
 

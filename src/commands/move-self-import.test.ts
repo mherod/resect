@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import path from "node:path";
+import { setLargeProjectSourceFiles } from "../core/project-scale.ts";
 import { cleanup, makeFixture } from "./__test-helpers.ts";
 import { moveInFixture } from "./move-test-helpers.ts";
 
@@ -69,11 +70,13 @@ describe("move intra-package self-import rewrite (#121)", () => {
 				`export const filler${index} = ${index};`;
 		}
 		const dir = await fixture("barrel-outside-include", files);
+		// Filler files stand in for a large project on the planning-worker path.
+		setLargeProjectSourceFiles(fillers || undefined);
 		const result = await moveInFixture(
 			dir,
 			"apps/web/lib/analytics/base-provider.ts",
 			"packages/web-analytics/src/base-provider.ts"
-		);
+		).finally(() => setLargeProjectSourceFiles(undefined));
 		expect(result.success).toBe(true);
 		const moved = await Bun.file(
 			path.join(dir, "packages/web-analytics/src/base-provider.ts")

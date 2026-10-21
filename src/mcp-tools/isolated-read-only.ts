@@ -1,6 +1,10 @@
+import path from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { resolveAnalysisEntrypoint } from "../core/analysis-entrypoint.ts";
 import { runAnalysisJobs } from "../core/analysis-workers.ts";
+import { resolveTsConfig } from "../core/project.ts";
+import { isLargeProject } from "../core/project-scale.ts";
+import { discoverProject } from "../core/tsconfig-discovery.ts";
 import { bunRuntime, getRuntime } from "../runtime/index.ts";
 import type {
 	analyzeTool,
@@ -24,8 +28,48 @@ export function setIsolatedReadOnlyTools(value: boolean): void {
 	enabled = value;
 }
 
-export function shouldIsolateReadOnlyTool(): boolean {
-	return enabled && typeof Bun !== "undefined" && getRuntime() === bunRuntime;
+/**
+ * Only large projects pay for a disposable process; smaller ones keep the
+ * server's warm caches. Discovery is cached and reused by the in-process
+ * path, so sizing the project does not add a second scan.
+ */
+export function shouldIsolateReadOnlyTool(job: ReadOnlyWorkerJob): boolean {
+	return (
+		enabled &&
+		typeof Bun !== "undefined" &&
+		getRuntime() === bunRuntime &&
+		isLargeProject(countJobSourceFiles(job))
+	);
+}
+
+function jobProjectDirectory(job: ReadOnlyWorkerJob): string | undefined {
+	switch (job.kind) {
+		case "analyze": {
+			const [file, options] = job.args;
+			const tsconfig = resolveTsConfig(
+				options?.project,
+				path.dirname(path.resolve(file))
+			);
+			return tsconfig ? path.dirname(tsconfig) : undefined;
+		}
+		case "find":
+			return job.args[1];
+		default:
+			return job.args[0];
+	}
+}
+
+function countJobSourceFiles(job: ReadOnlyWorkerJob): number {
+	const directory = jobProjectDirectory(job);
+	if (!directory) {
+		return 0;
+	}
+	try {
+		return discoverProject(directory).fileOwnership.size;
+	} catch {
+		// The in-process tool reports the same discovery failure.
+		return 0;
+	}
 }
 
 export async function runIsolatedReadOnlyTool(

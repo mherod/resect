@@ -49,6 +49,7 @@ import { discoverWorkspace } from "../core/workspace.ts";
 import type { FilenameCasing } from "../types/naming.ts";
 import type { TidyFixCategory } from "../types/tidy.ts";
 import {
+	type ReadOnlyWorkerJob,
 	runIsolatedReadOnlyTool,
 	shouldIsolateReadOnlyTool,
 } from "./isolated-read-only.ts";
@@ -65,11 +66,9 @@ export async function findTool(
 	project: string,
 	type: "file" | "export" | "all" = "all"
 ): Promise<CallToolResult> {
-	if (shouldIsolateReadOnlyTool()) {
-		return runIsolatedReadOnlyTool({
-			kind: "find",
-			args: [query, project, type],
-		});
+	const job: ReadOnlyWorkerJob = { kind: "find", args: [query, project, type] };
+	if (shouldIsolateReadOnlyTool(job)) {
+		return runIsolatedReadOnlyTool(job);
 	}
 	const absoluteProject = path.resolve(project);
 	const discovery = discoverProject(absoluteProject);
@@ -92,8 +91,9 @@ export async function analyzeTool(
 		entrypointGlobs?: string | string[];
 	} = {}
 ): Promise<CallToolResult> {
-	if (shouldIsolateReadOnlyTool()) {
-		return runIsolatedReadOnlyTool({ kind: "analyze", args: [file, options] });
+	const job: ReadOnlyWorkerJob = { kind: "analyze", args: [file, options] };
+	if (shouldIsolateReadOnlyTool(job)) {
+		return runIsolatedReadOnlyTool(job);
 	}
 	const absolutePath = path.resolve(file);
 	const tsconfigPath = resolveTsConfig(
@@ -245,11 +245,9 @@ export async function auditTool(
 		workspace?: boolean;
 	}
 ): Promise<CallToolResult> {
-	if (shouldIsolateReadOnlyTool()) {
-		return runIsolatedReadOnlyTool({
-			kind: "audit",
-			args: [directory, options],
-		});
+	const job: ReadOnlyWorkerJob = { kind: "audit", args: [directory, options] };
+	if (shouldIsolateReadOnlyTool(job)) {
+		return runIsolatedReadOnlyTool(job);
 	}
 	const absoluteDir = path.resolve(directory);
 	const analysis = await analyzeAudit({
@@ -300,11 +298,9 @@ export async function unusedTool(
 		includeIgnored?: boolean;
 	}
 ): Promise<CallToolResult> {
-	if (shouldIsolateReadOnlyTool()) {
-		return runIsolatedReadOnlyTool({
-			kind: "unused",
-			args: [directory, options],
-		});
+	const job: ReadOnlyWorkerJob = { kind: "unused", args: [directory, options] };
+	if (shouldIsolateReadOnlyTool(job)) {
+		return runIsolatedReadOnlyTool(job);
 	}
 	const absoluteDir = path.resolve(directory);
 	const report = await findUnusedExports(directory, {
@@ -412,11 +408,12 @@ export async function similarTool(
 		includeIgnored?: boolean;
 	}
 ): Promise<CallToolResult> {
-	if (shouldIsolateReadOnlyTool()) {
-		return runIsolatedReadOnlyTool({
-			kind: "similar",
-			args: [directory, options],
-		});
+	const job: ReadOnlyWorkerJob = {
+		kind: "similar",
+		args: [directory, options],
+	};
+	if (shouldIsolateReadOnlyTool(job)) {
+		return runIsolatedReadOnlyTool(job);
 	}
 	const absoluteDir = path.resolve(directory);
 	const rawReport = await analyzeSimilarity({

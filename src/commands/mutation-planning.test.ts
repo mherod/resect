@@ -1,7 +1,11 @@
-import { afterEach, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
 import { loadProject } from "../core/project.ts";
+import {
+	LARGE_PROJECT_SOURCE_FILES,
+	setLargeProjectSourceFiles,
+} from "../core/project-scale.ts";
 import { applyStructuredEdits } from "../core/text-changes.ts";
 import { bunRuntime, setRuntime } from "../runtime/index.ts";
 import { makeFixture } from "./__test-helpers.ts";
@@ -14,8 +18,16 @@ import {
 } from "./mutation-planning.ts";
 import { applyRenamePlan, planRenameSymbol, renameSymbol } from "./rename.ts";
 
+// The 131-file fixture stands in for a large project on the worker path.
+const FIXTURE_LARGE_PROJECT_FILES = 128;
+
+beforeEach(() => {
+	setLargeProjectSourceFiles(FIXTURE_LARGE_PROJECT_FILES);
+});
+
 afterEach(() => {
 	setRuntime(bunRuntime);
+	setLargeProjectSourceFiles(undefined);
 });
 
 test("compact edit spans preserve UTF-16, line metadata and exact application", () => {
@@ -61,6 +73,15 @@ async function fixture() {
 		target: path.join(dir, "src/nested/value.ts"),
 	};
 }
+
+test("planning stays in-process below the default large-project threshold", async () => {
+	const { project } = await fixture();
+	setLargeProjectSourceFiles(undefined);
+	expect(project.files.length).toBeLessThan(LARGE_PROJECT_SOURCE_FILES);
+	expect(shouldUsePlanningWorker([project])).toBe(false);
+	setLargeProjectSourceFiles(project.files.length);
+	expect(shouldUsePlanningWorker([project])).toBe(true);
+});
 
 test("worker rename preserves complete edits, local identity and caller-owned writes", async () => {
 	const { source, project, files, dir } = await fixture();
