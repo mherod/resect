@@ -189,8 +189,11 @@ removing the guard is not the fix.
 
 DO preserve stable scenario IDs, exact metadata ordering, source references, and the computed `V1 + DECIDED + P0` critical-path set. Regenerate and validate receipts after requirements edits.
 
-DO run the exact validator command recorded in `.requirements-status.json`; its executable path is environment-specific. Do not copy a user-home path into repository guidance.
-DO update that stored command when the validator location or required flags change.
+DO resolve the installed `generate-requirements/scripts/validate-bdd.js` validator
+and run it against `REQUIREMENTS.md --status-log .requirements-status.json`.
+Record its identity/version, requirements hash, source commit, and independent
+validation results in the receipt. Keep the exact invocation in transient task
+or CI logs; never persist `command` fields or user-home paths in the status file.
 
 The structural validator does not perform the manual document-quality or implementation review; report those receipt layers independently.
 
