@@ -123,6 +123,12 @@ DON'T use `TS_JS_EXTENSION_PATTERN` in new code; `/\.[tj]sx?$/` misses `.mts/.ct
 
 DON'T duplicate typecheck or unresolved-import scanning in command files.
 
+Resolve explicit required type packages before allocating the full compiler.
+Use TypeScript's inferred-type containing filename and originating config path
+so explicit `typeRoots` cannot fall back to an excluded `node_modules` package.
+Missing inputs remain incomplete, refresh on each check, and never authorize
+a successful verification or an empty passing delta.
+
 ## Mutation sequence ownership
 
 `mutation-pipeline.ts` owns one ordering for every mutating path: worktree guard, journal prepare, apply under the typecheck guard, then rollback-or-journal-complete, returning a `MutationOutcome<TResult>`. It returns results and never calls `process.exit`, so the `resect-mcp` stdio server cannot be killed from the data layer.
@@ -175,9 +181,16 @@ Bundler-owned stylesheet and SQL imports resolve as `asset`, never as TypeScript
 
 ### Benchmark acceptance
 
-DO verify the VS Code read-only analysis workload against a **2,000,000,000-byte
-peak RSS ceiling**, including all worker threads. Read
-`Bun.Subprocess.resourceUsage().maxRSS` after process exit; current RSS samples
+DO verify VS Code analysis and move/rename workloads against a **2,000,000,000-byte
+peak RSS ceiling**, including all worker threads and subprocesses. Read
+`Bun.Subprocess.resourceUsage().maxRSS` after process exit. For process workers,
+add the parent peak to the greatest sum of overlapping child peaks and retain
+both components. Read the parent's own native `getrusage(RUSAGE_SELF)` at exit:
+Bun's JS resource counters understate Darwin memory, and subprocess usage can
+include the largest waited-for child. Keep the raw subprocess receipt separate
+to avoid double-counting it as the parent. This conservative bound must pass;
+parent-only RSS cannot.
+Current RSS samples
 and JavaScript heap size do not establish the peak. Dropping AST references
 alone is not evidence that the runtime reclaimed them before the peak.
 
@@ -207,22 +220,39 @@ withSourceFile(file, scanExports, []);
 withSourceFile(graph.program, file, scanExports, []);
 ```
 
-Mutation planning keeps a full graph-owned program. Do not add another
-`createProgram()` call in `move.ts` or `rename.ts`.
+Move, batch move and rename use streamed graph metadata and parse only affected
+files. Do not collect importer ASTs into an array or recreate a whole-project
+program. Move/barrel rewrites need syntax only; rename binds the declaration
+file's local symbol identities while graph resolution finds other files.
+Keep before/after compiler verification separate and test complete edit parity.
+Single-move and rename planning for large default-runtime projects also owns a
+disposable VM. Reserve the shared worker budget, keep filesystem mutations in
+the caller, and measure mixed analysis/mutation MCP sessions: individually
+small command peaks do not establish bounded server retention.
 
 `export-liveness.ts` owns destructive export-verdict policy for both `analyze`
 and `unused`: imported bindings, package/public/bin evidence, convention
 entrypoints, internal references, reachability, transitive-dead chains, and
 orphans. DON'T reconstruct that ordering in a command adapter.
 
+Retain exact unresolved package targets and manifest paths in trace reasons.
+Malformed manifests and public entrypoints outside graph coverage must remain
+unknown. Prove new emitted-entrypoint mappings only with explicit, unambiguous
+compiler root/output settings and TypeScript's output-path API; supply the
+originating config path. Cache fingerprints include those emitter settings.
+DON'T infer a custom build's source identity merely from an `out/` filename.
+Standalone in-repository test fixtures need their own package boundary so they
+do not inherit Resect's unrelated public entrypoints.
+
 `audit`, `analyze`, and `unused` request `retainProgram: false`: graphs retain
 plain export metadata and resolution settings. Graphs of at least 128 files run
 in a bounded parser worker that reclaims ASTs every 64 files, including on
 single-core hosts. `withGraphSourceFile()` binds
 one file's scopes on demand for these graphs, with imports, ambient types, and
-libraries disabled. This checker is for local symbol identity only; never use
-it for type verification or mutation planning. Preserve the ordinary full
-program path for those operations. Cache fingerprints distinguish both modes.
+libraries disabled. This checker is for local symbol identity only, including
+rename inside its declaration file; never use it for cross-file type checking.
+The ordinary full-program API remains available. Cache fingerprints distinguish
+both modes.
 
 Feed `evaluateExportLiveness()` an iterable of candidates. Streamed candidates
 carry exports and a lazy source loader; bind only when an unused export needs
@@ -239,6 +269,18 @@ copying every edge for every overlapping config defeats the memory savings.
 Workspace hydration collects and deduplicates package manifests before parsing, then uses `mapConcurrent()` with a cap of four for independent package, source-directory, barrel, tsconfig, and package-entrypoint probes. Preserve input order in intermediate results and sort public package output by name. Raw parsed manifests stay in a weak side table so package-entrypoint discovery can reuse fields such as `bin` without changing serialized `WorkspaceInfo`; fall back to a fresh read for packages not produced by workspace discovery. Keep per-package failures isolated as omitted metadata, and DON'T parallelize any causal mutation or verification sequence as part of discovery work.
 
 `graphCache` (#78, #87) and `discoveryCache` (#88) are bounded LRUs and use `snapshotMtimes(paths)` plus `mtimesUnchanged(snapshot)` from `path-utils.ts`. Evict companion metadata through the shared bounded-cache helper so cache groups cannot drift. The sync `statSync().mtimeMs` probe catches edits/deletions without rebuilding unchanged graphs. Discovery detects added configs with a throttled ~2s re-glob.
+
+Streamed graph reuse also validates ordered source membership, imported source
+mtimes outside `include`, and resolver manifest/directory probes. Reparse fewer
+than 128 changed files in the caller and reuse unchanged plain records without
+mutating an older graph. Rebuild after membership/configuration/resolution
+changes or 32 incremental builds; the latter bounds retained probe history.
+Snapshot inputs before reading, and compare complete ordered graphs with a
+fresh build after edits, additions, deletions, renames and mixed changes.
+
+Discovery watches include-root directory membership, including roots outside
+the project, so source additions invalidate ownership without a tsconfig edit.
+Keep source-content changes separate from ownership changes.
 
 DO write invalidation regressions first in `graph.test.ts` or `tsconfig-discovery.test.ts`, then remeasure `unused` and `audit` against the 20s Bun test timeout.
 
@@ -276,9 +318,50 @@ retain only plain records. Each analysis releases its workers on
 success, failure, or timeout; infrastructure failures must reject rather than
 silently report an empty successful scan.
 
+Large similarity scans collect and group in one worker, preserving the greedy
+algorithm and avoiding a declaration round trip through the host. When an MCP
+tool already owns a disposable process, collect and group directly there rather
+than cloning the full report through another thread. Large async
+export searches use the same
+bounded queue. Preserve the synchronous `search` library API; command and MCP
+adapters await `searchAsync`. Wait for a clean worker exit after its result;
+a late worker error must reject the request. Release worker-owned roots before
+collection and close the worker port; never leave idle workers pinning a caller.
+
+Similarity keeps one compressed declaration/group or full-report snapshot within
+a 128 MiB budget charged against the uncompressed representation. Never retain
+both snapshot kinds or let compression widen the admission budget. Validate
+ordered file membership and pre-scan mtimes; key
+grouping results by options and working directory. Recheck non-source exclusions
+before using cached groups. Return independent records to callers, and decode
+declarations lazily when a cached report already suffices. Cache ownership uses
+opaque tokens so a caller retaining an old array cannot pin an evicted snapshot.
+
+Only projects at `project-scale.ts`'s 2,048-source-file threshold use
+disposable processes: standalone MCP audit/analyze/unused/find/similar calls,
+sized from cached `discoverProject()` ownership at the resolved tsconfig root
+and deduplicated workspace package sources, and mutation planners. Never size
+graph analysis from the requested report subdirectory alone. Smaller
+projects stay warm; never add a second cutoff. Transfer only completed
+reports and edits; copying graphs between processes retains native
+allocations. Reserve both scheduler slots per process job. Keep the thread path
+for library analysis; imported tool handlers stay inert unless the standalone
+server enables isolation.
+
+Write a process result to its private temporary directory and decode only after
+clean child exit. A posted result followed by failure must reject. Acknowledge
+the completion message before disconnecting IPC; close and remove the owned
+temporary result on success, cancellation, timeout and failure. Request
+cancellation must terminate the process and release its scheduler reservation.
+Standalone binaries must dispatch the private process-host mode before CLI
+argument parsing or MCP transport connection; source-only tests cannot prove it.
+
 Include the worker entrypoint in all compiled and library build commands. Verify
 worker execution from the installed shims, standalone binaries, and built library
 outside the source directory; source-only tests cannot catch missing worker assets.
+Resolve bundled worker URLs through `resolveAnalysisEntrypoint()`: nested
+compiled entrypoints inline shared modules with their own `import.meta.url`,
+so a relative `./core/` path can incorrectly resolve under `mcp-tools/`.
 
 ### Similarity grouping
 
@@ -290,6 +373,13 @@ with exact-name buckets when requested, otherwise probe a rare-token prefix
 whose omitted suffix cannot contain the required Jaccard overlap. Preserve the
 low-threshold content-blend bound, empty-set behavior, and ascending candidate
 order; greedy assignment makes both membership and ordering observable.
+
+Intern structural bigrams to sorted, unique numeric IDs and share fingerprints
+for identical normalized bodies. Numeric intersection must preserve exact
+Jaccard scores, including empty sets; retain insertion order for frequency ties.
+Keep candidate prefixes in typed arrays. In dedicated analysis VMs, reclaim
+temporary prefix/query buffers between bounded candidate batches as well as
+fingerprint preparation; collecting only during parsing leaves a later peak.
 
 DON'T partition mixed declarations by kind unless the caller requested a kind
 filter, or discard common tokens without an overlap bound. Verify pruning

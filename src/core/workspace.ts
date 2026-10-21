@@ -3,6 +3,7 @@ import { logger } from "../cli-logger.ts";
 import { getRuntime } from "../runtime/index.ts";
 import type { ConsumerDependencyContractInput } from "../types/deps.ts";
 import {
+	createCacheResetter,
 	enforceCacheLimit,
 	MAX_PROJECT_CACHE_ENTRIES,
 	setCacheEntry,
@@ -350,11 +351,11 @@ export async function discoverWorkspace(
  * Intended for tests that mutate the filesystem between calls and need a
  * fresh scan; production code should rely on the cache.
  */
-export function clearWorkspaceCache(): void {
-	workspaceRootCache.clear();
-	workspaceAliasCache.clear();
-	workspaceAliasesByRoot.clear();
-}
+export const clearWorkspaceCache = createCacheResetter(
+	workspaceRootCache,
+	workspaceAliasCache,
+	workspaceAliasesByRoot
+);
 
 /** Cache cardinalities exposed only for bounded-cache regression tests. */
 export function getWorkspaceCacheStatsForTesting(): {

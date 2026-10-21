@@ -895,6 +895,7 @@ describe("unused command", () => {
 		expect(report.orphanFiles).toHaveLength(0);
 		expect(report.warnings).toEqual([
 			expect.stringContaining("external usage is unknown"),
+			`Could not resolve package entrypoint "./dist/*.js" from ${path.join(dir, "package.json")}; external usage remains unknown.`,
 		]);
 
 		await cleanup(dir);

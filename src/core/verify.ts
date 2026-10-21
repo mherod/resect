@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 import { logger } from "../cli-logger.ts";
 import { getRuntime } from "../runtime/index.ts";
 import type { ProcessTermination } from "../runtime/types.ts";
@@ -381,6 +382,27 @@ export async function runTypeCheckDetailed(
 ): Promise<TypeCheckOutcome> {
 	const tsconfigPath = project.tsconfigPath;
 	const cwd = path.dirname(tsconfigPath);
+	// Missing explicitly required type packages are fatal compiler inputs. Resolve
+	// them before allocating a whole project, and keep the verdict incomplete.
+	// Use fresh resolution every time so installs/removals cannot reuse a verdict.
+	const missingTypes = (project.compilerOptions.types ?? []).filter(
+		(name) =>
+			!ts.resolveTypeReferenceDirective(
+				name,
+				path.join(cwd, "__inferred type names__.ts"),
+				{ ...project.compilerOptions, configFilePath: tsconfigPath },
+				ts.sys
+			).resolvedTypeReferenceDirective
+	);
+	if (missingTypes.length > 0) {
+		return {
+			errors: missingTypes.map(
+				(name) =>
+					`error TS2688: Cannot find type definition file for '${name}'.`
+			),
+			incomplete: true,
+		};
+	}
 	const tsc = findLocalTypeScriptBinary(project);
 
 	const result = await getRuntime().process.exec(

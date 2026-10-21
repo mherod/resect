@@ -15,13 +15,17 @@ import {
 import type { CliValues } from "./commands/registry.ts";
 import { COMMANDS } from "./commands/registry.ts";
 import {
+	isAnalysisProcessHost,
+	runAnalysisProcessHost,
+} from "./core/analysis-process-host.ts";
+import {
 	loadResectConfig,
 	resolveResectConfig,
 } from "./core/project-config.ts";
 
 installCliStdoutErrorHandler();
 
-const cliArgs = Bun.argv.slice(2);
+const cliArgs = isAnalysisProcessHost() ? [] : Bun.argv.slice(2);
 const rawArgs = preprocessArgs(cliArgs);
 
 const { values, positionals } = parseArgs({
@@ -113,6 +117,10 @@ function showVersion() {
 }
 
 async function main() {
+	if (isAnalysisProcessHost()) {
+		runAnalysisProcessHost();
+		return;
+	}
 	if (values.help && positionals.length === 0) {
 		showHelp();
 		process.exit(0);

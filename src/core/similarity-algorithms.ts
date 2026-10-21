@@ -225,6 +225,31 @@ export function jaccardSimilarity(a: string[], b: string[]): number {
 	return jaccardSetSimilarity(new Set(a), new Set(b));
 }
 
+/** Exact Jaccard for sorted, unique token IDs stored without per-token objects. */
+export function jaccardSortedTokens(a: Uint32Array, b: Uint32Array): number {
+	let left = 0;
+	let right = 0;
+	let intersection = 0;
+	while (left < a.length && right < b.length) {
+		const x = a[left];
+		const y = b[right];
+		if (x === undefined || y === undefined) {
+			break;
+		}
+		if (x === y) {
+			intersection++;
+			left++;
+			right++;
+		} else if (x < y) {
+			left++;
+		} else {
+			right++;
+		}
+	}
+	const union = a.length + b.length - intersection;
+	return union === 0 ? 1 : intersection / union;
+}
+
 /** Reuse prepared token sets when comparing a declaration with many others. */
 export function jaccardSetSimilarity(
 	a: ReadonlySet<string>,

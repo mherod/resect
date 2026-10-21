@@ -229,7 +229,9 @@ export async function moveBatchWithDependencies(
 	const { project, workspace } = context;
 	validateWorkspaceBoundaries(moves, workspace?.root);
 
-	const graph = await dependencies.buildDependencyGraph(project);
+	const graph = await dependencies.buildDependencyGraph(project, {
+		retainProgram: false,
+	});
 	const fileState = new BatchFileState(dryRun);
 	const moduleContext: MoveModuleContext = {
 		graph,

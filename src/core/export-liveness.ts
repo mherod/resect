@@ -10,7 +10,7 @@ import { findAllReferences } from "./graph.ts";
 import {
 	discoverPackageEntrypoints,
 	findPackagePublicApiExports,
-	isPackageEntrypointTraceIncomplete,
+	packageEntrypointTraceReasons,
 	resolveBinReachabilityRoots,
 } from "./package-entrypoints.ts";
 import { normalizePath } from "./resolver.ts";
@@ -67,6 +67,7 @@ export interface ExportLivenessFileVerdict {
 	usedExports: ExportInfo[];
 	publicApiExports: ExportInfo[];
 	publicApiTraceIncomplete: boolean;
+	publicApiTraceReasons: string[];
 	noExternalUsage: boolean;
 	externalUsageAssumed: boolean;
 	packageBinEntrypoint: boolean;
@@ -75,6 +76,7 @@ export interface ExportLivenessFileVerdict {
 
 export interface ExportLivenessResult {
 	files: ExportLivenessFileVerdict[];
+	traceWarnings: string[];
 	excludedEntrypointFiles: string[];
 	publicApiExports: ExportLivenessPublicApiExport[];
 	unknownExternalUsageExports: ExportLivenessPublicApiExport[];
@@ -115,6 +117,7 @@ export async function evaluateExportLiveness(
 		packageDirectory,
 		{
 			includeWorkspacePackages,
+			graph,
 		}
 	);
 	const entrypointFiles = packageEntrypoints.files;
@@ -138,11 +141,12 @@ export async function evaluateExportLiveness(
 			file,
 			entrypointGlobs
 		);
-		const publicApiTraceIncomplete = isPackageEntrypointTraceIncomplete(
+		const publicApiTraceReasons = packageEntrypointTraceReasons(
 			file,
 			packageEntrypoints,
 			graph
 		);
+		const publicApiTraceIncomplete = publicApiTraceReasons.length > 0;
 		const filePublicApiExports = findPackagePublicApiExports(
 			file,
 			exports,
@@ -206,6 +210,7 @@ export async function evaluateExportLiveness(
 			usedExports,
 			publicApiExports: filePublicApiExports,
 			publicApiTraceIncomplete,
+			publicApiTraceReasons,
 			noExternalUsage:
 				!externalUsageAssumed &&
 				filePublicApiExports.length === 0 &&
@@ -280,6 +285,9 @@ export async function evaluateExportLiveness(
 
 	return {
 		files,
+		traceWarnings: [
+			...new Set(files.flatMap((file) => file.publicApiTraceReasons)),
+		],
 		excludedEntrypointFiles: [...excludedEntrypointFiles].sort(),
 		publicApiExports,
 		unknownExternalUsageExports,

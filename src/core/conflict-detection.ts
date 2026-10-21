@@ -56,7 +56,8 @@ export function findLocalBinding(
 	sourceFile: ts.SourceFile,
 	name: string,
 	skipSpecifier: string,
-	skipImportedName?: string
+	skipImportedName?: string,
+	moduleScopeOnly = false
 ): { line: number; column: number } | null {
 	let result: { line: number; column: number } | null = null;
 
@@ -142,7 +143,19 @@ export function findLocalBinding(
 			return;
 		}
 
-		ts.forEachChild(node, visit);
+		// Moves preserve local names; existing nested shadowing is harmless.
+		// Renames still search nested scopes for possible capture.
+		if (
+			!moduleScopeOnly ||
+			ts.isSourceFile(node) ||
+			ts.isVariableStatement(node) ||
+			ts.isVariableDeclarationList(node) ||
+			ts.isImportDeclaration(node) ||
+			ts.isImportClause(node) ||
+			ts.isNamedImports(node)
+		) {
+			ts.forEachChild(node, visit);
+		}
 	}
 
 	visit(sourceFile);
@@ -157,7 +170,7 @@ export function findLocalBinding(
  * checks if that file already has a local binding with the same name.
  */
 export function checkBindingConflicts(
-	importingFiles: Array<{
+	importingFiles: Iterable<{
 		sourceFile: ts.SourceFile;
 		specifier: string;
 		bindings: Array<{ name: string; alias?: string }>;
@@ -174,7 +187,13 @@ export function checkBindingConflicts(
 			if (!exportNames.has(binding.name)) {
 				continue;
 			}
-			const bindingPos = findLocalBinding(sourceFile, binding.name, specifier);
+			const bindingPos = findLocalBinding(
+				sourceFile,
+				binding.name,
+				specifier,
+				undefined,
+				true
+			);
 			if (bindingPos) {
 				conflicts.push({
 					file: sourceFile.fileName,
@@ -193,7 +212,7 @@ export function checkBindingConflicts(
 interface AllConflictCheckOptions {
 	exportNames: string[];
 	targetSourceFile?: ts.SourceFile;
-	importingFiles: Array<{
+	importingFiles: Iterable<{
 		sourceFile: ts.SourceFile;
 		specifier: string;
 		bindings: Array<{ name: string; alias?: string }>;

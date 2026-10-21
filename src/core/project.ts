@@ -166,9 +166,9 @@ const LIB_DTS_PATTERN = /(?:^|\/)lib\.[^/]*\.d\.ts$/;
  */
 export function createProgram(
 	project: ProjectConfig,
-	files?: string[]
+	files?: string[],
+	host: ts.CompilerHost = ts.createCompilerHost(project.compilerOptions)
 ): ts.Program {
-	const host = ts.createCompilerHost(project.compilerOptions);
 	const originalGetSourceFile = host.getSourceFile.bind(host);
 	host.getSourceFile = (
 		fileName,

@@ -74,6 +74,12 @@ journal prepare -> apply (under the typecheck guard) -> rollback or journal
 complete -> structured `MutationOutcome`. It returns on every path and never
 calls `process.exit`.
 
+Render verified success from `MutationOutcome.success`, not the apply result.
+Expose rollback and forced-dirty rollback status consistently in CLI and MCP
+JSON; preserve plain move's deliberate leave-applied policy after failed
+verification. Missing explicit type dependencies are an incomplete check,
+never a passing empty diagnostic delta.
+
 DO route every mutating path through `runMutation` and express variance as
 configuration, not as a hand-written sequence: `verify` (`none | report |
 rollback`), `rollbackStrategy` (`null` is a deliberate leave-applied policy,
@@ -132,6 +138,36 @@ DON'T add a mutating command without a dirty-worktree guard and conflict detecti
 `move.ts` and `rename.ts` use AST `hasLocalBinding()` walkers over variables, functions, classes, types, interfaces, enums, and import bindings, excluding the changed import. `alias.ts` refuses duplicate target-specifier bindings. `extract-common --output` calls `checkOutputDeclarationConflicts()`.
 
 Specific conflict boundaries:
+
+Move preserves import binding names: nested local shadowing is not a new
+module-level conflict. Rename must retain its nested capture checks. Stream
+importer conflict checks instead of retaining every importer's syntax tree.
+
+For large default-runtime single moves and renames, compute plans in the
+exclusive disposable mutation process. Build the graphs inside that process;
+return only plain edits and planned
+contents; keep writes, verification and rollback in the caller after clean
+worker exit. Preserve non-enumerable edit line metadata across structured
+clone and replay diagnostics through the caller's logger. Injected runtimes
+and batch overlay contexts stay local; do not clone callbacks into a worker.
+Keep only the source's own imports and all direct/transitive barrel consumers
+in the planner's graph view, while retaining complete barrel and syntax
+metadata. Use the shared re-export closure: indirect reference records rewrite
+their resolved target and cannot identify the intermediate barrels. Never
+cache this partial planning view as a full dependency graph.
+Reclaim importer ASTs in 16-file worker batches,
+and release worker-data graphs and callbacks before the final collection.
+Preview replies must omit full planned file contents. Application replies use
+compact write targets: reconstruct one file at a time in the caller, checking
+the old edit spans before writing so changed content cannot be overwritten.
+Include real applications
+in mixed MCP memory acceptance so preview savings cannot hide write-time peaks.
+
+Compact importer edits during planning and detach retained spans from the
+original file strings; UTF-16 round trips must preserve lone surrogates.
+For destination wildcard barrels, resolve and parse a sibling dependency outside
+the config's include set when resolution is enabled. Preserve `noResolve` and
+the complete relative-import rewrite when the source also imports that barrel.
 
 - `renameSymbol()` calls `findExport` when `newName` already exists and rejects an unaliased importer when `hasLocalBinding()` finds `newName`.
 - `moveModule()` rejects a moved export already present in the destination barrel and importer bindings that collide locally.

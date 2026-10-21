@@ -240,6 +240,9 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 			JSON.stringify(
 				{
 					...result,
+					success,
+					rolledBack,
+					worktreeDirtyRollbackDisabled: outcome.worktreeDirtyRollbackDisabled,
 					movedFile: {
 						from: path.relative(root, result.movedFile.from),
 						to: path.relative(root, result.movedFile.to),

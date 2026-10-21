@@ -6,6 +6,7 @@ import {
 	fingerprintTokens,
 	jaccardSetSimilarity,
 	jaccardSimilarity,
+	jaccardSortedTokens,
 	nameSimilarity,
 	normalizeBody,
 	tokenBigrams,
@@ -33,6 +34,16 @@ test("streamed fingerprints match materialized tokens across repeated calls and 
 });
 
 describe("jaccardSimilarity", () => {
+	test("compact sorted token IDs preserve exact set scores", () => {
+		const inputs = [[], [0], [0, 1, 9], [1, 2], [0, 1, 2, 3], [4_294_967_295]];
+		for (const a of inputs) {
+			for (const b of inputs) {
+				expect(
+					jaccardSortedTokens(Uint32Array.from(a), Uint32Array.from(b))
+				).toBe(jaccardSimilarity(a.map(String), b.map(String)));
+			}
+		}
+	});
 	test("prepared sets preserve exact scores for duplicates, empty inputs, and unequal sizes", () => {
 		const inputs = [
 			[],

@@ -42,6 +42,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { version } from "../package.json";
+import {
+	isAnalysisProcessHost,
+	runAnalysisProcessHost,
+} from "./core/analysis-process-host.ts";
+import { setIsolatedReadOnlyTools } from "./mcp-tools/isolated-read-only.ts";
 import { registerAnalysisTools } from "./mcp-tools/register-analysis.ts";
 import { registerHygieneTools } from "./mcp-tools/register-hygiene.ts";
 import { registerMutationTools } from "./mcp-tools/register-mutation.ts";
@@ -107,6 +112,11 @@ async function main(): Promise<void> {
  * compiled `bin/resect-mcp-bin` working while leaving test imports inert.
  */
 export function runMain(): void {
+	if (isAnalysisProcessHost()) {
+		runAnalysisProcessHost();
+		return;
+	}
+	setIsolatedReadOnlyTools(true);
 	main().catch((error) => {
 		process.stderr.write(
 			`Fatal error: ${error instanceof Error ? error.stack : String(error)}\n`

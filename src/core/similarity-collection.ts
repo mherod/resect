@@ -1,5 +1,7 @@
 import ts from "typescript";
 import type { DeclarationKind, FunctionInfo } from "../types/similar.ts";
+import { ANALYSIS_BATCH_SIZE } from "./analysis-workers.ts";
+import { mapConcurrent } from "./concurrency.ts";
 import {
 	countTokens,
 	extractAllIdentifiers,
@@ -11,6 +13,24 @@ const MIN_TOKEN_COUNT = 8;
 const MIN_TYPE_TOKEN_COUNT = 6;
 const DIRECTIVE_PATTERN =
 	/["']use (cache|cache:\s*\w+|server|client|strict)["']\s*;?/;
+
+/** Ordered collection with reclamation owned by the dedicated parser VM. */
+export async function collectFunctionBatches(
+	files: string[],
+	reclaim: () => void
+): Promise<FunctionInfo[][]> {
+	const results: FunctionInfo[][] = [];
+	for (let offset = 0; offset < files.length; offset += ANALYSIS_BATCH_SIZE) {
+		results.push(
+			...(await mapConcurrent(
+				files.slice(offset, offset + ANALYSIS_BATCH_SIZE),
+				collectFileFunctions
+			))
+		);
+		reclaim();
+	}
+	return results;
+}
 
 /**
  * Detect if a function block body is a thin wrapper: exactly one statement

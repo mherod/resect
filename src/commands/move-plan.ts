@@ -12,6 +12,7 @@ import {
 	scanExports,
 	type scanModuleReferences,
 } from "../core/scanner.ts";
+import { parseSourceFile } from "../core/source-file.ts";
 import { applyTextChanges } from "../core/text-changes.ts";
 import { findSpecifierLocation } from "../core/updater.ts";
 import type { UpdatedReference } from "../types/move.ts";
@@ -24,7 +25,7 @@ export function updateInternalImports(
 	_oldPath: string,
 	newPath: string,
 	project: ProjectConfig,
-	program: ts.Program,
+	program: Pick<ts.Program, "getSourceFile">,
 	preferRelative = false,
 	prefer?: PreferStrategy,
 	extensions?: ExtensionPolicy
@@ -119,7 +120,7 @@ export function updateInternalImports(
 function resolveBarrelSelfImportSibling(
 	ref: ReturnType<typeof scanModuleReferences>[number],
 	newPath: string,
-	program: ts.Program,
+	program: Pick<ts.Program, "getSourceFile">,
 	project: ProjectConfig
 ): string | null {
 	const barrelPath = ref.resolvedPath;
@@ -137,7 +138,12 @@ function resolveBarrelSelfImportSibling(
 	const barrels = scanBarrelExports(barrelAst, project);
 	const sources = new Set<string>();
 	for (const binding of bindings) {
-		const source = findBarrelBindingSource(binding.name, barrels, program);
+		const source = findBarrelBindingSource(
+			binding.name,
+			barrels,
+			program,
+			!project.compilerOptions.noResolve
+		);
 		if (!source) {
 			return null;
 		}
@@ -161,7 +167,8 @@ function resolveBarrelSelfImportSibling(
 function findBarrelBindingSource(
 	name: string,
 	barrels: ReturnType<typeof scanBarrelExports>,
-	program: ts.Program
+	program: Pick<ts.Program, "getSourceFile">,
+	allowDependencyParsing: boolean
 ): string | null {
 	for (const barrel of barrels) {
 		for (const entry of barrel.exports) {
@@ -174,7 +181,13 @@ function findBarrelBindingSource(
 		if (!barrel.exports.some((entry) => entry.type === "all")) {
 			continue;
 		}
-		const ast = program.getSourceFile(barrel.resolvedPath);
+		// A streamed graph covers direct imports; a wildcard barrel's sibling
+		// can lie another dependency hop outside the config's include set.
+		const ast =
+			program.getSourceFile(barrel.resolvedPath) ??
+			(allowDependencyParsing
+				? parseSourceFile(barrel.resolvedPath)
+				: undefined);
 		if (ast && scanExports(ast).some((exp) => exp.name === name)) {
 			return barrel.resolvedPath;
 		}

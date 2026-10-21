@@ -9,12 +9,13 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { search } from "../commands/find.ts";
+import { search, searchAsync } from "../commands/find.ts";
 import {
 	clearExportIndex,
 	exportIndexParseCount,
 	exportIndexSize,
 	getIndexedFileExports,
+	prepareExportIndexLookup,
 	setExportIndexLimitForTests,
 } from "./export-index.ts";
 
@@ -49,6 +50,44 @@ describe("bounded incremental export index (#248)", () => {
 		]);
 		return { dir, ownership };
 	}
+
+	test("worker scans preserve reports and bounded cache hits across edits and deletion", async () => {
+		const dir = await mkdtemp(path.join(tmpdir(), "resect-export-worker-"));
+		try {
+			const ownership = new Map<string, unknown>();
+			for (let i = 0; i < 130; i++) {
+				const file = path.join(dir, `${i}.ts`);
+				await writeFile(file, "export const sharedValue = 1;\n");
+				ownership.set(file, null);
+			}
+			const expected = search("shared", ownership, dir, "all");
+			clearExportIndex();
+			setExportIndexLimitForTests(2);
+			for (const expectedParses of [130, 128, 128]) {
+				const before = exportIndexParseCount();
+				expect(await searchAsync("shared", ownership, dir, "all")).toEqual(
+					expected
+				);
+				expect(exportIndexParseCount() - before).toBe(expectedParses);
+				expect(exportIndexSize()).toBe(2);
+			}
+			const lookup = await prepareExportIndexLookup([...ownership.keys()]);
+			const edited = path.join(dir, "0.ts");
+			await writeFile(edited, "export const changedValue = 2;\n");
+			await bumpMtime(edited);
+			expect(lookup(edited).map((item) => item.name)).toEqual(["changedValue"]);
+			const deleted = path.join(dir, "1.ts");
+			await unlink(deleted);
+			expect(lookup(deleted)).toEqual([]);
+			const actual = await searchAsync("shared", ownership, dir, "export");
+			expect(actual).toEqual(search("shared", ownership, dir, "export"));
+			const before = exportIndexParseCount();
+			await searchAsync("0", ownership, dir, "file");
+			expect(exportIndexParseCount()).toBe(before);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
 
 	test("two unchanged export queries parse each file at most once", async () => {
 		const { dir, ownership } = await makeProjectDir();
