@@ -88,6 +88,8 @@ async function runWorkerJob<Input, Output>(
 ): Promise<Output> {
 	await acquireWorker();
 	let worker: Worker | undefined;
+	// A holder, not a local: the exit callback's write is invisible to narrowing.
+	const lifecycle = { exited: false };
 	try {
 		signal.throwIfAborted();
 		worker = new Worker(url, { workerData: job });
@@ -130,6 +132,7 @@ async function runWorkerJob<Input, Output>(
 				reject(error);
 			});
 			running.once("exit", (code) => {
+				lifecycle.exited = true;
 				cleanup();
 				reject(
 					new Error(`Analysis worker exited without a result (code ${code})`)
@@ -137,7 +140,9 @@ async function runWorkerJob<Input, Output>(
 			});
 		});
 	} finally {
-		if (worker) {
+		// Terminating an already-exited Bun worker can block the caller's
+		// thread on Linux CI (oven-sh/bun#11335); only stop a live worker.
+		if (worker && !lifecycle.exited) {
 			await worker.terminate();
 		}
 		releaseWorker();

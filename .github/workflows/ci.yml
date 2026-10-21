@@ -10,6 +10,8 @@ jobs:
   test:
     name: Test & Lint
     runs-on: ubuntu-latest
+    # A healthy run takes ~6 minutes; fail a hung worker instead of the 6 h default.
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
