@@ -4,6 +4,17 @@ interface CacheKeyStore<Key> {
 	delete(key: Key): boolean;
 }
 
+/** Create one reset operation for a cache and all its companion maps. */
+export function createCacheResetter(
+	...caches: { clear(): void }[]
+): () => void {
+	return () => {
+		for (const cache of caches) {
+			cache.clear();
+		}
+	};
+}
+
 /** Mark a cache hit as most recently used without changing its value. */
 export function touchCacheEntry<Key, Value>(
 	cache: Map<Key, Value>,

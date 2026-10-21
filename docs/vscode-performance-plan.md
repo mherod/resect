@@ -13,10 +13,43 @@ warnings, not just counts. Local verification and commits do not imply a push.
 | Order | Job | Work and completion evidence | Status |
 |---|---|---|---|
 | 1 | Regression fixture | Repository-owned harness, pinned revision/cleanliness checks, baseline comparison, time/RSS receipts, repeated and concurrent MCP requests, timeout/failure tests | Harness verified; memory regression detected |
-| 2 | MCP costs | First bound retained memory in mixed sessions; then identical-input find discovery/search/serialization/transport attribution, measured fix or explanation, exact ordered report parity | Next |
+| 2 | MCP costs | First bound retained memory in mixed sessions; then identical-input find discovery/search/serialization/transport attribution, measured fix or explanation, exact ordered report parity | Verified: mixed session 1.868 GB; exact reports |
 | 3 | Small edits | Edit/add/delete/rename/mixed changes; unchanged metadata reuse; config and dependency-resolution invalidation; fresh-process parity and reparse/latency receipts | Pending |
 | 4 | Unused evidence | Explain unknown entrypoints; improve only provable cases; seed known public/used/internal/dead exports; keep unresolved cases conservative | Pending |
 | 5 | Mutation acceptance | Real heavily referenced move/rename, barrel/alias/config boundaries, conflicts, verification delta, rollback, time and RSS in disposable copies | Pending |
+
+## Execution plans
+
+1. **Regression fixture:** pin and validate the clone before and after each run;
+   measure fresh CLI processes and a real initialized stdio MCP session; retain
+   every report and stderr stream; reject report drift, timeouts and missing
+   memory measurements. Completed in `f6a7fdf`; the first mixed session exposed
+   a 3.74 GB regression that single-command measurements missed.
+2. **MCP costs:** isolate parsing and grouping, measure native memory by phase,
+   and check worker failure/timeout/cleanup behavior. Attribute `find` time to
+   discovery, parsing, serialization, the tool adapter and cancellation context.
+   Accept only exact ordered reports, built-entrypoint execution, and a mixed
+   session below 2 GB. Record slower cold calls as a tradeoff rather than hiding
+   them behind warm averages.
+3. **Small edits:** first reproduce full rebuilding after one source edit and
+   stale metadata for imports outside `include`. Reuse unchanged plain records
+   only when file membership, compiler configuration and resolution probes are
+   unchanged. Keep full rebuilding for additions, deletions, renames and changes
+   to package resolution. Compare every resulting graph with an independent
+   fresh build, including inverse-edge order, barrels, exports and skipped files.
+4. **Unused evidence:** report the exact package target that prevents a verdict.
+   Resolve emitted targets only where explicit compiler settings prove a unique
+   source mapping. Test public re-exports, imported exports, local-only usage,
+   dead exports and failed discovery. VS Code's custom build must remain unknown
+   when its source entrypoint cannot be proved; reduced unknown counts alone are
+   not an acceptance criterion.
+5. **Mutation acceptance:** clone a disposable copy, preview and apply a rename
+   and move of the heavily referenced lifecycle module, compare planned edits
+   with applied edits, and exercise a naming conflict. Keep verification enabled
+   and record its baseline/delta, incomplete verification and rollback behavior.
+   Save diffs before restoring only files owned by the experiment. Require both
+   copies clean afterward. Record mutation memory separately from the read-only
+   budget, and identify compiler subprocesses excluded from a process RSS figure.
 
 Failure paths are part of each job: wrong/dirty fixture, crashed or timed-out
 children, output drift, missing/deleted files, stale configuration, unresolved
@@ -35,3 +68,51 @@ reproduce. Memory retention takes priority in job 2.
 Raw evidence: `/private/tmp/resect-vscode-systematic-baseline/receipts.json`
 and sibling stdout/stderr files; these temporary files are not bundled with
 the repository. Harness checks: five tests passed; TypeScript and Biome passed.
+
+## Job 2 result
+
+Large export scans and similarity grouping use disposable workers with clean
+exit checks, bounded scheduling and worker-owned heap collection. Similarity
+uses compact numeric fingerprints and one immutable serialized scan/group cache
+with a 128 MiB retention budget. Warm reports validate file mtimes and exclusions
+without decoding all declarations. The original 64-file parsing batches remain.
+
+Three fresh CLI runs per command, Bun 1.4.3, Apple M5 Max (18 threads, 48 GiB),
+warm filesystem, no overlapping tests/builds/benchmarks:
+
+| Command | Baseline median seconds | Final median seconds | Worst final peak bytes |
+|---|---:|---:|---:|
+| audit | 10.81 | 9.48 | 871,890,944 |
+| analyze | 31.76 | 29.81 | 1,091,518,464 |
+| unused | 36.27 | 35.59 | 1,179,451,392 |
+| find | 9.72 | 9.77 | 760,397,824 |
+| similar | 22.00 | 19.30 | 1,316,290,560 |
+
+The final mixed MCP session peaked at **1,868,251,136 bytes**, about 50% below
+the 3,741,188,096-byte baseline, and returned all 20 reports exactly. Warm
+similarity calls were about 2.3 seconds versus about 21.7 seconds before. Two
+earlier sessions with smaller 32-file batches also passed at 1.875/1.885 GB;
+their cold timings were slower and variable, so those batches were not retained.
+
+Full similarity output also matched: all 3,809 groups, scores and ordering,
+16,601,677 output characters, SHA-256
+`781dc8f28896028d29e02ff732e1a648910dce9b03b324c3c94a44815bf94fd5`
+after fixture-path normalization. This comparison used the intermediate 32-file
+batch variant; grouping logic is identical in the final 64-file variant.
+
+Find attribution confirmed 14,888 cold parses and 4,888 warm parses with the
+10,000-entry cache unchanged. In the 32-file diagnostic variant, synchronous
+warm discovery/search took about 1.25/1.67 seconds; serialization took under
+0.1 ms. Async worker searches took about 3.8 seconds end to end and used
+0.761 GB per three-call process versus 1.207 GB for synchronous searches.
+The direct MCP adapter and cancellation-context calls had similar costs. The
+historical 13–20-second warm MCP gap did not reproduce; transport is not a
+supported explanation for it.
+
+Evidence directories under `/private/tmp`: `resect-vscode-job2-batch64-cli`,
+`resect-vscode-mcp-cache-batch64`, `resect-vscode-job2-acceptance`, and
+`resect-vscode-mcp-lazy-cache`. Full-group reports, find attribution and built
+entrypoint receipts use `resect-full-groups-*`, `resect-find-attribution-*` and
+`resect-built-worker*`. Source shims, compiled CLI/MCP workers and the built
+library were exercised outside the source directory. These are local results,
+not a universal OS-enforced limit or a mutation-memory guarantee.

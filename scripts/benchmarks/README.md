@@ -32,3 +32,16 @@ the command; a newly captured baseline is not proof against earlier versions.
 
 Focused harness checks: `bun test scripts/benchmarks/process.test.ts`.
 The five-job plan is in [docs](../../docs/vscode-performance-plan.md).
+
+For phase attribution, run `find-profile.ts "$VSCODE" <mode>` with each of
+`library`, `async`, `tool`, and `cancellation` in its own fresh Bun process.
+It reports discovery/search/serialization time where those phases are directly
+accessible, actual parse counts, the retained index size, and report hashes.
+Compare those calls with the real stdio MCP receipts; do not attribute a gap to
+transport without measuring the adapter and cancellation context separately.
+
+`--profile` adds a diagnostic preload with one-second heap/RSS samples and,
+on macOS, native `getrusage` peak samples. The post-exit child resource receipt
+remains authoritative. `--smol` is a diagnostic MCP startup option recorded in
+metadata, not a production default or a memory limit. Keep profiled and ordinary
+acceptance measurements distinct.

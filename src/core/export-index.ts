@@ -14,17 +14,21 @@
  *   its entry and returns no exports.
  * - Bounded: entries are LRU-evicted past MAX_EXPORT_INDEX_ENTRIES through
  *   the shared bounded-cache helpers.
- * - Coalesced cold builds: lookups are synchronous, so within one process
- *   two concurrent queries cannot interleave mid-file — each cold file is
- *   parsed exactly once and the second query reads the cached entry.
+ * - Synchronous lookups coalesce cold reads. Async large scans use bounded
+ *   workers; overlapping cold queries may scan the same file independently.
  *
  * The mtime is snapshotted BEFORE the read so an edit racing the parse
  * invalidates the next lookup instead of being masked by a post-read
  * timestamp (same discipline as the graph cache, #87).
  */
 import { statSync } from "node:fs";
+import { isMainThread } from "node:worker_threads";
 import type { ExportInfo } from "../types/analysis.ts";
+import type { ExportScanJob } from "./analysis-worker.ts";
+import { runAnalysisJobs } from "./analysis-workers.ts";
 import { enforceCacheLimit, setCacheEntry } from "./bounded-cache.ts";
+import type { ExportIndexEntry } from "./export-scan.ts";
+import { fileMtimeMs } from "./path-utils.ts";
 import { scanExports } from "./scanner.ts";
 import { withSourceFile } from "./source-file.ts";
 
@@ -35,14 +39,44 @@ import { withSourceFile } from "./source-file.ts";
  */
 export const MAX_EXPORT_INDEX_ENTRIES = 10_000;
 
-interface ExportIndexEntry {
-	mtimeMs: number;
-	exports: ExportInfo[];
-}
-
 const exportIndexCache = new Map<string, ExportIndexEntry>();
 let maxEntries = MAX_EXPORT_INDEX_ENTRIES;
 let parseCount = 0;
+const MIN_EXPORT_WORKER_FILES = 128;
+
+/** Keep large cold scans' parser heaps in a short-lived, bounded worker VM. */
+export async function prepareExportIndexLookup(
+	filePaths: readonly string[]
+): Promise<(filePath: string) => ExportInfo[]> {
+	const retained = new Map<string, ExportIndexEntry>();
+	const missing: string[] = [];
+	for (const file of filePaths) {
+		const cached = exportIndexCache.get(file);
+		if (cached?.mtimeMs === fileMtimeMs(file)) {
+			retained.set(file, cached);
+		} else {
+			missing.push(file);
+		}
+	}
+	if (!isMainThread || missing.length < MIN_EXPORT_WORKER_FILES) {
+		return createExportIndexLookup(filePaths);
+	}
+	const [entries] = await runAnalysisJobs<ExportScanJob, ExportIndexEntry[]>([
+		{ kind: "exports", files: missing },
+	]);
+	if (entries?.length !== missing.length) {
+		throw new Error("Export worker returned an incomplete index");
+	}
+	for (const [index, file] of missing.entries()) {
+		const entry = entries[index];
+		if (entry) {
+			retained.set(file, entry);
+		}
+	}
+	parseCount += missing.length;
+	// Admission happens in query order, keeping LRU behavior and equal-name ties.
+	return (file) => readIndexedFileExports(file, retained.get(file));
+}
 
 /**
  * Exports of `filePath`, parsed at most once per file content. Returns an

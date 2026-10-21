@@ -22,7 +22,7 @@ import {
 	type FreeVariableReport,
 	locateExtractComponentTarget,
 } from "../commands/extract-component.ts";
-import { findReportToJson, search } from "../commands/find.ts";
+import { findReportToJson, searchAsync } from "../commands/find.ts";
 import {
 	applyMockCleanup,
 	buildMockCleanupReport,
@@ -56,17 +56,22 @@ import {
 	WORKTREE_BLOCKED_MESSAGE,
 } from "./shared.ts";
 
-export function findTool(
+export async function findTool(
 	query: string,
 	project: string,
 	type: "file" | "export" | "all" = "all"
-): CallToolResult {
+): Promise<CallToolResult> {
 	const absoluteProject = path.resolve(project);
 	const discovery = discoverProject(absoluteProject);
 	if (discovery.configs.length === 0) {
 		return errorText(`No tsconfig.json files found in ${absoluteProject}`);
 	}
-	const result = search(query, discovery.fileOwnership, absoluteProject, type);
+	const result = await searchAsync(
+		query,
+		discovery.fileOwnership,
+		absoluteProject,
+		type
+	);
 	return jsonText(findReportToJson(query, result));
 }
 

@@ -111,6 +111,8 @@ async function run() {
 			runs: { type: "string", default: "3" },
 			cases: { type: "string", default: "audit,analyze,unused,find,similar" },
 			surface: { type: "string", default: "all" },
+			profile: { type: "boolean", default: false },
+			smol: { type: "boolean", default: false },
 		},
 	});
 	if (!(values.fixture && values.output)) {
@@ -151,6 +153,7 @@ async function run() {
 		cpu: cpus()[0]?.model,
 		memoryBytes: totalmem(),
 		runs,
+		smol: values.smol,
 		memoryLimitBytes: MEMORY_LIMIT_BYTES,
 	};
 	const receipts: unknown[] = [];
@@ -219,7 +222,14 @@ async function run() {
 	}
 	if (values.surface !== "cli") {
 		const session = startMcp(
-			[process.execPath, path.join(repository, "bin/resect-mcp.js")],
+			[
+				process.execPath,
+				...(values.smol ? ["--smol"] : []),
+				...(values.profile
+					? ["--preload", path.join(import.meta.dir, "memory-probe.ts")]
+					: []),
+				path.join(repository, "bin/resect-mcp.js"),
+			],
 			fixture,
 			path.join(output, "mcp.stderr")
 		);
@@ -236,6 +246,7 @@ async function run() {
 				concurrent = false
 			) => {
 				const start = performance.now();
+				const startedAt = Date.now();
 				const text = toolText(
 					await session.request("tools/call", {
 						name: item.name,
@@ -246,7 +257,7 @@ async function run() {
 				const name = `mcp-${item.name}`;
 				await Bun.write(path.join(output, `${name}-${trial}.stdout`), text);
 				const hash = await checkOutput(name, text);
-				const receipt = { name, trial, concurrent, elapsedMs, hash };
+				const receipt = { name, trial, concurrent, elapsedMs, startedAt, hash };
 				receipts.push(receipt);
 				console.log(JSON.stringify(receipt));
 			};

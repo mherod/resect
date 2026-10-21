@@ -118,7 +118,7 @@ export type {
 	FindOptions,
 	FindResult,
 } from "./commands/find.ts";
-export { findCommand, search } from "./commands/find.ts";
+export { findCommand, search, searchAsync } from "./commands/find.ts";
 // ── Commands: inline ────────────────────────────────────────────────
 export type {
 	InlineConflict,

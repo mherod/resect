@@ -1,4 +1,5 @@
 import path from "node:path";
+import { isMainThread } from "node:worker_threads";
 import ts from "typescript";
 import type {
 	DeclarationKind,
@@ -7,22 +8,25 @@ import type {
 	SimilarityGroup,
 	SimilarityReport,
 } from "../types/similar.ts";
-import type { FunctionScanJob } from "./analysis-worker.ts";
+import type { FunctionScanJob, SimilarityGroupJob } from "./analysis-worker.ts";
 import {
 	analysisWorkerCount,
 	partitionAnalysis,
 	runAnalysisJobs,
 } from "./analysis-workers.ts";
 import { TS_JS_VUE_EXTENSIONS } from "./constants.ts";
+import { declarationScanCache } from "./declaration-scan-cache.ts";
 import {
 	createNonSourceClassifier,
 	nonSourceWarning,
 } from "./non-source-files.ts";
+import { snapshotMtimes } from "./path-utils.ts";
 import { resolveTsConfig } from "./project.ts";
 import {
 	camelCaseTokenize,
 	fingerprintTokens,
 	jaccardSetSimilarity,
+	jaccardSortedTokens,
 } from "./similarity-algorithms.ts";
 import { collectFileFunctions } from "./similarity-collection.ts";
 import { discoverProject } from "./tsconfig-discovery.ts";
@@ -35,6 +39,7 @@ export { collectFunctions } from "./similarity-collection.ts";
  * an exact score on the strength of missing evidence.
  */
 const UNKNOWN_CONTENT_EVIDENCE = 0.5;
+const PREPARATION_BATCH_SIZE = 512;
 
 /** True for the declaration kinds whose content tokens come from a type body. */
 function isTypeOrInterface(kind: FunctionInfo["kind"]): boolean {
@@ -163,7 +168,7 @@ export interface SimilarityScanStats {
  * caller must fall back to the exhaustive scan.
  */
 function buildCandidateIndex(
-	bigramSets: Set<string>[],
+	bigramSets: Uint32Array[],
 	threshold: number,
 	names?: string[]
 ): {
@@ -197,7 +202,7 @@ function buildCandidateIndex(
 		return null;
 	}
 
-	const frequencies = new Map<string, number>();
+	const frequencies = new Map<number, number>();
 	for (const bigrams of bigramSets) {
 		for (const bigram of bigrams) {
 			frequencies.set(bigram, (frequencies.get(bigram) ?? 0) + 1);
@@ -208,19 +213,26 @@ function buildCandidateIndex(
 		(a, b) => (frequencies.get(a) ?? 0) - (frequencies.get(b) ?? 0)
 	);
 	const ranks = new Map(orderedTokens.map((token, rank) => [token, rank]));
-	const prefixes = bigramSets.map((bigrams) =>
-		[...bigrams]
+	const sharedPrefixes = new WeakMap<Uint32Array, number[]>();
+	const prefixes = bigramSets.map((bigrams) => {
+		const cached = sharedPrefixes.get(bigrams);
+		if (cached) {
+			return cached;
+		}
+		const prefix = [...bigrams]
 			.sort((a, b) => (ranks.get(a) ?? 0) - (ranks.get(b) ?? 0))
 			.slice(
 				0,
-				Math.max(0, bigrams.size - Math.floor(bound * bigrams.size) + 1)
-			)
-	);
-	const invertedIndex = new Map<string, number[]>();
+				Math.max(0, bigrams.length - Math.floor(bound * bigrams.length) + 1)
+			);
+		sharedPrefixes.set(bigrams, prefix);
+		return prefix;
+	});
+	const invertedIndex = new Map<number, number[]>();
 	const emptySetIndices: number[] = [];
 	for (let index = 0; index < bigramSets.length; index++) {
 		const bigrams = bigramSets[index];
-		if (!bigrams || bigrams.size === 0) {
+		if (!bigrams || bigrams.length === 0) {
 			emptySetIndices.push(index);
 			continue;
 		}
@@ -239,11 +251,11 @@ function buildCandidateIndex(
 	return {
 		candidatesFor(i: number, assigned: ReadonlySet<number>): number[] {
 			const bigramsI = bigramSets[i];
-			if (!bigramsI || bigramsI.size === 0) {
+			if (!bigramsI || bigramsI.length === 0) {
 				// Mutually-empty sets score Jaccard 1; keep ascending j > i.
 				return emptySetIndices.filter((j) => j > i && !assigned.has(j));
 			}
-			const sizeI = bigramsI.size;
+			const sizeI = bigramsI.length;
 			const generation = i + 1;
 			const candidates: number[] = [];
 			for (const bigram of prefixes[i] ?? []) {
@@ -252,7 +264,7 @@ function buildCandidateIndex(
 						continue;
 					}
 					seenAt[j] = generation;
-					const sizeJ = bigramSets[j]?.size ?? 0;
+					const sizeJ = bigramSets[j]?.length ?? 0;
 					if (Math.min(sizeI, sizeJ) / Math.max(sizeI, sizeJ) >= bound) {
 						candidates.push(j);
 					}
@@ -266,7 +278,8 @@ function buildCandidateIndex(
 
 export function findSimilarGroups(
 	functions: FunctionInfo[],
-	thresholdOrOptions: number | SimilarityFilterOptions = 0.8
+	thresholdOrOptions: number | SimilarityFilterOptions = 0.8,
+	onPreparationBatch?: () => void
 ): SimilarityGroup[] {
 	const opts =
 		typeof thresholdOrOptions === "number"
@@ -297,18 +310,46 @@ export function findSimilarGroups(
 	// Precompute token artifacts for all candidates to avoid redundant
 	// tokenization and bigram generation inside the O(n^2) pairwise loop.
 	const tokenCounts: number[] = [];
-	const preBigramSets: Set<string>[] = [];
+	const preBigramSets: Uint32Array[] = [];
 	const contentSets: Set<string>[] = [];
 	const nameSets: Set<string>[] = [];
 	const memberSets: Set<string>[] = [];
+	const sharedFingerprints = new Map<
+		string,
+		{ tokenCount: number; bigrams: Uint32Array }
+	>();
+	const vocabulary = new Map<string, number>();
+	const encode = (token: string): number => {
+		const existing = vocabulary.get(token);
+		if (existing !== undefined) {
+			return existing;
+		}
+		const id = vocabulary.size;
+		vocabulary.set(token, id);
+		return id;
+	};
 	for (const fn of candidates) {
-		const { tokenCount, bigrams } = fingerprintTokens(fn.normalizedBody);
+		let fingerprint = sharedFingerprints.get(fn.normalizedBody);
+		if (!fingerprint) {
+			const parsed = fingerprintTokens(fn.normalizedBody);
+			fingerprint = {
+				tokenCount: parsed.tokenCount,
+				bigrams: Uint32Array.from(parsed.bigrams, encode).sort(),
+			};
+			sharedFingerprints.set(fn.normalizedBody, fingerprint);
+		}
+		const { tokenCount, bigrams } = fingerprint;
 		tokenCounts.push(tokenCount);
 		preBigramSets.push(bigrams);
 		contentSets.push(new Set(fn.contentTokens));
 		nameSets.push(new Set(camelCaseTokenize(fn.name)));
 		memberSets.push(new Set(fn.memberNames));
+		if (tokenCounts.length % PREPARATION_BATCH_SIZE === 0) {
+			onPreparationBatch?.();
+		}
 	}
+	sharedFingerprints.clear();
+	vocabulary.clear();
 
 	// Exact candidate pruning (#246): only pairs that can still reach the
 	// threshold under the bigram-Jaccard bound are scored. Falls back to the
@@ -320,6 +361,7 @@ export function findSimilarGroups(
 				threshold,
 				sameNameOnly ? candidates.map((fn) => fn.name) : undefined
 			);
+	onPreparationBatch?.();
 	const allIndicesAfter = (i: number): number[] => {
 		const rest: number[] = [];
 		for (let j = i + 1; j < candidates.length; j++) {
@@ -468,7 +510,7 @@ export function findSimilarGroups(
 				// Use precomputed bigrams to capture token ordering — plain set
 				// Jaccard gives misleading 1.0 for functions with the same token
 				// vocabulary but different structure.
-				score = jaccardSetSimilarity(bigramsI, bigramsJ);
+				score = jaccardSortedTokens(bigramsI, bigramsJ);
 				// Above 0.2 even the low-content blend cannot lift a sub-threshold
 				// bigram score to acceptance. Avoid semantic work on these misses.
 				if (threshold >= 0.2 && score < threshold) {
@@ -601,20 +643,32 @@ function findProjectRoot(dir: string): string {
 /**
  * Collect functions from an array of file paths using bounded concurrency.
  */
-export async function collectFunctionsFromFiles(filePaths: string[]): Promise<{
+export async function collectFunctionsFromFiles(
+	filePaths: string[],
+	exclusive = false
+): Promise<{
 	functions: FunctionInfo[];
 	totalFiles: number;
 }> {
 	const workerCount = analysisWorkerCount(filePaths.length);
 	if (workerCount > 1) {
+		const scanFiles = [...filePaths];
+		const cached = declarationScanCache.get(scanFiles);
+		if (cached) {
+			return cached;
+		}
+		const mtimes = snapshotMtimes(scanFiles);
 		const jobs: FunctionScanJob[] = partitionAnalysis(
-			filePaths,
-			workerCount
+			scanFiles,
+			exclusive ? 1 : workerCount
 		).map((files) => ({ kind: "functions", files }));
 		const results = await runAnalysisJobs<FunctionScanJob, FunctionInfo[][]>(
-			jobs
+			jobs,
+			{ exclusive }
 		);
-		return { functions: results.flat(2), totalFiles: filePaths.length };
+		const result = { functions: results.flat(2), totalFiles: scanFiles.length };
+		declarationScanCache.set(scanFiles, mtimes, result);
+		return result;
 	}
 	const { mapConcurrent } = await import("./concurrency.ts");
 	const results = await mapConcurrent(filePaths, collectFileFunctions);
@@ -669,7 +723,7 @@ export async function scanProjectFunctions(
 		(f) => TS_JS_VUE_EXTENSIONS.test(f) && f.startsWith(absoluteDir)
 	);
 
-	return collectFunctionsFromFiles(allFiles);
+	return collectFunctionsFromFiles(allFiles, true);
 }
 
 /**
@@ -721,8 +775,8 @@ export async function scanWorkspaceFunctions(directory: string): Promise<{
 	}
 
 	const bounded = filterToWorkspaceBoundary(allFiles, workspace.root);
-	const result = await collectFunctionsFromFiles(bounded);
-	return { ...result, packageCount: workspace.packages.length };
+	const result = await collectFunctionsFromFiles(bounded, true);
+	return Object.assign(result, { packageCount: workspace.packages.length });
 }
 
 /**
@@ -747,6 +801,36 @@ export interface SimilarityDiscoveryOptions extends SimilarityFilterOptions {
 }
 
 export type AnalyzeSimilarityOptions = SimilarityDiscoveryOptions;
+
+const MIN_GROUPING_WORKER_DECLARATIONS = 2048;
+
+async function groupCollectedFunctions(
+	functions: FunctionInfo[],
+	options: SimilarityFilterOptions
+): Promise<SimilarityGroup[]> {
+	const key = JSON.stringify([process.cwd(), options]);
+	const cached = declarationScanCache.getGroups(functions, key);
+	if (cached) {
+		return cached;
+	}
+	if (!isMainThread || functions.length < MIN_GROUPING_WORKER_DECLARATIONS) {
+		return findSimilarGroups(functions, options);
+	}
+	const [groups] = await runAnalysisJobs<SimilarityGroupJob, SimilarityGroup[]>(
+		[{ kind: "similarity-groups", functions, options }],
+		{
+			exclusive: true,
+			onDispatched: (job) => {
+				job.functions.length = 0;
+			},
+		}
+	);
+	if (!groups) {
+		throw new Error("Similarity worker returned no result");
+	}
+	declarationScanCache.setGroups(functions, key, groups);
+	return groups;
+}
 
 export async function analyzeSimilarity(
 	directoryOrOpts: string | AnalyzeSimilarityOptions,
@@ -801,26 +885,42 @@ export async function analyzeSimilarity(
 		};
 	};
 
-	if (ws) {
-		const result = await scanWorkspaceFunctions(dir);
-		const filtered = await excludeNonSource(result.functions);
-		const groups = findSimilarGroups(filtered.functions, filterOpts);
-		return {
-			groups,
-			totalFunctions: filtered.functions.length,
-			totalFiles: result.totalFiles,
-			packageCount: result.packageCount,
-			warnings: filtered.warnings,
-		};
+	const scan = ws
+		? await scanWorkspaceFunctions(dir)
+		: await scanProjectFunctions(dir, pr);
+	const packageInfo =
+		"packageCount" in scan ? { packageCount: scan.packageCount as number } : {};
+	const groupKey = JSON.stringify([process.cwd(), filterOpts]);
+	const summary = declarationScanCache.getSummary(scan, groupKey);
+	if (summary) {
+		const excluded = opts.includeIgnored
+			? []
+			: (await createNonSourceClassifier([...summary.files], dir)).excluded;
+		if (excluded.length === 0) {
+			const groups = declarationScanCache.getScanGroups(scan, groupKey);
+			if (groups) {
+				return {
+					groups,
+					totalFunctions: summary.totalFunctions,
+					totalFiles: scan.totalFiles,
+					warnings: [],
+					...packageInfo,
+				};
+			}
+		}
 	}
-
-	const { functions, totalFiles } = await scanProjectFunctions(dir, pr);
+	const { functions, totalFiles } = scan;
 	const filtered = await excludeNonSource(functions);
-	const groups = findSimilarGroups(filtered.functions, filterOpts);
+	const totalFunctions = filtered.functions.length;
+	if (filtered.functions !== functions) {
+		functions.length = 0;
+	}
+	const groups = await groupCollectedFunctions(filtered.functions, filterOpts);
 	return {
 		groups,
-		totalFunctions: filtered.functions.length,
+		totalFunctions,
 		totalFiles,
 		warnings: filtered.warnings,
+		...packageInfo,
 	};
 }

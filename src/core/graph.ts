@@ -8,6 +8,7 @@ import type { ProjectConfig } from "../types.ts";
 import type { GraphScanJob } from "./analysis-worker.ts";
 import { runAnalysisJobs } from "./analysis-workers.ts";
 import {
+	createCacheResetter,
 	enforceCacheLimit,
 	setCacheEntry,
 	touchCacheEntry,
@@ -153,6 +154,13 @@ const graphCacheMtimes = new Map<string, Map<string, number>>();
  * source file changed.
  */
 const graphCacheFingerprints = new Map<string, string>();
+
+/** Release plain cached records when a dedicated analysis VM has finished. */
+export const clearGraphCache = createCacheResetter(
+	graphCache,
+	graphCacheMtimes,
+	graphCacheFingerprints
+);
 
 /**
  * Compiler options that change how module specifiers resolve or how the

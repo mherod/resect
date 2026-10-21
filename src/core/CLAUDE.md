@@ -276,6 +276,20 @@ retain only plain records. Each analysis releases its workers on
 success, failure, or timeout; infrastructure failures must reject rather than
 silently report an empty successful scan.
 
+Large CLI/MCP similarity scans reserve the worker budget for one collection
+worker, then one grouping worker. Large async export searches use the same
+bounded queue. Preserve the synchronous `search` library API; command and MCP
+adapters await `searchAsync`. Wait for a clean worker exit after its result;
+a late worker error must reject the request. Release worker-owned roots before
+collection and close the worker port; never leave idle workers pinning a caller.
+
+Similarity keeps one serialized declaration/group snapshot within a 128 MiB
+retention budget. Validate ordered file membership and pre-scan mtimes; key
+grouping results by options and working directory. Recheck non-source exclusions
+before using cached groups. Return independent records to callers, and decode
+declarations lazily when a cached report already suffices. Cache ownership uses
+opaque tokens so a caller retaining an old array cannot pin an evicted snapshot.
+
 Include the worker entrypoint in all compiled and library build commands. Verify
 worker execution from the installed shims, standalone binaries, and built library
 outside the source directory; source-only tests cannot catch missing worker assets.
@@ -290,6 +304,10 @@ with exact-name buckets when requested, otherwise probe a rare-token prefix
 whose omitted suffix cannot contain the required Jaccard overlap. Preserve the
 low-threshold content-blend bound, empty-set behavior, and ascending candidate
 order; greedy assignment makes both membership and ordering observable.
+
+Intern structural bigrams to sorted, unique numeric IDs and share fingerprints
+for identical normalized bodies. Numeric intersection must preserve exact
+Jaccard scores, including empty sets; retain insertion order for frequency ties.
 
 DON'T partition mixed declarations by kind unless the caller requested a kind
 filter, or discard common tokens without an overlap bound. Verify pruning

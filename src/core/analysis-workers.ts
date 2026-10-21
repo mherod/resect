@@ -29,8 +29,8 @@ const MAX_ANALYSIS_WORKERS = 2;
 // Parsing small projects is cheaper than starting TypeScript in another VM.
 const MIN_FILES_PER_WORKER = 1024;
 const WORKER_TIMEOUT_MS = 120_000;
-let activeWorkers = 0;
-const waiting: Array<() => void> = [];
+let activeSlots = 0;
+const waiting: Array<{ slots: number; resolve: () => void }> = [];
 
 // Source modules live in core/; bundled entrypoints and shared chunks live at
 // the output root. Both library and executable builds include this entrypoint.
@@ -62,20 +62,22 @@ export function partitionAnalysis<T>(items: T[], count: number): T[][] {
 	return batches;
 }
 
-async function acquireWorker(): Promise<void> {
-	if (activeWorkers < MAX_ANALYSIS_WORKERS) {
-		activeWorkers += 1;
+async function acquireWorker(slots: number): Promise<void> {
+	if (waiting.length === 0 && activeSlots + slots <= MAX_ANALYSIS_WORKERS) {
+		activeSlots += slots;
 		return;
 	}
-	await new Promise<void>((resolve) => waiting.push(resolve));
+	await new Promise<void>((resolve) => waiting.push({ slots, resolve }));
 }
 
-function releaseWorker(): void {
-	const next = waiting.shift();
-	if (next) {
-		next();
-	} else {
-		activeWorkers -= 1;
+function releaseWorker(slots: number): void {
+	activeSlots -= slots;
+	while (waiting[0] && activeSlots + waiting[0].slots <= MAX_ANALYSIS_WORKERS) {
+		const next = waiting.shift();
+		if (next) {
+			activeSlots += next.slots;
+			next.resolve();
+		}
 	}
 }
 
@@ -84,15 +86,23 @@ async function runWorkerJob<Input, Output>(
 	url: URL,
 	signal: AbortSignal,
 	timeoutMs: number,
-	onProgress?: ProgressCallback
+	slots: number,
+	onProgress?: ProgressCallback,
+	onDispatched?: (job: Input) => void
 ): Promise<Output> {
-	await acquireWorker();
+	await acquireWorker(slots);
 	let worker: Worker | undefined;
+	let cleanupRequest: (() => void) | undefined;
 	try {
 		signal.throwIfAborted();
-		worker = new Worker(url, { workerData: job });
+		// Bun forwards this option through node:worker_threads to its VM. Prefer
+		// the smaller heap policy for disposable analysis; it is not a hard cap.
+		const workerOptions = { workerData: job, smol: true };
+		worker = new Worker(url, workerOptions);
+		onDispatched?.(job);
 		const running = worker;
-		return await new Promise<Output>((resolve, reject) => {
+		const output = await new Promise<Output>((resolve, reject) => {
+			let received: { result: Output } | undefined;
 			const onAbort = () => {
 				reject(
 					new Error("Analysis worker cancelled", { cause: signal.reason })
@@ -105,8 +115,9 @@ async function runWorkerJob<Input, Output>(
 				clearTimeout(timer);
 				signal.removeEventListener("abort", onAbort);
 			};
+			cleanupRequest = cleanup;
 			signal.addEventListener("abort", onAbort, { once: true });
-			running.on("message", (result: Output | AnalysisProgress) => {
+			running.on("message", (result: unknown) => {
 				if (isAnalysisProgress(result)) {
 					try {
 						onProgress?.(result.done, result.total);
@@ -122,8 +133,7 @@ async function runWorkerJob<Input, Output>(
 					}
 					return;
 				}
-				cleanup();
-				resolve(result);
+				received = { result: result as Output };
 			});
 			running.once("error", (error: Error) => {
 				cleanup();
@@ -131,23 +141,37 @@ async function runWorkerJob<Input, Output>(
 			});
 			running.once("exit", (code) => {
 				cleanup();
+				if (code === 0 && received) {
+					resolve(received.result);
+					return;
+				}
 				reject(
 					new Error(`Analysis worker exited without a result (code ${code})`)
 				);
 			});
 		});
+		return output;
 	} finally {
+		cleanupRequest?.();
 		if (worker) {
 			await worker.terminate();
+			worker.removeAllListeners();
 		}
-		releaseWorker();
+		releaseWorker(slots);
 	}
 }
 
 /** Ordered results, a process-wide thread cap, and no idle workers after a call. */
 export async function runAnalysisJobs<Input, Output>(
 	jobs: Input[],
-	options: { url?: URL; timeoutMs?: number; onProgress?: ProgressCallback } = {}
+	options: {
+		url?: URL;
+		timeoutMs?: number;
+		onProgress?: ProgressCallback;
+		exclusive?: boolean;
+		/** Called after the input has been copied into the worker. */
+		onDispatched?: (job: Input) => void;
+	} = {}
 ): Promise<Output[]> {
 	const controller = new AbortController();
 	const pending = jobs.map(async (job) => {
@@ -157,7 +181,9 @@ export async function runAnalysisJobs<Input, Output>(
 				options.url ?? analysisWorkerUrl,
 				controller.signal,
 				options.timeoutMs ?? WORKER_TIMEOUT_MS,
-				options.onProgress
+				options.exclusive ? MAX_ANALYSIS_WORKERS : 1,
+				options.onProgress,
+				options.onDispatched
 			);
 		} catch (error) {
 			controller.abort(error);

@@ -1,6 +1,9 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
-import { createExportIndexLookup } from "../core/export-index.ts";
+import {
+	createExportIndexLookup,
+	prepareExportIndexLookup,
+} from "../core/export-index.ts";
 import { discoverProject } from "../core/tsconfig-discovery.ts";
 import {
 	discoverWorkspace,
@@ -143,7 +146,12 @@ export async function findCommand(options: FindOptions): Promise<void> {
 				)
 			);
 		}
-		const result = search(query, filesToSearch, absoluteProject, type);
+		const result = await searchAsync(
+			query,
+			filesToSearch,
+			absoluteProject,
+			type
+		);
 		emit(result);
 		return;
 	}
@@ -168,16 +176,37 @@ export async function findCommand(options: FindOptions): Promise<void> {
 			)
 		);
 	}
-	const result = search(query, filesToSearch, absoluteProject, type);
+	const result = await searchAsync(query, filesToSearch, absoluteProject, type);
 
 	emit(result);
+}
+
+const SOURCE_EXTENSION = /\.(ts|tsx|js|jsx|mts|cts|mjs|cjs)$/;
+
+/** Async CLI/MCP/library path; the synchronous search API remains available. */
+export async function searchAsync(
+	query: string,
+	fileOwnership: Map<string, unknown>,
+	baseDir: string,
+	type: "file" | "export" | "all"
+): Promise<FindResult> {
+	const lookup =
+		type === "file"
+			? undefined
+			: await prepareExportIndexLookup(
+					[...fileOwnership.keys()].filter((file) =>
+						SOURCE_EXTENSION.test(file)
+					)
+				);
+	return search(query, fileOwnership, baseDir, type, lookup);
 }
 
 export function search(
 	query: string,
 	fileOwnership: Map<string, unknown>,
 	baseDir: string,
-	type: "file" | "export" | "all"
+	type: "file" | "export" | "all",
+	lookup?: (file: string) => ExportInfo[]
 ): FindResult {
 	const files: FileMatch[] = [];
 	const exports: ExportMatch[] = [];
@@ -205,10 +234,10 @@ export function search(
 
 	// Search exports by name
 	if (type === "export" || type === "all") {
-		const getExports = createExportIndexLookup(allFiles);
+		const getExports = lookup ?? createExportIndexLookup(allFiles);
 		for (const filePath of allFiles) {
 			// Only scan TypeScript/JavaScript files
-			if (!/\.(ts|tsx|js|jsx|mts|cts|mjs|cjs)$/.test(filePath)) {
+			if (!SOURCE_EXTENSION.test(filePath)) {
 				continue;
 			}
 
