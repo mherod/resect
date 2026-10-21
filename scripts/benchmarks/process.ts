@@ -161,10 +161,10 @@ export function startMcp(
 						if (request && response.id) {
 							pending.delete(response.id);
 							clearTimeout(request.timer);
-							if (response.error !== undefined) {
-								request.reject(new Error(JSON.stringify(response.error)));
-							} else {
+							if (response.error === undefined) {
 								request.resolve(response.result);
+							} else {
+								request.reject(new Error(JSON.stringify(response.error)));
 							}
 						}
 					}
