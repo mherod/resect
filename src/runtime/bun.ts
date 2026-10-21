@@ -1,4 +1,3 @@
-import { Glob } from "bun";
 import {
 	buildResult,
 	KILL_GRACE_MS,
@@ -52,7 +51,7 @@ const bunGlob: GlobRunner = {
 		pattern: string,
 		{ cwd, absolute }: { cwd: string; absolute?: boolean }
 	): AsyncIterable<string> {
-		const g = new Glob(pattern);
+		const g = new Bun.Glob(pattern);
 		return g.scan({ cwd, absolute });
 	},
 };
