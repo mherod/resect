@@ -6,7 +6,12 @@ import {
 	setCacheEntry,
 	touchCacheEntry,
 } from "./bounded-cache.ts";
-import { mtimesUnchanged, samePathSet, snapshotMtimes } from "./path-utils.ts";
+import {
+	fileMtimeMs,
+	mtimesUnchanged,
+	samePathSet,
+	snapshotMtimes,
+} from "./path-utils.ts";
 
 /** Directories to skip during tsconfig discovery */
 const SKIP_DIRECTORIES = new Set([
@@ -132,9 +137,12 @@ export function discoverProject(projectDir: string): ProjectDiscovery {
 		...extendsChain,
 	]);
 
+	// Watch source-directory membership before parsing, including include roots
+	// outside this checkout. Source content edits do not change ownership.
+	const watchedDirectories = new Set<string>();
 	// Parse each config
 	for (const tsconfigPath of tsconfigPaths) {
-		const info = parseTsConfig(tsconfigPath);
+		const info = parseTsConfig(tsconfigPath, mtimes, watchedDirectories);
 		if (info) {
 			configs.push(info);
 		}
@@ -424,7 +432,11 @@ function collectExtendsChainFiles(tsconfigPaths: string[]): string[] {
 /**
  * Parse a tsconfig file into TsConfigInfo
  */
-function parseTsConfig(tsconfigPath: string): TsConfigInfo | null {
+function parseTsConfig(
+	tsconfigPath: string,
+	mtimes: Map<string, number>,
+	watchedDirectories: Set<string>
+): TsConfigInfo | null {
 	const configFile = ts.readConfigFile(tsconfigPath, (f) => ts.sys.readFile(f));
 	if (configFile.error) {
 		return null;
@@ -434,7 +446,44 @@ function parseTsConfig(tsconfigPath: string): TsConfigInfo | null {
 
 	const parsed = ts.parseJsonConfigFileContent(
 		configFile.config,
-		ts.sys,
+		{
+			...ts.sys,
+			readDirectory(root, extensions, excludes, includes, depth) {
+				for (const include of includes) {
+					const wildcard = include.search(/[*?]/);
+					const prefix = wildcard < 0 ? include : include.slice(0, wildcard);
+					const directory =
+						wildcard < 0 && !path.extname(prefix)
+							? path.resolve(root, prefix)
+							: path.dirname(
+									path.resolve(
+										root,
+										wildcard < 0 ? prefix : `${prefix}placeholder`
+									)
+								);
+					const explicitSpecialDirectory = include
+						.split(/[\\/]/)
+						.some(
+							(segment) =>
+								segment === "node_modules" ||
+								(segment.startsWith(".") && segment !== "." && segment !== "..")
+						);
+					watchSourceDirectories(
+						directory,
+						mtimes,
+						watchedDirectories,
+						explicitSpecialDirectory
+					);
+				}
+				return ts.sys.readDirectory(
+					root,
+					extensions,
+					excludes,
+					includes,
+					depth
+				);
+			},
+		},
 		rootDir
 	);
 
@@ -482,6 +531,53 @@ function parseTsConfig(tsconfigPath: string): TsConfigInfo | null {
 		compilerOptions: parsed.options,
 		pathAliases,
 	};
+}
+
+/** Watch directory entries, not source contents, so additions invalidate ownership. */
+function watchSourceDirectories(
+	directory: string,
+	mtimes: Map<string, number>,
+	visited: Set<string>,
+	includeSpecialDirectories: boolean
+): void {
+	if (!ts.sys.directoryExists(directory)) {
+		let existing = path.dirname(directory);
+		while (
+			!ts.sys.directoryExists(existing) &&
+			path.dirname(existing) !== existing
+		) {
+			existing = path.dirname(existing);
+		}
+		if (!mtimes.has(existing)) {
+			mtimes.set(existing, fileMtimeMs(existing));
+		}
+		return;
+	}
+	if (!mtimes.has(directory)) {
+		mtimes.set(directory, fileMtimeMs(directory));
+	}
+	const real = ts.sys.realpath?.(directory) ?? directory;
+	const visitKey = `${real}:${includeSpecialDirectories}`;
+	if (visited.has(visitKey)) {
+		return;
+	}
+	visited.add(visitKey);
+	for (const child of ts.sys.getDirectories(directory)) {
+		// Explicit include roots inside node_modules are still watched; broad
+		// TypeScript wildcards exclude dependency and hidden directories.
+		if (
+			!includeSpecialDirectories &&
+			(child === "node_modules" || child.startsWith("."))
+		) {
+			continue;
+		}
+		watchSourceDirectories(
+			path.join(directory, child),
+			mtimes,
+			visited,
+			includeSpecialDirectories
+		);
+	}
 }
 
 /**

@@ -45,3 +45,21 @@ on macOS, native `getrusage` peak samples. The post-exit child resource receipt
 remains authoritative. `--smol` is a diagnostic MCP startup option recorded in
 metadata, not a production default or a memory limit. Keep profiled and ordinary
 acceptance measurements distinct.
+
+## Edit acceptance
+
+Run graph edit acceptance in three fresh child processes. It creates its own
+disposable VS Code copy, compares every phase with an independent fresh graph,
+and checks the 2,000,000,000-byte peak budget including reference/comparison work:
+
+```sh
+bun scripts/benchmarks/graph-edits.ts /path/to/pinned/vscode /tmp/new-graph-results
+```
+
+Each child covers cold/warm calls, a one-file edit, addition, rename, deletion
+and a mixed edit. Receipts include cache hits, parsed files, timing and complete
+ordered graph hashes. The original and disposable copies must be clean after
+the experiment. Output directories must be new; evidence is never overwritten.
+Hash records incrementally in their original order: materializing several
+complete JSON copies inflated the verification harness itself above 2 GB.
+The measured child still includes its independent fresh-reference workers.

@@ -14,7 +14,7 @@ warnings, not just counts. Local verification and commits do not imply a push.
 |---|---|---|---|
 | 1 | Regression fixture | Repository-owned harness, pinned revision/cleanliness checks, baseline comparison, time/RSS receipts, repeated and concurrent MCP requests, timeout/failure tests | Harness verified; memory regression detected |
 | 2 | MCP costs | First bound retained memory in mixed sessions; then identical-input find discovery/search/serialization/transport attribution, measured fix or explanation, exact ordered report parity | Verified: mixed session 1.868 GB; exact reports |
-| 3 | Small edits | Edit/add/delete/rename/mixed changes; unchanged metadata reuse; config and dependency-resolution invalidation; fresh-process parity and reparse/latency receipts | Pending |
+| 3 | Small edits | Edit/add/delete/rename/mixed changes; unchanged metadata reuse; config and dependency-resolution invalidation; fresh-process parity and reparse/latency receipts | Verified: 21 graph comparisons; mixed MCP 1.876 GB |
 | 4 | Unused evidence | Explain unknown entrypoints; improve only provable cases; seed known public/used/internal/dead exports; keep unresolved cases conservative | Pending |
 | 5 | Mutation acceptance | Real heavily referenced move/rename, barrel/alias/config boundaries, conflicts, verification delta, rollback, time and RSS in disposable copies | Pending |
 
@@ -97,8 +97,8 @@ their cold timings were slower and variable, so those batches were not retained.
 Full similarity output also matched: all 3,809 groups, scores and ordering,
 16,601,677 output characters, SHA-256
 `781dc8f28896028d29e02ff732e1a648910dce9b03b324c3c94a44815bf94fd5`
-after fixture-path normalization. This comparison used the intermediate 32-file
-batch variant; grouping logic is identical in the final 64-file variant.
+after fixture-path normalization. The final 64-file variant also matched in
+19.28 seconds at 1,263,665,152 bytes. Signed local commit: `2570b8a`.
 
 Find attribution confirmed 14,888 cold parses and 4,888 warm parses with the
 10,000-entry cache unchanged. In the 32-file diagnostic variant, synchronous
@@ -116,3 +116,33 @@ entrypoint receipts use `resect-full-groups-*`, `resect-find-attribution-*` and
 `resect-built-worker*`. Source shims, compiled CLI/MCP workers and the built
 library were exercised outside the source directory. These are local results,
 not a universal OS-enforced limit or a mutation-memory guarantee.
+
+## Job 3 graph acceptance
+
+Discovery now invalidates ownership after source additions, renames and removals,
+including outside include roots and explicit hidden directory patterns. Graphs
+track imported sources outside `include` and resolver manifests/directories.
+Small edits reuse unchanged plain records; membership/configuration/resolution
+changes and every 33rd edited build take the full path. Mutation programs remain
+intact. All 31 focused graph/discovery tests pass.
+
+Three fresh VS Code edit processes each compared seven phases against an
+independent complete graph. Cold graph medians were 7.77 seconds; warm hits
+41.8 ms; one-file edits 115.4 ms with one parsed file instead of 10,740.
+All 21 comparisons preserved ordered edges, inverse edges, barrels, export
+metadata and skipped files. Worst whole-process peak was 1,340,489,728 bytes,
+including independent reference workers. Both original and disposable copies
+finished clean. Evidence: `/private/tmp/resect-vscode-incremental-hashed`.
+
+An earlier harness retained multiple complete JSON strings and reached
+2,012,233,728 bytes despite exact graph parity. That run failed the gate.
+Incremental hashing of the same complete ordered records removed the harness
+overhead; the original failed receipts remain in
+`/private/tmp/resect-vscode-incremental-acceptance`.
+
+The complete command rerun also passed: 15 fresh CLI and 20 MCP reports match
+the original baseline exactly. Mixed MCP peak: **1,875,722,240 bytes**. CLI
+medians in audit/analyze/unused/find/similar order: 9.73/30.74/37.88/10.54/19.32
+seconds. Worst CLI peak: 1,298,857,984 bytes. Cold `unused` and `find` are slower
+than Job 2's run; the small-edit improvement does not imply faster cold scans.
+Evidence: `/private/tmp/resect-vscode-job3-all/receipts.json`.

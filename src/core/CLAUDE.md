@@ -240,6 +240,18 @@ Workspace hydration collects and deduplicates package manifests before parsing, 
 
 `graphCache` (#78, #87) and `discoveryCache` (#88) are bounded LRUs and use `snapshotMtimes(paths)` plus `mtimesUnchanged(snapshot)` from `path-utils.ts`. Evict companion metadata through the shared bounded-cache helper so cache groups cannot drift. The sync `statSync().mtimeMs` probe catches edits/deletions without rebuilding unchanged graphs. Discovery detects added configs with a throttled ~2s re-glob.
 
+Streamed graph reuse also validates ordered source membership, imported source
+mtimes outside `include`, and resolver manifest/directory probes. Reparse fewer
+than 128 changed files in the caller and reuse unchanged plain records without
+mutating an older graph. Rebuild after membership/configuration/resolution
+changes or 32 incremental builds; the latter bounds retained probe history.
+Snapshot inputs before reading, and compare complete ordered graphs with a
+fresh build after edits, additions, deletions, renames and mixed changes.
+
+Discovery watches include-root directory membership, including roots outside
+the project, so source additions invalidate ownership without a tsconfig edit.
+Keep source-content changes separate from ownership changes.
+
 DO write invalidation regressions first in `graph.test.ts` or `tsconfig-discovery.test.ts`, then remeasure `unused` and `audit` against the 20s Bun test timeout.
 
 DON'T use async `Bun.file().lastModified` or content hashing in validity checks; both caused full rebuilds and timeouts.

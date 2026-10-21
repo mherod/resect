@@ -2,7 +2,7 @@ import path from "node:path";
 import { isMainThread } from "node:worker_threads";
 import ts from "typescript";
 import type { ExportInfo } from "../types/analysis.ts";
-import type { BarrelExport, ModuleReference } from "../types/graph.ts";
+import type { ModuleReference } from "../types/graph.ts";
 import type { ProgressCallback } from "../types/progress.ts";
 import type { ProjectConfig } from "../types.ts";
 import type { GraphScanJob } from "./analysis-worker.ts";
@@ -14,7 +14,11 @@ import {
 	touchCacheEntry,
 } from "./bounded-cache.ts";
 import { mapConcurrent } from "./concurrency.ts";
-import { mtimesUnchanged, snapshotMtimes } from "./path-utils.ts";
+import {
+	resolutionInputsUnchanged,
+	trackResolutionInputs,
+} from "./graph-inputs.ts";
+import { fileMtimeMs, mtimesUnchanged, snapshotMtimes } from "./path-utils.ts";
 import { createProgram, getProjectFiles, loadProject } from "./project.ts";
 import { createResolutionContext, normalizePath } from "./resolver.ts";
 import {
@@ -93,6 +97,14 @@ export interface DependencyGraph {
 	sourceMetadata?: Map<string, GraphSourceMetadata>;
 	/** Resolution settings remain available even when no program is retained. */
 	compilerOptions?: ts.CompilerOptions;
+	/** Plain cache evidence, including imports outside the config's include set. */
+	inputs?: {
+		files: string[];
+		sources: Map<string, number>;
+		resolution: Map<string, number>;
+		parsedFiles: number;
+		incrementalBuilds: number;
+	};
 }
 
 export interface GraphBuildOptions {
@@ -105,7 +117,7 @@ interface SuccessfulFileScan {
 	skipped: false;
 	normalizedFile: string;
 	refs: ModuleReference[];
-	barrels: BarrelExport[];
+	barrelPaths: string[];
 	exports: ExportInfo[];
 }
 
@@ -119,6 +131,8 @@ type FileScanResult = SuccessfulFileScan | SkippedFileScan;
 // Isolate parsing even on single-core hosts: this threshold bounds the caller's
 // transient AST heap, independently of similarity's parallelism threshold.
 const MIN_GRAPH_WORKER_FILES = 128;
+// Bound retained resolution history across edits to existing files.
+const MAX_INCREMENTAL_GRAPH_BUILDS = 32;
 
 const TYPESCRIPT_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts"]);
 const JAVASCRIPT_EXTENSIONS = new Set([".js", ".jsx", ".mjs", ".cjs"]);
@@ -229,11 +243,16 @@ function computeConfigFingerprint(project: ProjectConfig): string {
  * via the shared `mtimesUnchanged` probe). Cheap enough to run on every lookup
  * without forcing a rebuild when nothing changed.
  */
-function isCacheValid(
+function hasSameGraphFiles(
 	cached: DependencyGraph,
-	cachedMtimes: Map<string, number>,
 	currentFiles: readonly string[]
 ): boolean {
+	if (cached.inputs) {
+		return (
+			currentFiles.length === cached.inputs.files.length &&
+			currentFiles.every((file, index) => file === cached.inputs?.files[index])
+		);
+	}
 	if (
 		cached.imports.size + cached.skippedFiles.length !==
 		currentFiles.length
@@ -245,7 +264,7 @@ function isCacheValid(
 			return false;
 		}
 	}
-	return mtimesUnchanged(cachedMtimes);
+	return true;
 }
 
 /**
@@ -261,21 +280,31 @@ export async function buildDependencyGraph(
 	const fingerprint = `${computeConfigFingerprint(project)}:${retainProgram}`;
 	const cached = touchCacheEntry(graphCache, project.tsconfigPath);
 	const cachedMtimes = graphCacheMtimes.get(project.tsconfigPath);
-	if (
+	const reusable =
 		cached &&
 		cachedMtimes &&
 		graphCacheFingerprints.get(project.tsconfigPath) === fingerprint &&
-		isCacheValid(cached, cachedMtimes, files)
-	) {
+		hasSameGraphFiles(cached, files) &&
+		cached.inputs &&
+		resolutionInputsUnchanged(cached.inputs.resolution);
+	if (reusable && mtimesUnchanged(cachedMtimes)) {
 		options.onProgress?.(files.length, files.length);
 		return cached;
 	}
-	// Snapshot mtimes before parsing so an edit made mid-build invalidates the
-	// next lookup rather than being masked by a post-build timestamp.
-	const mtimes = snapshotMtimes(files);
+	// Small edits reuse plain records in the caller. Larger rebuilds keep their
+	// ASTs in the bounded worker; never clone a whole old graph just to reuse it.
+	const previous =
+		!retainProgram &&
+		reusable &&
+		(cached.inputs?.incrementalBuilds ?? MAX_INCREMENTAL_GRAPH_BUILDS) <
+			MAX_INCREMENTAL_GRAPH_BUILDS &&
+		[...cachedMtimes].filter(([file, mtime]) => fileMtimeMs(file) !== mtime)
+			.length < MIN_GRAPH_WORKER_FILES
+			? cached
+			: undefined;
 	let result: DependencyGraph;
 	if (
-		!retainProgram &&
+		!(retainProgram || previous) &&
 		isMainThread &&
 		files.length >= MIN_GRAPH_WORKER_FILES
 	) {
@@ -288,10 +317,13 @@ export async function buildDependencyGraph(
 		}
 		result = workerGraph;
 	} else {
-		result = await scanDependencyGraph(project, files, options);
+		result = await scanDependencyGraph(project, files, options, previous);
 	}
 	setCacheEntry(graphCache, project.tsconfigPath, result);
-	graphCacheMtimes.set(project.tsconfigPath, mtimes);
+	graphCacheMtimes.set(
+		project.tsconfigPath,
+		result.inputs?.sources ?? snapshotMtimes(files)
+	);
 	graphCacheFingerprints.set(project.tsconfigPath, fingerprint);
 	enforceCacheLimit(graphCache, [
 		graphCache,
@@ -304,29 +336,63 @@ export async function buildDependencyGraph(
 async function scanDependencyGraph(
 	project: ProjectConfig,
 	files: string[],
-	options: GraphBuildOptions
+	options: GraphBuildOptions,
+	previous?: DependencyGraph
 ): Promise<DependencyGraph> {
 	const retainProgram = options.retainProgram ?? true;
-	const program = retainProgram ? createProgram(project, files) : undefined;
-	const host = program
-		? undefined
-		: ts.createCompilerHost(project.compilerOptions);
+	const sourceMtimes = snapshotMtimes(files);
+	const resolutionMtimes = new Map(previous?.inputs?.resolution);
+	let parsedFiles = 0;
+	const host = trackResolutionInputs(
+		ts.createCompilerHost(project.compilerOptions),
+		resolutionMtimes
+	);
+	const getSourceFile = host.getSourceFile.bind(host);
+	host.getSourceFile = (file, languageVersion, onError, shouldCreate) => {
+		const normalized = normalizePath(file);
+		if (!sourceMtimes.has(normalized)) {
+			sourceMtimes.set(normalized, fileMtimeMs(normalized));
+		}
+		parsedFiles++;
+		return getSourceFile(file, languageVersion, onError, shouldCreate);
+	};
+	const program = retainProgram
+		? createProgram(project, files, host)
+		: undefined;
 	// One resolution cache per build (#247): ordinary reference and barrel
 	// scanning across all files share resolver probes. Deliberately not stored
 	// on the graph or module state — it dies with this build, so filesystem
 	// mutations or compiler-option changes can never serve stale resolutions.
-	const resolutionContext = createResolutionContext(project);
+	const resolutionContext = createResolutionContext(
+		project,
+		trackResolutionInputs(ts.sys, resolutionMtimes)
+	);
 
 	// Scan all files concurrently — each scan is independent
 	const scanResults = await mapConcurrent(
 		files,
 		async (file): Promise<FileScanResult> => {
+			const priorRefs = previous?.imports.get(file);
+			const priorMetadata = previous?.sourceMetadata?.get(file);
+			if (
+				priorRefs &&
+				priorMetadata &&
+				sourceMtimes.get(file) === previous?.inputs?.sources.get(file)
+			) {
+				return {
+					skipped: false,
+					normalizedFile: file,
+					refs: priorRefs,
+					barrelPaths: previous?.barrelReExports.get(file) ?? [],
+					exports: priorMetadata.exports,
+				};
+			}
 			if (!(program || supportsProjectFile(file, project.compilerOptions))) {
 				return { skipped: true, normalizedFile: file };
 			}
 			const sourceFile = program
 				? program.getSourceFile(file)
-				: host?.getSourceFile(
+				: host.getSourceFile(
 						file,
 						project.compilerOptions.target ?? ts.ScriptTarget.ES5
 					);
@@ -337,7 +403,11 @@ async function scanDependencyGraph(
 				skipped: false,
 				normalizedFile: file,
 				refs: scanModuleReferences(sourceFile, project, resolutionContext),
-				barrels: scanBarrelExports(sourceFile, project, resolutionContext),
+				barrelPaths: scanBarrelExports(
+					sourceFile,
+					project,
+					resolutionContext
+				).map((barrel) => normalizePath(barrel.resolvedPath)),
 				exports: program ? [] : scanExports(sourceFile),
 			};
 		},
@@ -365,17 +435,16 @@ async function scanDependencyGraph(
 			skippedFiles.push(result.normalizedFile);
 			continue;
 		}
-		const { normalizedFile, refs, barrels } = result;
+		const { normalizedFile, refs, barrelPaths } = result;
 		imports.set(normalizedFile, refs);
 		sourceMetadata?.set(normalizedFile, {
 			exports: result.exports,
 			compilerOptions: project.compilerOptions,
 		});
 
-		if (barrels.length > 0) {
+		if (barrelPaths.length > 0) {
 			barrelFiles.add(normalizedFile);
-			const reExportedFiles = barrels.map((b) => normalizePath(b.resolvedPath));
-			barrelReExports.set(normalizedFile, reExportedFiles);
+			barrelReExports.set(normalizedFile, barrelPaths);
 		}
 
 		for (const ref of refs) {
@@ -392,6 +461,16 @@ async function scanDependencyGraph(
 			if (sourceMetadata.has(file)) {
 				continue;
 			}
+			sourceMtimes.set(file, fileMtimeMs(file));
+			const priorMetadata = previous?.sourceMetadata?.get(file);
+			if (
+				priorMetadata &&
+				sourceMtimes.get(file) === previous?.inputs?.sources.get(file)
+			) {
+				sourceMetadata.set(file, priorMetadata);
+				continue;
+			}
+			parsedFiles++;
 			const dependency = createFileScopeProgram(file, project.compilerOptions);
 			const sourceFile = dependency.getSourceFile(file);
 			if (sourceFile) {
@@ -412,6 +491,15 @@ async function scanDependencyGraph(
 		program,
 		sourceMetadata,
 		compilerOptions: project.compilerOptions,
+		inputs: {
+			files: [...files],
+			sources: sourceMtimes,
+			resolution: resolutionMtimes,
+			parsedFiles,
+			incrementalBuilds: previous
+				? (previous.inputs?.incrementalBuilds ?? 0) + 1
+				: 0,
+		},
 	};
 	return result;
 }
