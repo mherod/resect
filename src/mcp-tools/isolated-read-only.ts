@@ -43,20 +43,19 @@ export function shouldIsolateReadOnlyTool(job: ReadOnlyWorkerJob): boolean {
 }
 
 function jobProjectDirectory(job: ReadOnlyWorkerJob): string | undefined {
-	switch (job.kind) {
-		case "analyze": {
-			const [file, options] = job.args;
-			const tsconfig = resolveTsConfig(
-				options?.project,
-				path.dirname(path.resolve(file))
-			);
-			return tsconfig ? path.dirname(tsconfig) : undefined;
-		}
-		case "find":
-			return job.args[1];
-		default:
-			return job.args[0];
+	if (job.kind === "analyze") {
+		const [file, options] = job.args;
+		const tsconfig = resolveTsConfig(
+			options?.project,
+			path.dirname(path.resolve(file))
+		);
+		return tsconfig ? path.dirname(tsconfig) : undefined;
 	}
+	if (job.kind === "find") {
+		return job.args[1];
+	}
+	// audit, similar and unused take their directory first.
+	return job.args[0];
 }
 
 function countJobSourceFiles(job: ReadOnlyWorkerJob): number {
