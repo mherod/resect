@@ -16,6 +16,8 @@ export interface AnalysisResult {
 	publicApiExports: ExportInfo[];
 	/** True when package entrypoint files could not be resolved or scanned completely. */
 	publicApiTraceIncomplete: boolean;
+	/** Exact unresolved package targets or skipped entrypoints, when available. */
+	publicApiTraceReasons?: string[];
 	noExternalUsage: boolean;
 	/** True when framework/configuration dispatch makes static imports incomplete. */
 	externalUsageAssumed: boolean;

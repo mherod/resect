@@ -63,3 +63,15 @@ the experiment. Output directories must be new; evidence is never overwritten.
 Hash records incrementally in their original order: materializing several
 complete JSON copies inflated the verification harness itself above 2 GB.
 The measured child still includes its independent fresh-reference workers.
+
+For the Job 4 transition, capture the ordinary full workload without a baseline
+argument, then run:
+
+```sh
+bun scripts/benchmarks/entrypoint-evidence.ts /tmp/original-baseline /tmp/new-evidence-results
+```
+
+It requires 35 reports and permits only the exact new VS Code `./out/main.js`
+explanation in `analyze` and `unused`. Every prior report field and warning must
+still match. Future runs against the new baseline use the ordinary exact
+comparison again.

@@ -215,6 +215,15 @@ and `unused`: imported bindings, package/public/bin evidence, convention
 entrypoints, internal references, reachability, transitive-dead chains, and
 orphans. DON'T reconstruct that ordering in a command adapter.
 
+Retain exact unresolved package targets and manifest paths in trace reasons.
+Malformed manifests and public entrypoints outside graph coverage must remain
+unknown. Prove new emitted-entrypoint mappings only with explicit, unambiguous
+compiler root/output settings and TypeScript's output-path API; supply the
+originating config path. Cache fingerprints include those emitter settings.
+DON'T infer a custom build's source identity merely from an `out/` filename.
+Standalone in-repository test fixtures need their own package boundary so they
+do not inherit Resect's unrelated public entrypoints.
+
 `audit`, `analyze`, and `unused` request `retainProgram: false`: graphs retain
 plain export metadata and resolution settings. Graphs of at least 128 files run
 in a bounded parser worker that reclaims ASTs every 64 files, including on

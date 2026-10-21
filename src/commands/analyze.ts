@@ -89,6 +89,9 @@ export function analysisReportToJson(
 			kind: exp.type,
 		})),
 		publicApiTraceIncomplete: result.publicApiTraceIncomplete,
+		...(result.publicApiTraceReasons?.length
+			? { publicApiTraceReasons: result.publicApiTraceReasons }
+			: {}),
 		noExternalUsage: result.noExternalUsage,
 		externalUsageAssumed: result.externalUsageAssumed,
 		packageBinEntrypoint: result.packageBinEntrypoint,
@@ -270,6 +273,7 @@ export async function analyze(
 		unusedExports: verdict.unusedExports,
 		publicApiExports: verdict.publicApiExports,
 		publicApiTraceIncomplete: verdict.publicApiTraceIncomplete,
+		publicApiTraceReasons: verdict.publicApiTraceReasons,
 		noExternalUsage: verdict.noExternalUsage,
 		externalUsageAssumed: verdict.externalUsageAssumed,
 		packageBinEntrypoint: verdict.packageBinEntrypoint,
@@ -373,6 +377,9 @@ function printAnalysis(
 	}
 
 	if (result.publicApiTraceIncomplete) {
+		for (const reason of result.publicApiTraceReasons ?? []) {
+			logger.warn(reason);
+		}
 		logger.warn(
 			"Package entrypoint tracing is incomplete: external usage is unknown, so no destructive export verdict is emitted."
 		);

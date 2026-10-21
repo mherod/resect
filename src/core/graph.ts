@@ -177,8 +177,8 @@ export const clearGraphCache = createCacheResetter(
 );
 
 /**
- * Compiler options that change how module specifiers resolve or how the
- * program is constructed. Options that only affect diagnostics (e.g.
+ * Compiler options that change resolution, program construction, or proof of
+ * emitted package entrypoints. Options that only affect diagnostics (e.g.
  * noUnusedLocals) are deliberately excluded so they keep the cache-hit fast
  * path.
  */
@@ -190,6 +190,9 @@ const RESOLUTION_AFFECTING_OPTIONS = [
 	"checkJs",
 	"composite",
 	"customConditions",
+	"declaration",
+	"declarationDir",
+	"emitDeclarationOnly",
 	"esModuleInterop",
 	"jsx",
 	"jsxFactory",
@@ -199,12 +202,16 @@ const RESOLUTION_AFFECTING_OPTIONS = [
 	"moduleResolution",
 	"moduleSuffixes",
 	"noResolve",
+	"noEmit",
+	"outDir",
+	"outFile",
 	"paths",
 	"preserveSymlinks",
 	"resolveJsonModule",
 	"resolvePackageJsonExports",
 	"resolvePackageJsonImports",
 	"rootDirs",
+	"rootDir",
 	"target",
 	"typeRoots",
 	"types",
@@ -426,6 +433,10 @@ async function scanDependencyGraph(
 	const skippedFiles: string[] = [];
 	const barrelFiles = new Set<string>();
 	const barrelReExports = new Map<string, string[]>();
+	const sourceCompilerOptions = {
+		...project.compilerOptions,
+		configFilePath: project.tsconfigPath,
+	};
 	const sourceMetadata = program
 		? undefined
 		: new Map<string, GraphSourceMetadata>();
@@ -439,7 +450,7 @@ async function scanDependencyGraph(
 		imports.set(normalizedFile, refs);
 		sourceMetadata?.set(normalizedFile, {
 			exports: result.exports,
-			compilerOptions: project.compilerOptions,
+			compilerOptions: sourceCompilerOptions,
 		});
 
 		if (barrelPaths.length > 0) {
@@ -476,7 +487,7 @@ async function scanDependencyGraph(
 			if (sourceFile) {
 				sourceMetadata.set(file, {
 					exports: scanExports(sourceFile),
-					compilerOptions: project.compilerOptions,
+					compilerOptions: sourceCompilerOptions,
 				});
 			}
 		}

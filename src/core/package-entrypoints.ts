@@ -1,5 +1,5 @@
 import path from "node:path";
-import type ts from "typescript";
+import ts from "typescript";
 import { getRuntime } from "../runtime/index.ts";
 import type { ExportInfo } from "../types/analysis.ts";
 import type { ImportBinding, ReferenceType } from "../types/graph.ts";
@@ -17,7 +17,16 @@ import {
 	WORKSPACE_HYDRATION_CONCURRENCY,
 } from "./workspace.ts";
 
-const SOURCE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"];
+const SOURCE_EXTENSIONS = [
+	".ts",
+	".tsx",
+	".js",
+	".jsx",
+	".mts",
+	".cts",
+	".mjs",
+	".cjs",
+];
 const RE_EXPORT_TYPES = new Set<ReferenceType>([
 	"export-from",
 	"export-all",
@@ -45,6 +54,7 @@ interface EntrypointProbe {
 export interface UnresolvedPackageEntrypoint {
 	packageRoot: string;
 	specifier: string;
+	reason?: string;
 }
 
 export interface PackageEntrypointDiscovery {
@@ -67,6 +77,8 @@ export interface PackageEntrypointDiscovery {
 export interface PackageEntrypointDiscoveryOptions {
 	/** Include every workspace package instead of only the package nearest to the target. */
 	includeWorkspacePackages?: boolean;
+	/** Optional parsed source coverage for proving compiler output mappings. */
+	graph?: DependencyGraph;
 }
 
 /**
@@ -105,10 +117,14 @@ export async function discoverPackageEntrypoints(
 	const packageResults = await mapConcurrent(
 		[...packageJsonSources.entries()],
 		async ([packageJsonPath, retainedManifest]) =>
-			discoverManifestEntrypoints(packageJsonPath, retainedManifest),
+			discoverManifestEntrypoints(
+				packageJsonPath,
+				retainedManifest,
+				options.graph
+			),
 		{
 			concurrency: WORKSPACE_HYDRATION_CONCURRENCY,
-			onError: () => null,
+			onError: ([packageJsonPath]) => failedManifest(packageJsonPath),
 		}
 	);
 	for (const result of packageResults) {
@@ -133,12 +149,13 @@ export async function discoverPackageEntrypoints(
 
 async function discoverManifestEntrypoints(
 	packageJsonPath: string,
-	retainedManifest: PackageJsonEntrypoints | undefined
+	retainedManifest: PackageJsonEntrypoints | undefined,
+	graph?: DependencyGraph
 ): Promise<PackageEntrypointResult | null> {
 	const packageJson: PackageJsonEntrypoints | null =
 		retainedManifest ?? (await readPackageJson(packageJsonPath));
 	if (!packageJson) {
-		return null;
+		return failedManifest(packageJsonPath);
 	}
 
 	const packageRoot = path.dirname(packageJsonPath);
@@ -155,13 +172,20 @@ async function discoverManifestEntrypoints(
 	];
 	const probeResults = await mapConcurrent(
 		probes,
-		async (probe) => resolveEntrypointProbe(packageRoot, sourceDir, probe),
+		async (probe) =>
+			resolveEntrypointProbe(packageRoot, sourceDir, probe, graph),
 		{
 			concurrency: WORKSPACE_HYDRATION_CONCURRENCY,
 			onError: (probe) => ({
 				files: [],
 				target: probe.target,
-				unresolved: [],
+				unresolved: [
+					{
+						packageRoot,
+						specifier: probe.specifier,
+						reason: "Could not inspect package entrypoint",
+					},
+				],
 			}),
 		}
 	);
@@ -180,7 +204,8 @@ async function discoverManifestEntrypoints(
 async function resolveEntrypointProbe(
 	packageRoot: string,
 	sourceDir: string | undefined,
-	probe: EntrypointProbe
+	probe: EntrypointProbe,
+	graph?: DependencyGraph
 ): Promise<{
 	files: string[];
 	target: EntrypointProbe["target"];
@@ -205,14 +230,116 @@ async function resolveEntrypointProbe(
 	const files = candidateResults.filter(
 		(candidate): candidate is string => candidate !== null
 	);
+	if (files.length === 0 && graph) {
+		files.push(
+			...resolveEmittedEntrypoint(packageRoot, probe.specifier, graph)
+		);
+	}
+	const outsideGraph =
+		graph &&
+		probe.target === "files" &&
+		files.length > 0 &&
+		!files.some((file) => graph.imports.has(file));
 	return {
 		files,
 		target: probe.target,
 		unresolved:
-			files.length === 0 && isSourceEntrypointSpecifier(probe.specifier)
-				? [{ packageRoot, specifier: probe.specifier }]
+			(files.length === 0 || outsideGraph) &&
+			isSourceEntrypointSpecifier(probe.specifier)
+				? [
+						{
+							packageRoot,
+							specifier: probe.specifier,
+							...(outsideGraph
+								? {
+										reason:
+											"Could not trace package entrypoint outside the analyzed graph",
+									}
+								: {}),
+						},
+					]
 				: [],
 	};
+}
+
+function failedManifest(packageJsonPath: string): PackageEntrypointResult {
+	return {
+		files: [],
+		binFiles: [],
+		unresolved: [
+			{
+				packageRoot: path.dirname(packageJsonPath),
+				specifier: "package.json",
+				reason: "Could not read package manifest",
+			},
+		],
+	};
+}
+
+/** Only an explicit, unambiguous compiler layout can prove a new output mapping. */
+function resolveEmittedEntrypoint(
+	packageRoot: string,
+	specifier: string,
+	graph: DependencyGraph
+): string[] {
+	if (
+		specifier.includes("*") ||
+		path.isAbsolute(specifier) ||
+		/^[a-z]+:/i.test(specifier)
+	) {
+		return [];
+	}
+	const target = normalizePath(path.resolve(packageRoot, specifier));
+	if (!isWithinPath(packageRoot, target)) {
+		return [];
+	}
+	const candidates = new Set<string>();
+	const settings = new Set<string>();
+	for (const [file, { compilerOptions: options }] of graph.sourceMetadata ??
+		[]) {
+		if (!isWithinPath(packageRoot, file) || /\.d\.[cm]?ts$/i.test(file)) {
+			continue;
+		}
+		settings.add(
+			JSON.stringify([
+				options.rootDir,
+				options.outDir,
+				options.noEmit,
+				options.outFile,
+				options.jsx,
+				options.module,
+				options.emitDeclarationOnly,
+				options.declaration,
+				options.declarationDir,
+			])
+		);
+		if (settings.size > 1) {
+			return [];
+		}
+		if (
+			!(options.rootDir && options.outDir) ||
+			options.noEmit ||
+			options.outFile ||
+			options.emitDeclarationOnly ||
+			!isWithinPath(options.rootDir, file) ||
+			!graph.imports.has(file)
+		) {
+			continue;
+		}
+		try {
+			const outputs = ts.getOutputFileNames(
+				{ options, fileNames: [file], errors: [] },
+				file,
+				!ts.sys.useCaseSensitiveFileNames
+			);
+			if (outputs.some((output) => normalizePath(output) === target)) {
+				candidates.add(file);
+			}
+		} catch {
+			return []; // Unsupported emitter settings cannot prove source identity.
+		}
+	}
+	return candidates.size === 1 ? [...candidates] : [];
 }
 
 /**
@@ -313,20 +440,33 @@ export function isPackageEntrypointTraceIncomplete(
 	discovery: PackageEntrypointDiscovery,
 	graph: DependencyGraph
 ): boolean {
-	const normalizedFile = normalizePath(filePath);
-	const hasUnresolvedTarget = discovery.unresolved.some(({ packageRoot }) =>
-		isWithinPath(packageRoot, normalizedFile)
-	);
-	if (hasUnresolvedTarget) {
-		return true;
-	}
+	return packageEntrypointTraceReasons(filePath, discovery, graph).length > 0;
+}
 
+export function packageEntrypointTraceReasons(
+	filePath: string,
+	discovery: PackageEntrypointDiscovery,
+	graph: DependencyGraph
+): string[] {
+	const normalizedFile = normalizePath(filePath);
+	const reasons = discovery.unresolved
+		.filter(({ packageRoot }) => isWithinPath(packageRoot, normalizedFile))
+		.map(
+			({ packageRoot, specifier, reason }) =>
+				`${reason ?? "Could not resolve package entrypoint"} ${JSON.stringify(specifier)} from ${path.join(packageRoot, "package.json")}; external usage remains unknown.`
+		);
 	const skippedFiles = new Set(graph.skippedFiles.map(normalizePath));
-	return [...discovery.files].some(
-		(entrypointFile) =>
+	for (const entrypointFile of discovery.files) {
+		if (
 			isWithinPath(path.dirname(entrypointFile), normalizedFile) &&
 			skippedFiles.has(normalizePath(entrypointFile))
-	);
+		) {
+			reasons.push(
+				`Could not scan package entrypoint ${entrypointFile}; external usage remains unknown.`
+			);
+		}
+	}
+	return reasons;
 }
 
 function isExportReachableFromEntrypoint(

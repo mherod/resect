@@ -15,7 +15,7 @@ warnings, not just counts. Local verification and commits do not imply a push.
 | 1 | Regression fixture | Repository-owned harness, pinned revision/cleanliness checks, baseline comparison, time/RSS receipts, repeated and concurrent MCP requests, timeout/failure tests | Harness verified; memory regression detected |
 | 2 | MCP costs | First bound retained memory in mixed sessions; then identical-input find discovery/search/serialization/transport attribution, measured fix or explanation, exact ordered report parity | Verified: mixed session 1.868 GB; exact reports |
 | 3 | Small edits | Edit/add/delete/rename/mixed changes; unchanged metadata reuse; config and dependency-resolution invalidation; fresh-process parity and reparse/latency receipts | Verified: 21 graph comparisons; mixed MCP 1.876 GB |
-| 4 | Unused evidence | Explain unknown entrypoints; improve only provable cases; seed known public/used/internal/dead exports; keep unresolved cases conservative | Pending |
+| 4 | Unused evidence | Explain unknown entrypoints; improve only provable cases; seed known public/used/internal/dead exports; keep unresolved cases conservative | Verified: prior fields exact; mixed MCP 1.954 GB |
 | 5 | Mutation acceptance | Real heavily referenced move/rename, barrel/alias/config boundaries, conflicts, verification delta, rollback, time and RSS in disposable copies | Pending |
 
 ## Execution plans
@@ -146,3 +146,25 @@ medians in audit/analyze/unused/find/similar order: 9.73/30.74/37.88/10.54/19.32
 seconds. Worst CLI peak: 1,298,857,984 bytes. Cold `unused` and `find` are slower
 than Job 2's run; the small-edit improvement does not imply faster cold scans.
 Evidence: `/private/tmp/resect-vscode-job3-all/receipts.json`.
+
+## Job 4 entrypoint evidence
+
+`analyze` and `unused` share exact unresolved-target explanations. Explicit,
+unambiguous compiler layouts can map emitted targets back to source using
+TypeScript's output-path API. Missing/invalid manifests, ambiguous layouts,
+`noEmit`, and entrypoints outside graph coverage retain unknown external usage.
+Emitter settings participate in graph invalidation. Tests cover public,
+imported, internally used and dead exports, `.mts`/`.cts`, and config edits.
+
+All 1,301 tests pass, including fixtures isolated from Resect's own package
+entrypoints. VS Code still has 2,956 unknown exports in the selected `unused`
+scope: its custom `./out/main.js` build target is not a proven source mapping.
+Reports now identify that target and its manifest explicitly.
+
+Three fresh runs per CLI command and 20 initialized MCP calls passed. All 35
+reports preserve every prior field exactly; 14 analyze/unused reports add only
+the expected explanation. Mixed MCP peak: **1,954,414,592 bytes**. Worst CLI
+peak: 1,306,083,328 bytes. CLI median seconds in audit/analyze/unused/find/similar
+order: 9.40/30.27/35.28/9.84/19.22. Evidence:
+`/private/tmp/resect-vscode-job4-all`, with the strict transition comparison in
+`/private/tmp/resect-job4-parity.log`.

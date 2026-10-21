@@ -407,6 +407,7 @@ export async function findUnusedExportsFromGraphs(
 						`Package entrypoint tracing is incomplete for ${unknownExternalUsageExports.length} export(s); external usage is unknown, so destructive verdicts were withheld.`,
 					]
 				: []),
+			...liveness.traceWarnings,
 		],
 		excludedGeneratedFiles: [...excludedGeneratedFiles].sort(),
 		excludedGeneratedFileCount: excludedGeneratedFiles.size,
@@ -517,6 +518,11 @@ export async function unusedCommand(options: UnusedOptions): Promise<void> {
 	}
 
 	if (report.unknownExternalUsageExportCount > 0) {
+		for (const warning of report.warnings.filter((item) =>
+			item.startsWith("Could not")
+		)) {
+			logger.warn(warning);
+		}
 		logger.warn(
 			`⚠️  Package entrypoint tracing is incomplete for ${report.unknownExternalUsageExportCount} export(s); external usage is unknown, so destructive verdicts were withheld.`
 		);

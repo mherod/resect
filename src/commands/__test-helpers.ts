@@ -165,6 +165,14 @@ export async function makeProject(
 	await mkdir(fixtureRoot, { recursive: true });
 	const dir = await mkdtemp(path.join(fixtureRoot, `${options.name}-`));
 	fixtureDirectories.add(dir);
+	// Standalone fixtures inside this checkout must not inherit Resect's public
+	// entrypoints. Keep the inherited ESM mode while giving them a package boundary.
+	if (!(options.root || options.outsideRepo || options.files["package.json"])) {
+		await writeFile(
+			path.join(dir, "package.json"),
+			JSON.stringify({ private: true, type: "module" })
+		);
+	}
 
 	const tsconfig = resolveTsconfig(options.tsconfig);
 	if (tsconfig && !options.files["tsconfig.json"]) {
