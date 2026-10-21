@@ -173,6 +173,29 @@ Bundler-owned stylesheet and SQL imports resolve as `asset`, never as TypeScript
 
 ## Performance and caching
 
+### Benchmark acceptance
+
+DO verify the VS Code read-only analysis workload against a **2,000,000,000-byte
+peak RSS ceiling**, including all worker threads. Read
+`Bun.Subprocess.resourceUsage().maxRSS` after process exit; current RSS samples
+and JavaScript heap size do not establish the peak. Dropping AST references
+alone is not evidence that the runtime reclaimed them before the peak.
+
+Run at least three sequential fresh processes per changed command on the same
+source revision and options, with no overlapping tests, typechecks, or builds.
+Report the worst peak and median elapsed time, baseline repetition count,
+runtime/hardware, and filesystem/cache conditions. A small speed regression is
+acceptable to meet the memory target; preserve full output, order, warnings,
+and coverage. DON'T infer a cause from a rerun that changes both concurrency
+and overlapping checks; retain both receipts and state the changed conditions.
+
+Compare complete CLI reports against the baseline, and exercise repeated calls
+through one initialized MCP server to catch retained state. Distinguish exact
+parity, subset parity, and broader coverage without a baseline. Zero skipped
+files does not resolve unknown external export usage. A measured ceiling on
+this workload is not an OS-enforced limit for arbitrary projects or mutations.
+Reference: [VS Code measurements and provenance](../../.memory/MEMORY.md).
+
 ### Reuse parsed programs
 
 Use `withSourceFile(program, filePath, callback, fallback)` inside loops. The file-path overload rereads and reparses every call.
