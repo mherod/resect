@@ -1,5 +1,27 @@
 import { availableParallelism } from "node:os";
 import { isMainThread, Worker } from "node:worker_threads";
+import type { ProgressCallback } from "../types/progress.ts";
+
+export const ANALYSIS_BATCH_SIZE = 64;
+
+export interface AnalysisProgress {
+	type: "analysis-progress";
+	done: number;
+	total: number;
+}
+
+function isAnalysisProgress(message: unknown): message is AnalysisProgress {
+	return (
+		typeof message === "object" &&
+		message !== null &&
+		"type" in message &&
+		message.type === "analysis-progress" &&
+		"done" in message &&
+		typeof message.done === "number" &&
+		"total" in message &&
+		typeof message.total === "number"
+	);
+}
 
 // Each parser VM owns a TypeScript runtime and transient ASTs. Bound their
 // combined memory across concurrent library/MCP callers, not just each scan.
@@ -61,7 +83,8 @@ async function runWorkerJob<Input, Output>(
 	job: Input,
 	url: URL,
 	signal: AbortSignal,
-	timeoutMs: number
+	timeoutMs: number,
+	onProgress?: ProgressCallback
 ): Promise<Output> {
 	await acquireWorker();
 	let worker: Worker | undefined;
@@ -83,7 +106,22 @@ async function runWorkerJob<Input, Output>(
 				signal.removeEventListener("abort", onAbort);
 			};
 			signal.addEventListener("abort", onAbort, { once: true });
-			running.once("message", (result: Output) => {
+			running.on("message", (result: Output | AnalysisProgress) => {
+				if (isAnalysisProgress(result)) {
+					try {
+						onProgress?.(result.done, result.total);
+					} catch (error) {
+						cleanup();
+						reject(
+							error instanceof Error
+								? error
+								: new Error("Analysis progress observer failed", {
+										cause: error,
+									})
+						);
+					}
+					return;
+				}
 				cleanup();
 				resolve(result);
 			});
@@ -109,7 +147,7 @@ async function runWorkerJob<Input, Output>(
 /** Ordered results, a process-wide thread cap, and no idle workers after a call. */
 export async function runAnalysisJobs<Input, Output>(
 	jobs: Input[],
-	options: { url?: URL; timeoutMs?: number } = {}
+	options: { url?: URL; timeoutMs?: number; onProgress?: ProgressCallback } = {}
 ): Promise<Output[]> {
 	const controller = new AbortController();
 	const pending = jobs.map(async (job) => {
@@ -118,7 +156,8 @@ export async function runAnalysisJobs<Input, Output>(
 				job,
 				options.url ?? analysisWorkerUrl,
 				controller.signal,
-				options.timeoutMs ?? WORKER_TIMEOUT_MS
+				options.timeoutMs ?? WORKER_TIMEOUT_MS,
+				options.onProgress
 			);
 		} catch (error) {
 			controller.abort(error);

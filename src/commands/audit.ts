@@ -369,11 +369,9 @@ export function computeMetrics(graph: DependencyGraph): FileMetrics[] {
 		const total = fanIn + fanOut;
 		const instability = total === 0 ? 0 : fanOut / total;
 
-		const exportCount = withGraphSourceFile(
-			graph,
-			file,
-			scanExports,
-			[]
+		const exportCount = (
+			graph.sourceMetadata?.get(file)?.exports ??
+			withGraphSourceFile(graph, file, scanExports, [])
 		).length;
 
 		metrics.push({
@@ -578,6 +576,7 @@ export async function analyzeAudit(
 		project: projectArg,
 		searchPath: absoluteDir,
 		graph: "project",
+		retainProgram: false,
 		workspace: workspace ? "projects" : "none",
 		workspaceStart: projectArg ? path.resolve(projectArg) : absoluteDir,
 		mergeWorkspaceGraphs: workspace,

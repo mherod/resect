@@ -5,6 +5,7 @@ import {
 	buildDependencyGraph,
 	buildProjectGraphs,
 	type DependencyGraph,
+	type GraphBuildOptions,
 	mergeDependencyGraphs,
 } from "../core/graph.ts";
 import { loadProject, resolveTsConfig } from "../core/project.ts";
@@ -30,6 +31,7 @@ export interface SetupCommandContextOptions {
 	targetFile?: string;
 	/** Graph coverage required by the command. */
 	graph?: CommandGraphMode;
+	retainProgram?: boolean;
 	/** Whether multi-config graph discovery starts at the resolved or owning config. */
 	projectConfigsFrom?: "resolved" | "owning";
 	/** Workspace data required by the command. */
@@ -117,7 +119,7 @@ const buildBaseGraph = async (
 	project: ProjectConfig,
 	tsconfigPath: string,
 	projectConfigsFrom: "resolved" | "owning",
-	onProgress?: ProgressCallback
+	graphOptions: GraphBuildOptions
 ): Promise<{
 	graph?: DependencyGraph;
 	graphs: Array<{ tsconfigPath: string; graph: DependencyGraph }>;
@@ -126,7 +128,7 @@ const buildBaseGraph = async (
 		return { graphs: [] };
 	}
 	if (mode === "project") {
-		const graph = await buildDependencyGraph(project, { onProgress });
+		const graph = await buildDependencyGraph(project, graphOptions);
 		return {
 			graph,
 			graphs: [{ tsconfigPath: project.tsconfigPath, graph }],
@@ -134,7 +136,7 @@ const buildBaseGraph = async (
 	}
 	const projectGraphs = await buildProjectGraphs(
 		projectConfigsFrom === "owning" ? project.tsconfigPath : tsconfigPath,
-		{ onProgress }
+		graphOptions
 	);
 	return {
 		graph: mergeDependencyGraphs(projectGraphs.map(({ graph }) => graph)),
@@ -147,14 +149,14 @@ const mergeExtraProjectGraphs = async (
 	baseGraphs: Array<{ tsconfigPath: string; graph: DependencyGraph }>,
 	extraProjects: ProjectConfig[],
 	errorMode: WorkspaceProjectErrorMode,
-	onProgress?: ProgressCallback
+	graphOptions: GraphBuildOptions
 ): Promise<{
 	graph: DependencyGraph;
 	graphs: Array<{ tsconfigPath: string; graph: DependencyGraph }>;
 }> => {
 	const buildGraph = async (project: ProjectConfig) => ({
 		tsconfigPath: project.tsconfigPath,
-		graph: await buildDependencyGraph(project, { onProgress }),
+		graph: await buildDependencyGraph(project, graphOptions),
 	});
 	const graphs =
 		errorMode === "throw"
@@ -203,7 +205,7 @@ export const setupCommandContext = async (
 		project,
 		tsconfigPath,
 		options.projectConfigsFrom ?? "resolved",
-		options.onProgress
+		{ onProgress: options.onProgress, retainProgram: options.retainProgram }
 	);
 	const primaryConfigs = new Set([
 		normalizedConfigPath(tsconfigPath),
@@ -228,7 +230,7 @@ export const setupCommandContext = async (
 			graphContext.graphs,
 			extraProjects,
 			options.workspaceProjectErrors ?? "skip",
-			options.onProgress
+			{ onProgress: options.onProgress, retainProgram: options.retainProgram }
 		);
 	}
 

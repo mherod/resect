@@ -23,11 +23,19 @@ const RE_EXPORT_TYPES = new Set<ReferenceType>([
 	"export-all-as",
 ]);
 
-export interface ExportLivenessCandidate {
-	file: string;
+export interface ExportLivenessSource {
 	sourceFile: ts.SourceFile;
 	checker?: ts.TypeChecker;
 }
+
+export type ExportLivenessCandidate = { file: string } & (
+	| ExportLivenessSource
+	| {
+			exports: ExportInfo[];
+			/** Bind local scopes only when an unused export needs an internal-reference verdict. */
+			loadSource: () => ExportLivenessSource | null;
+	  }
+);
 
 export interface ExportLivenessUnusedExport extends ExportInfo {
 	internalUsage: boolean;
@@ -78,7 +86,7 @@ export interface ExportLivenessResult {
 
 export interface EvaluateExportLivenessOptions {
 	graph: DependencyGraph;
-	candidates: readonly ExportLivenessCandidate[];
+	candidates: Iterable<ExportLivenessCandidate>;
 	packageDirectory: string;
 	analysisDirectory: string;
 	entrypointGlobs?: EntrypointGlobs;
@@ -118,9 +126,14 @@ export async function evaluateExportLiveness(
 	const exportedFiles = new Map<string, ExportInfo[]>();
 	const files: ExportLivenessFileVerdict[] = [];
 
-	for (const candidate of candidates) {
+	candidateLoop: for (const candidate of candidates) {
 		const file = normalizePath(candidate.file);
-		const exports = scanExports(candidate.sourceFile);
+		let source: ExportLivenessSource | null =
+			"sourceFile" in candidate ? candidate : null;
+		const exports =
+			"exports" in candidate
+				? candidate.exports
+				: scanExports(candidate.sourceFile);
 		const conventionEntrypoint = isConventionEntrypointFile(
 			file,
 			entrypointGlobs
@@ -152,10 +165,16 @@ export async function evaluateExportLiveness(
 					usedExports.push(exp);
 					continue;
 				}
+				if (!source && "loadSource" in candidate) {
+					source = candidate.loadSource();
+				}
+				if (!source) {
+					continue candidateLoop;
+				}
 				const internalRefCount = countInternalReferences(
-					candidate.sourceFile,
+					source.sourceFile,
 					exp,
-					candidate.checker
+					source.checker
 				);
 				unusedExports.push({
 					...exp,

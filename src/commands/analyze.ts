@@ -15,7 +15,10 @@ import {
 	scanModuleReferences,
 	scanUnresolvableImports,
 } from "../core/scanner.ts";
-import { parseSourceFile } from "../core/source-file.ts";
+import {
+	createFileScopeProgram,
+	parseSourceFile,
+} from "../core/source-file.ts";
 import { collectUnresolvableDiagnostics } from "../core/verify.ts";
 import { filterToWorkspaceBoundary } from "../core/workspace.ts";
 import type { AnalysisResult } from "../types/analysis.ts";
@@ -184,15 +187,15 @@ export async function analyze(
 	project: ProjectConfig,
 	options?: AnalyzeFileOptions
 ): Promise<AnalysisResult> {
-	// Build/select the owning project graph before parsing the target. The graph
-	// already owns the normal TypeScript Program and checker, so a target-only
-	// Program would duplicate most of the command's warm latency (#234).
-	const projectGraphs = await buildProjectGraphs(project.tsconfigPath);
+	const projectGraphs = await buildProjectGraphs(project.tsconfigPath, {
+		retainProgram: false,
+	});
 	const graph =
 		projectGraphs.length > 1
 			? mergeDependencyGraphs(projectGraphs.map((result) => result.graph))
-			: (projectGraphs[0]?.graph ?? (await buildDependencyGraph(project)));
-	const graphSource = filePath.endsWith(".vue")
+			: (projectGraphs[0]?.graph ??
+				(await buildDependencyGraph(project, { retainProgram: false })));
+	let graphSource = filePath.endsWith(".vue")
 		? null
 		: withGraphSourceFile(
 				graph,
@@ -203,6 +206,15 @@ export async function analyze(
 				}),
 				null
 			);
+	// A target can be a transitive dependency outside every config's include
+	// set. Streamed graphs need not retain it, but its local scopes still matter.
+	if (!(graphSource || filePath.endsWith(".vue"))) {
+		const scope = createFileScopeProgram(filePath, project.compilerOptions);
+		const sourceFile = scope.getSourceFile(filePath);
+		if (sourceFile) {
+			graphSource = { sourceFile, checker: scope.getTypeChecker() };
+		}
+	}
 	const sourceFile = graphSource?.sourceFile ?? parseSourceFile(filePath);
 
 	if (!sourceFile) {

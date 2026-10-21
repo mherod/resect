@@ -153,6 +153,52 @@ describe("bounded incremental export index (#248)", () => {
 		}
 	});
 
+	test("oversized searches reuse retained exports without changing equal-name ordering", async () => {
+		const dir = await mkdtemp(path.join(tmpdir(), "resect-export-scan-"));
+		try {
+			setExportIndexLimitForTests(2);
+			const ownership = new Map<string, unknown>();
+			for (const name of ["zeta", "alpha", "beta"]) {
+				const file = path.join(dir, `${name}.ts`);
+				await writeFile(file, "export const sharedValue = 1;\n");
+				ownership.set(file, null);
+			}
+			const first = search("shared", ownership, dir, "all");
+			expect(first.exports.map((match) => match.relativePath)).toEqual([
+				"zeta.ts",
+				"alpha.ts",
+				"beta.ts",
+			]);
+			for (let query = 0; query < 3; query++) {
+				const before = exportIndexParseCount();
+				expect(search("shared", ownership, dir, "all")).toEqual(first);
+				expect(exportIndexParseCount() - before).toBe(1);
+				expect(exportIndexSize()).toBe(2);
+			}
+
+			// A retained entry must still invalidate while cold admissions evict it.
+			const edited = path.join(dir, "alpha.ts");
+			await writeFile(edited, "export const changedValue = 2;\n");
+			await bumpMtime(edited);
+			const beforeEdit = exportIndexParseCount();
+			expect(
+				search("shared", ownership, dir, "export").exports.map(
+					(match) => match.relativePath
+				)
+			).toEqual(["zeta.ts", "beta.ts"]);
+			expect(exportIndexParseCount() - beforeEdit).toBe(2);
+			await unlink(path.join(dir, "beta.ts"));
+			expect(
+				search("shared", ownership, dir, "export").exports.map(
+					(match) => match.relativePath
+				)
+			).toEqual(["zeta.ts"]);
+			expect(exportIndexSize()).toBeLessThanOrEqual(2);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
 	test("a missing file returns no exports and drops its entry", async () => {
 		const dir = await mkdtemp(path.join(tmpdir(), "resect-export-missing-"));
 		try {

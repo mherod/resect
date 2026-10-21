@@ -22,6 +22,7 @@ import { parentPort, workerData, threadId } from "node:worker_threads";
 const { mode, index, state } = workerData;
 if (mode === "throw") throw new Error("worker failed");
 if (mode === "exit") process.exit(0);
+if (mode === "progress") parentPort.postMessage({ type: "analysis-progress", done: 1, total: 1 });
 if (mode === "hang") {
   setInterval(() => {}, 1000);
 } else {
@@ -97,6 +98,27 @@ test("empty and small scans avoid worker startup", async () => {
 		functions: [],
 		totalFiles: 0,
 	});
+});
+
+test("progress is distinct from results and observer failures release worker slots", async () => {
+	const state = new SharedArrayBuffer(8);
+	const job = { mode: "progress", index: 1, state };
+	expect(
+		runAnalysisJobs([job], {
+			url: workerUrl,
+			onProgress: () => {
+				throw new Error("observer failed");
+			},
+		})
+	).rejects.toThrow("observer failed");
+	const progress: number[] = [];
+	const results = await runAnalysisJobs([job], {
+		url: workerUrl,
+		onProgress: (done) => progress.push(done),
+	});
+	// The progress envelope must never satisfy the worker result promise.
+	expect(progress).toEqual([1]);
+	expect(results).toEqual([expect.objectContaining({ index: 1 })]);
 });
 
 test("parentless collection preserves mixed declaration metadata", async () => {

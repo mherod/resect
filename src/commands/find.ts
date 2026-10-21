@@ -1,6 +1,6 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
-import { getIndexedFileExports } from "../core/export-index.ts";
+import { createExportIndexLookup } from "../core/export-index.ts";
 import { discoverProject } from "../core/tsconfig-discovery.ts";
 import {
 	discoverWorkspace,
@@ -205,6 +205,7 @@ export function search(
 
 	// Search exports by name
 	if (type === "export" || type === "all") {
+		const getExports = createExportIndexLookup(allFiles);
 		for (const filePath of allFiles) {
 			// Only scan TypeScript/JavaScript files
 			if (!/\.(ts|tsx|js|jsx|mts|cts|mjs|cjs)$/.test(filePath)) {
@@ -212,7 +213,7 @@ export function search(
 			}
 
 			try {
-				const fileExports = getIndexedFileExports(filePath);
+				const fileExports = getExports(filePath);
 
 				for (const exp of fileExports) {
 					if (exp.name.toLowerCase().includes(queryLower)) {

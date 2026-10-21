@@ -1,8 +1,12 @@
 import path from "node:path";
-import type ts from "typescript";
+import { isMainThread } from "node:worker_threads";
+import ts from "typescript";
+import type { ExportInfo } from "../types/analysis.ts";
 import type { BarrelExport, ModuleReference } from "../types/graph.ts";
 import type { ProgressCallback } from "../types/progress.ts";
 import type { ProjectConfig } from "../types.ts";
+import type { GraphScanJob } from "./analysis-worker.ts";
+import { runAnalysisJobs } from "./analysis-workers.ts";
 import {
 	enforceCacheLimit,
 	setCacheEntry,
@@ -12,23 +16,29 @@ import { mapConcurrent } from "./concurrency.ts";
 import { mtimesUnchanged, snapshotMtimes } from "./path-utils.ts";
 import { createProgram, getProjectFiles, loadProject } from "./project.ts";
 import { createResolutionContext, normalizePath } from "./resolver.ts";
-import { scanBarrelExports, scanModuleReferences } from "./scanner.ts";
-import { withSourceFile } from "./source-file.ts";
+import {
+	scanBarrelExports,
+	scanExports,
+	scanModuleReferences,
+} from "./scanner.ts";
+import { createFileScopeProgram, withSourceFile } from "./source-file.ts";
 import { discoverProject, toProjectConfig } from "./tsconfig-discovery.ts";
 
 /**
  * Run `callback` with the parsed source file for `filePath` from the
  * graph's program(s). Tries `graph.program` first, then any program in
  * `graph.programs` (covers workspace-merged graphs), then returns
- * `fallback` if no program owns the file. Zero disk I/O.
+ * `fallback` if no program owns the file. Retained programs use zero disk I/O;
+ * streamed graphs bind only the requested file on demand.
  *
  * The callback also receives the `ts.Program` that owns the source file, so
  * callers needing a type checker (e.g. symbol-identity reference counting in
  * `unused`) resolve it from the correct program. Callbacks that only use the
- * source file can ignore the second argument.
+ * source file can ignore the second argument. A streamed graph's checker is
+ * restricted to local symbol identity, not cross-file type analysis.
  */
 export function withGraphSourceFile<T>(
-	graph: Pick<DependencyGraph, "program" | "programs">,
+	graph: Pick<DependencyGraph, "program" | "programs" | "sourceMetadata">,
 	filePath: string,
 	callback: (sourceFile: ts.SourceFile, program: ts.Program) => T,
 	fallback: T
@@ -43,7 +53,22 @@ export function withGraphSourceFile<T>(
 			return callback(sf, p);
 		}
 	}
+	const metadata = graph.sourceMetadata?.get(normalizePath(filePath));
+	if (metadata) {
+		const program = createFileScopeProgram(filePath, metadata.compilerOptions);
+		return withSourceFile(
+			program,
+			filePath,
+			(sourceFile) => callback(sourceFile, program),
+			fallback
+		);
+	}
 	return fallback;
+}
+
+interface GraphSourceMetadata {
+	exports: ExportInfo[];
+	compilerOptions: ts.CompilerOptions;
 }
 
 export interface DependencyGraph {
@@ -63,10 +88,16 @@ export interface DependencyGraph {
 	/** Additional programs covering files outside `program` (e.g. workspace-merged graphs).
 	 * Callers should look up a file in `program` first, then fall back to scanning `programs`. */
 	programs?: ts.Program[];
+	/** Plain records for streamed graphs; never retain syntax trees or checkers. */
+	sourceMetadata?: Map<string, GraphSourceMetadata>;
+	/** Resolution settings remain available even when no program is retained. */
+	compilerOptions?: ts.CompilerOptions;
 }
 
 export interface GraphBuildOptions {
 	onProgress?: ProgressCallback;
+	/** Read-only analysis can stream syntax trees instead of retaining the project. */
+	retainProgram?: boolean;
 }
 
 interface SuccessfulFileScan {
@@ -74,6 +105,7 @@ interface SuccessfulFileScan {
 	normalizedFile: string;
 	refs: ModuleReference[];
 	barrels: BarrelExport[];
+	exports: ExportInfo[];
 }
 
 interface SkippedFileScan {
@@ -82,6 +114,26 @@ interface SkippedFileScan {
 }
 
 type FileScanResult = SuccessfulFileScan | SkippedFileScan;
+
+// Isolate parsing even on single-core hosts: this threshold bounds the caller's
+// transient AST heap, independently of similarity's parallelism threshold.
+const MIN_GRAPH_WORKER_FILES = 128;
+
+const TYPESCRIPT_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts"]);
+const JAVASCRIPT_EXTENSIONS = new Set([".js", ".jsx", ".mjs", ".cjs"]);
+
+function supportsProjectFile(
+	file: string,
+	options: ts.CompilerOptions
+): boolean {
+	const extension = path.extname(file);
+	return (
+		TYPESCRIPT_EXTENSIONS.has(extension) ||
+		(JAVASCRIPT_EXTENSIONS.has(extension) &&
+			Boolean(options.allowJs ?? options.checkJs)) ||
+		(extension === ".json" && Boolean(options.resolveJsonModule))
+	);
+}
 
 /** Bounded per-process LRU for dependency graphs, keyed by tsconfig path. */
 const graphCache = new Map<string, DependencyGraph>();
@@ -197,7 +249,8 @@ export async function buildDependencyGraph(
 	options: GraphBuildOptions = {}
 ): Promise<DependencyGraph> {
 	const files = getProjectFiles(project).map(normalizePath);
-	const fingerprint = computeConfigFingerprint(project);
+	const retainProgram = options.retainProgram ?? true;
+	const fingerprint = `${computeConfigFingerprint(project)}:${retainProgram}`;
 	const cached = touchCacheEntry(graphCache, project.tsconfigPath);
 	const cachedMtimes = graphCacheMtimes.get(project.tsconfigPath);
 	if (
@@ -212,7 +265,44 @@ export async function buildDependencyGraph(
 	// Snapshot mtimes before parsing so an edit made mid-build invalidates the
 	// next lookup rather than being masked by a post-build timestamp.
 	const mtimes = snapshotMtimes(files);
-	const program = createProgram(project, files);
+	let result: DependencyGraph;
+	if (
+		!retainProgram &&
+		isMainThread &&
+		files.length >= MIN_GRAPH_WORKER_FILES
+	) {
+		const [workerGraph] = await runAnalysisJobs<GraphScanJob, DependencyGraph>(
+			[{ kind: "graph", project }],
+			{ onProgress: options.onProgress }
+		);
+		if (!workerGraph) {
+			throw new Error("Graph worker returned no result");
+		}
+		result = workerGraph;
+	} else {
+		result = await scanDependencyGraph(project, files, options);
+	}
+	setCacheEntry(graphCache, project.tsconfigPath, result);
+	graphCacheMtimes.set(project.tsconfigPath, mtimes);
+	graphCacheFingerprints.set(project.tsconfigPath, fingerprint);
+	enforceCacheLimit(graphCache, [
+		graphCache,
+		graphCacheMtimes,
+		graphCacheFingerprints,
+	]);
+	return result;
+}
+
+async function scanDependencyGraph(
+	project: ProjectConfig,
+	files: string[],
+	options: GraphBuildOptions
+): Promise<DependencyGraph> {
+	const retainProgram = options.retainProgram ?? true;
+	const program = retainProgram ? createProgram(project, files) : undefined;
+	const host = program
+		? undefined
+		: ts.createCompilerHost(project.compilerOptions);
 	// One resolution cache per build (#247): ordinary reference and barrel
 	// scanning across all files share resolver probes. Deliberately not stored
 	// on the graph or module state — it dies with this build, so filesystem
@@ -222,18 +312,27 @@ export async function buildDependencyGraph(
 	// Scan all files concurrently — each scan is independent
 	const scanResults = await mapConcurrent(
 		files,
-		async (file) =>
-			withSourceFile<FileScanResult>(
-				program,
-				file,
-				(sourceFile): SuccessfulFileScan => ({
-					skipped: false,
-					normalizedFile: normalizePath(file),
-					refs: scanModuleReferences(sourceFile, project, resolutionContext),
-					barrels: scanBarrelExports(sourceFile, project, resolutionContext),
-				}),
-				{ skipped: true, normalizedFile: normalizePath(file) }
-			),
+		async (file): Promise<FileScanResult> => {
+			if (!(program || supportsProjectFile(file, project.compilerOptions))) {
+				return { skipped: true, normalizedFile: file };
+			}
+			const sourceFile = program
+				? program.getSourceFile(file)
+				: host?.getSourceFile(
+						file,
+						project.compilerOptions.target ?? ts.ScriptTarget.ES5
+					);
+			if (!sourceFile) {
+				return { skipped: true, normalizedFile: file };
+			}
+			return {
+				skipped: false,
+				normalizedFile: file,
+				refs: scanModuleReferences(sourceFile, project, resolutionContext),
+				barrels: scanBarrelExports(sourceFile, project, resolutionContext),
+				exports: program ? [] : scanExports(sourceFile),
+			};
+		},
 		{
 			onError: (file): SkippedFileScan => ({
 				skipped: true,
@@ -249,6 +348,9 @@ export async function buildDependencyGraph(
 	const skippedFiles: string[] = [];
 	const barrelFiles = new Set<string>();
 	const barrelReExports = new Map<string, string[]>();
+	const sourceMetadata = program
+		? undefined
+		: new Map<string, GraphSourceMetadata>();
 
 	for (const result of scanResults) {
 		if (result.skipped) {
@@ -257,6 +359,10 @@ export async function buildDependencyGraph(
 		}
 		const { normalizedFile, refs, barrels } = result;
 		imports.set(normalizedFile, refs);
+		sourceMetadata?.set(normalizedFile, {
+			exports: result.exports,
+			compilerOptions: project.compilerOptions,
+		});
 
 		if (barrels.length > 0) {
 			barrelFiles.add(normalizedFile);
@@ -271,6 +377,23 @@ export async function buildDependencyGraph(
 			importedBy.set(normalizedResolved, existing);
 		}
 	}
+	// Imported files outside the config's include set still contribute an export
+	// surface to audit, just as dependencies loaded by a retained Program do.
+	if (sourceMetadata && !project.compilerOptions.noResolve) {
+		for (const file of importedBy.keys()) {
+			if (sourceMetadata.has(file)) {
+				continue;
+			}
+			const dependency = createFileScopeProgram(file, project.compilerOptions);
+			const sourceFile = dependency.getSourceFile(file);
+			if (sourceFile) {
+				sourceMetadata.set(file, {
+					exports: scanExports(sourceFile),
+					compilerOptions: project.compilerOptions,
+				});
+			}
+		}
+	}
 
 	const result: DependencyGraph = {
 		imports,
@@ -279,15 +402,9 @@ export async function buildDependencyGraph(
 		barrelFiles,
 		barrelReExports,
 		program,
+		sourceMetadata,
+		compilerOptions: project.compilerOptions,
 	};
-	setCacheEntry(graphCache, project.tsconfigPath, result);
-	graphCacheMtimes.set(project.tsconfigPath, mtimes);
-	graphCacheFingerprints.set(project.tsconfigPath, fingerprint);
-	enforceCacheLimit(graphCache, [
-		graphCache,
-		graphCacheMtimes,
-		graphCacheFingerprints,
-	]);
 	return result;
 }
 
@@ -452,6 +569,7 @@ export function mergeDependencyGraphs(
 	const barrelFiles = new Set<string>();
 	const barrelReExports = new Map<string, string[]>();
 	const programs: ts.Program[] = [];
+	const sourceMetadata = new Map<string, GraphSourceMetadata>();
 
 	const refKey = (r: ModuleReference) =>
 		`${r.sourceFile}:${r.specifier}:${r.line}`;
@@ -478,6 +596,11 @@ export function mergeDependencyGraphs(
 	};
 
 	for (const g of graphs) {
+		for (const [file, metadata] of g.sourceMetadata ?? []) {
+			if (!sourceMetadata.has(file)) {
+				sourceMetadata.set(file, metadata);
+			}
+		}
 		mergeRefMap(imports, g.imports);
 		mergeRefMap(importedBy, g.importedBy);
 		for (const file of g.skippedFiles) {
@@ -512,5 +635,7 @@ export function mergeDependencyGraphs(
 		barrelReExports,
 		program: primary,
 		programs: rest.length > 0 ? rest : undefined,
+		sourceMetadata: sourceMetadata.size > 0 ? sourceMetadata : undefined,
+		compilerOptions: graphs[0]?.compilerOptions,
 	};
 }

@@ -1,6 +1,25 @@
 import ts from "typescript";
 import { extractVueScript } from "./vue-sfc.ts";
 
+/** Bind one file's lexical scopes without loading its imports or ambient libraries.
+ * This is for local symbol identity, never for type checking or mutation planning. */
+export function createFileScopeProgram(
+	filePath: string,
+	compilerOptions: ts.CompilerOptions
+): ts.Program {
+	const options = {
+		...compilerOptions,
+		noResolve: true,
+		noLib: true,
+		types: [],
+	};
+	const host = ts.createCompilerHost(options, true);
+	const getSourceFile = host.getSourceFile.bind(host);
+	host.getSourceFile = (file, ...args) =>
+		file === filePath ? getSourceFile(file, ...args) : undefined;
+	return ts.createProgram([filePath], options, host);
+}
+
 /**
  * Read and parse a Vue SFC file into a SourceFile by extracting its script block.
  * Uses a virtual .vue.ts filename so the TypeScript compiler accepts the content.

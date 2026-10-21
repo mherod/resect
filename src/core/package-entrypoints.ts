@@ -229,7 +229,8 @@ export function resolveBinReachabilityRoots(
 	graph: DependencyGraph
 ): Set<string> {
 	const roots = new Set<string>();
-	const compilerOptions = graph.program?.getCompilerOptions() ?? {};
+	const compilerOptions =
+		graph.program?.getCompilerOptions() ?? graph.compilerOptions ?? {};
 
 	for (const binFile of discovery.binFiles) {
 		if (graph.imports.has(binFile)) {

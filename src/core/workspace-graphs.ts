@@ -25,6 +25,7 @@ export interface WorkspaceGraphOptions {
 	workspace?: boolean;
 	/** Optional file-level progress observer for every graph build. */
 	onProgress?: ProgressCallback;
+	retainProgram?: boolean;
 }
 
 export interface WorkspaceGraphSet {
@@ -74,6 +75,7 @@ export async function buildWorkspaceGraphs(
 ): Promise<WorkspaceGraphSet> {
 	const baseGraphs = await buildProjectGraphs(options.tsconfigPath, {
 		onProgress: options.onProgress,
+		retainProgram: options.retainProgram,
 	});
 	if (!options.workspace) {
 		return { graphs: baseGraphs, workspaceRoot: null };
@@ -91,6 +93,7 @@ export async function buildWorkspaceGraphs(
 		async (pkg) =>
 			buildProjectGraphs(pkg.tsconfigPath as string, {
 				onProgress: options.onProgress,
+				retainProgram: options.retainProgram,
 			}),
 		{ onError: () => [] as ProjectGraphResult[] }
 	);

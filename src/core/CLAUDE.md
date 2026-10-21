@@ -184,15 +184,30 @@ withSourceFile(file, scanExports, []);
 withSourceFile(graph.program, file, scanExports, []);
 ```
 
-Known violation: `audit.ts:81`. `buildDependencyGraph` creates a program; do not add a third `createProgram()` call in `move.ts` or `rename.ts`. If exposing it, add `program: ts.Program` to `DependencyGraph`.
+Mutation planning keeps a full graph-owned program. Do not add another
+`createProgram()` call in `move.ts` or `rename.ts`.
 
 `export-liveness.ts` owns destructive export-verdict policy for both `analyze`
 and `unused`: imported bindings, package/public/bin evidence, convention
 entrypoints, internal references, reachability, transitive-dead chains, and
-orphans. Feed `evaluateExportLiveness()` prepared graph-owned source files and
-checkers. DON'T reconstruct that ordering in a command adapter or create a
-target-only `Program` for `analyze`; use `withGraphSourceFile()` and retain only
-the Vue/out-of-program parse fallback.
+orphans. DON'T reconstruct that ordering in a command adapter.
+
+`audit`, `analyze`, and `unused` request `retainProgram: false`: graphs retain
+plain export metadata and resolution settings. Graphs of at least 128 files run
+in a bounded parser worker that reclaims ASTs every 64 files, including on
+single-core hosts. `withGraphSourceFile()` binds
+one file's scopes on demand for these graphs, with imports, ambient types, and
+libraries disabled. This checker is for local symbol identity only; never use
+it for type verification or mutation planning. Preserve the ordinary full
+program path for those operations. Cache fingerprints distinguish both modes.
+
+Feed `evaluateExportLiveness()` an iterable of candidates. Streamed candidates
+carry exports and a lazy source loader; bind only when an unused export needs
+an internal-reference verdict. DON'T accumulate source files or checkers across
+candidates. Audit reads cached export counts, including imported files outside
+the config's include set. Preserve config settings for package-bin resolution.
+When a generated/non-source classifier excludes nothing, reuse the input graph;
+copying every edge for every overlapping config defeats the memory savings.
 
 ### Workspace and graph caches
 
@@ -205,6 +220,14 @@ Workspace hydration collects and deduplicates package manifests before parsing, 
 DO write invalidation regressions first in `graph.test.ts` or `tsconfig-discovery.test.ts`, then remeasure `unused` and `audit` against the 20s Bun test timeout.
 
 DON'T use async `Bun.file().lastModified` or content hashing in validity checks; both caused full rebuilds and timeouts.
+
+`export-index.ts` keeps at most 10,000 files' export metadata. Searches larger
+than that bound must use `createExportIndexLookup()` for one query so early
+misses cannot evict later hits before they are read. Keep its retained metadata
+local to the query, revalidate mtimes at each lookup, and preserve input order
+for equal-name results. DON'T grow the persistent cache to fit each project or
+retain parsed ASTs; test repeated queries above the cap as well as file edits,
+additions, deletions, and file-only searches.
 
 ### Parallel analysis
 
@@ -225,8 +248,8 @@ worker threads and preserve exact result parity.
 
 Workers exchange plain paths and declaration records. Never send ASTs, programs,
 checkers, or callbacks through structured clone. Keep greedy similarity grouping
-in its original order and reuse graph-owned programs for graph scans; reparsing
-their ASTs in workers adds overhead. Each analysis releases its workers on
+in its original order. Full-program graphs reuse their ASTs; streamed graphs
+retain only plain records. Each analysis releases its workers on
 success, failure, or timeout; infrastructure failures must reject rather than
 silently report an empty successful scan.
 

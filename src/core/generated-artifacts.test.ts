@@ -129,6 +129,12 @@ describe("framework-generated TypeScript artifacts", () => {
 		expect(result.graph.skippedFiles).toEqual([]);
 		expect(result.graph.barrelFiles.size).toBe(0);
 		expect(result.graph.barrelReExports.size).toBe(0);
+		const unchanged = excludeFrameworkGeneratedArtifacts(
+			result.graph,
+			classifier
+		);
+		expect(unchanged.graph).toBe(result.graph);
+		expect(unchanged.excludedGeneratedFiles).toEqual([]);
 		expect(generatedArtifactWarning(1)).toBe(
 			"Excluded 1 framework-generated TypeScript file(s) from analysis."
 		);

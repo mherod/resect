@@ -214,6 +214,7 @@ export async function findUnusedExports(
 		project: options?.project,
 		workspace: options?.workspace,
 		onProgress: options?.onProgress,
+		retainProgram: false,
 	});
 
 	return findUnusedExportsFromGraphs(directory, graphs, options);
@@ -307,43 +308,67 @@ export async function findUnusedExportsFromGraphs(
 	// graph above, so a test-only export is not falsely reported dead.
 	const ignorePattern = options?.ignore ? new Bun.Glob(options.ignore) : null;
 	const skippedFiles = new Set(graph.skippedFiles);
-	const candidates: ExportLivenessCandidate[] = [];
+	const prepareCandidates = function* (): Generator<ExportLivenessCandidate> {
+		for (const file of candidateFiles) {
+			if (
+				ignorePattern?.match(file) ||
+				ignorePattern?.match(path.basename(file))
+			) {
+				continue;
+			}
+			const metadata = graph.sourceMetadata?.get(file);
+			if (metadata) {
+				yield {
+					file,
+					exports: metadata.exports,
+					loadSource: () => {
+						const source = withGraphSourceFile(
+							graph,
+							file,
+							(sourceFile, program) => ({
+								sourceFile,
+								checker: program.getTypeChecker(),
+							}),
+							null
+						);
+						if (!source) {
+							skippedFiles.add(normalizePath(file));
+						}
+						return source;
+					},
+				};
+				continue;
+			}
 
-	for (const file of candidateFiles) {
-		if (
-			ignorePattern?.match(file) ||
-			ignorePattern?.match(path.basename(file))
-		) {
-			continue;
+			const graphCandidate =
+				withGraphSourceFile<ExportLivenessCandidate | null>(
+					graph,
+					file,
+					(sourceFile, program) => ({
+						file,
+						sourceFile,
+						checker: program.getTypeChecker(),
+					}),
+					null
+				);
+			const candidate =
+				graphCandidate ??
+				withSourceFile<ExportLivenessCandidate | null>(
+					file,
+					(sourceFile) => ({ file, sourceFile }),
+					null
+				);
+			if (candidate) {
+				yield candidate;
+			} else {
+				skippedFiles.add(normalizePath(file));
+			}
 		}
-
-		const graphCandidate = withGraphSourceFile<ExportLivenessCandidate | null>(
-			graph,
-			file,
-			(sourceFile, program) => ({
-				file,
-				sourceFile,
-				checker: program.getTypeChecker(),
-			}),
-			null
-		);
-		const candidate =
-			graphCandidate ??
-			withSourceFile<ExportLivenessCandidate | null>(
-				file,
-				(sourceFile) => ({ file, sourceFile }),
-				null
-			);
-		if (candidate) {
-			candidates.push(candidate);
-		} else {
-			skippedFiles.add(normalizePath(file));
-		}
-	}
+	};
 
 	const liveness = await evaluateExportLiveness({
 		graph,
-		candidates,
+		candidates: prepareCandidates(),
 		packageDirectory: absoluteDir,
 		analysisDirectory: absoluteDir,
 		entrypointGlobs: options?.entrypointGlobs,

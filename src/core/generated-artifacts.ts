@@ -276,13 +276,44 @@ export function excludeClassifiedFiles<T extends { file: string }>(
 	excludedFiles: T[];
 } {
 	const excludedByFile = new Map<string, T>();
+	const classifications = new Map<string, T | undefined>();
 	const classify = (file: string): T | undefined => {
+		if (classifications.has(file)) {
+			return classifications.get(file);
+		}
 		const artifact = classifier.classify(file);
+		classifications.set(file, artifact);
 		if (artifact) {
 			excludedByFile.set(artifact.file, artifact);
 		}
 		return artifact;
 	};
+	// Most projects have nothing to prune. Reuse their graph instead of copying
+	// every forward/reverse edge for each overlapping tsconfig and classifier.
+	for (const [file, refs] of graph.imports) {
+		classify(file);
+		for (const ref of refs) {
+			classify(ref.resolvedPath);
+		}
+	}
+	for (const file of graph.importedBy.keys()) {
+		classify(file);
+	}
+	for (const [file, targets] of graph.barrelReExports) {
+		classify(file);
+		for (const target of targets) {
+			classify(target);
+		}
+	}
+	for (const file of graph.skippedFiles) {
+		classify(file);
+	}
+	for (const file of graph.barrelFiles) {
+		classify(file);
+	}
+	if (excludedByFile.size === 0) {
+		return { graph, excludedFiles: [] };
+	}
 	const imports = new Map<string, ModuleReference[]>();
 	const importedBy = new Map<string, ModuleReference[]>();
 

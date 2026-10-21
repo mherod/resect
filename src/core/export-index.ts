@@ -24,18 +24,14 @@
  */
 import { statSync } from "node:fs";
 import type { ExportInfo } from "../types/analysis.ts";
-import {
-	enforceCacheLimit,
-	setCacheEntry,
-	touchCacheEntry,
-} from "./bounded-cache.ts";
+import { enforceCacheLimit, setCacheEntry } from "./bounded-cache.ts";
 import { scanExports } from "./scanner.ts";
 import { withSourceFile } from "./source-file.ts";
 
 /**
  * Entry-count bound. 10k files at a few KB of export metadata each keeps the
- * index far below the parsed-source weight it replaces while covering any
- * project this tool realistically scans in one process.
+ * index far below the parsed-source weight it replaces. Searches may exceed
+ * this bound; query-local lookups protect their hits from mid-scan eviction.
  */
 export const MAX_EXPORT_INDEX_ENTRIES = 10_000;
 
@@ -54,6 +50,36 @@ let parseCount = 0;
  * uncached behavior.
  */
 export function getIndexedFileExports(filePath: string): ExportInfo[] {
+	return readIndexedFileExports(filePath, exportIndexCache.get(filePath));
+}
+
+/**
+ * Retain only this query's existing metadata until its ordered scan finishes.
+ * Otherwise a scan larger than the LRU can evict every upcoming hit and reparse
+ * the entire project on every query. No ASTs or extra persistent entries are
+ * retained, and each lookup still checks mtime immediately before reuse.
+ */
+export function createExportIndexLookup(
+	filePaths: readonly string[]
+): (filePath: string) => ExportInfo[] {
+	const retained = new Map<string, ExportIndexEntry>();
+	for (const filePath of filePaths) {
+		const cached = exportIndexCache.get(filePath);
+		if (cached) {
+			retained.set(filePath, cached);
+		}
+	}
+	return (filePath) =>
+		readIndexedFileExports(
+			filePath,
+			exportIndexCache.get(filePath) ?? retained.get(filePath)
+		);
+}
+
+function readIndexedFileExports(
+	filePath: string,
+	cached: ExportIndexEntry | undefined
+): ExportInfo[] {
 	let mtimeMs: number;
 	try {
 		mtimeMs = statSync(filePath).mtimeMs;
@@ -61,8 +87,11 @@ export function getIndexedFileExports(filePath: string): ExportInfo[] {
 		exportIndexCache.delete(filePath);
 		return [];
 	}
-	const cached = touchCacheEntry(exportIndexCache, filePath);
 	if (cached?.mtimeMs === mtimeMs) {
+		// A query may reuse an entry evicted since it began. Re-admit it at the
+		// current LRU position without exceeding the persistent cache bound.
+		setCacheEntry(exportIndexCache, filePath, cached);
+		enforceCacheLimit(exportIndexCache, [exportIndexCache], maxEntries);
 		return cached.exports;
 	}
 	parseCount += 1;

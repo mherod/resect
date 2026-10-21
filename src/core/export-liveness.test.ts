@@ -7,6 +7,7 @@ import {
 } from "./export-liveness.ts";
 import { buildDependencyGraph, withGraphSourceFile } from "./graph.ts";
 import { loadProject } from "./project.ts";
+import { scanExports } from "./scanner.ts";
 
 describe("export-liveness policy", () => {
 	test("uses the same verdict path for one and many prepared candidates", async () => {
@@ -76,6 +77,40 @@ describe("export-liveness policy", () => {
 				evaluateExportLiveness({ ...sharedOptions, candidates: [value] }),
 				evaluateExportLiveness({ ...sharedOptions, candidates }),
 			]);
+			const loaded: string[] = [];
+			const lazyCandidates = candidates.map((candidate) => {
+				if (!("sourceFile" in candidate)) {
+					throw new Error("Expected prepared source");
+				}
+				return {
+					file: candidate.file,
+					exports: scanExports(candidate.sourceFile),
+					loadSource: () => {
+						loaded.push(candidate.file);
+						return candidate;
+					},
+				};
+			});
+			const lazy = await evaluateExportLiveness({
+				...sharedOptions,
+				candidates: lazyCandidates.values(),
+			});
+			expect(lazy).toEqual(batch);
+			expect(loaded).toEqual([
+				path.join(dir, "src/value.ts"),
+				path.join(dir, "src/wrapper.ts"),
+			]);
+			const unreadable = await evaluateExportLiveness({
+				...sharedOptions,
+				candidates: [
+					{
+						file: value.file,
+						exports: lazyCandidates[0]?.exports ?? [],
+						loadSource: () => null,
+					},
+				],
+			});
+			expect(unreadable.files).toEqual([]);
 
 			expect(selectedPrograms.size).toBe(1);
 			expect([...selectedPrograms]).toEqual([graphProgram]);
