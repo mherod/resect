@@ -1,3 +1,4 @@
+import type { StructuredEdit } from "../core/text-changes.ts";
 import type { MutatingCommandOptions } from "./commands.ts";
 
 export interface InlineOptions extends MutatingCommandOptions {
@@ -35,4 +36,6 @@ export interface InlineResult {
 	conflicts: InlineConflict[];
 	filesChanged: number;
 	dryRun: boolean;
+	/** Exact module-specifier and binding edits against the original files. */
+	edits?: StructuredEdit[];
 }

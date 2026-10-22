@@ -159,6 +159,14 @@ output. Use `logger.json` once, keep progress off JSON stdout, and derive
 `filesChanged` from actual effects after rollback; `plannedFiles` describes the
 plan even when previewed or refused.
 
+Inline binding plans must retain the canonical export name, barrel-visible
+name, consumer-local name and type-only provenance. Editing only the module
+specifier can silently import a different same-named value while tsc passes.
+Use AST-selected exact edits for both preview and apply, validate their original
+text, and preserve local aliases and unrelated formatting. Never guess through
+ambiguous wildcard/namespace mappings or widen an aliased barrel's export-all
+surface. Refuse unsupported import splits even under `--force`.
+
 Move preserves import binding names: nested local shadowing is not a new
 module-level conflict. Rename must retain its nested capture checks. Stream
 importer conflict checks instead of retaining every importer's syntax tree.

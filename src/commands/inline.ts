@@ -1,6 +1,5 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
-import ts from "../core/ast-utils.ts";
 import { checkRollbackSafeWorktree } from "../core/git.ts";
 import {
 	buildProjectGraphs,
@@ -17,7 +16,10 @@ import {
 	findAliasForPath,
 	normalizePath,
 } from "../core/resolver.ts";
-import { scanBarrelExports } from "../core/scanner.ts";
+import {
+	formatUnifiedDiff,
+	serializeStructuredEdits,
+} from "../core/text-changes.ts";
 import { printVerificationResults } from "../core/verify.ts";
 import type { ModuleReference } from "../types/graph.ts";
 import type {
@@ -30,9 +32,16 @@ import type { ProjectConfig } from "../types.ts";
 import {
 	type AliasChange,
 	applyChanges,
+	planAliasEdits,
 	rollbackAliasChanges,
 } from "./alias.ts";
 import { setupCommandContext } from "./command-context.ts";
+import {
+	analyzeInlineBarrel,
+	type InlineBarrelBindings,
+	planInlineReferenceEdits,
+	resolveInlineBinding,
+} from "./inline-bindings.ts";
 
 export type {
 	InlineConflict,
@@ -42,87 +51,6 @@ export type {
 } from "../types/inline.ts";
 
 const INLINE_STRATEGY = "inline";
-
-/**
- * Analyse a barrel source file. Returns:
- * - `isPureBarrel`: true iff every top-level statement is `export … from "…"`.
- * - `bindingToCanonical`: map from exported-name → canonical specifier string.
- * - `wildcardSpecifier`: the specifier of a single wildcard `export * from` source,
- *   used as a fallback for any binding not found in `bindingToCanonical`.
- * - `canonicalSpecifier`: the single specifier when there is exactly one source, else null.
- */
-function analyzeBarrel(
-	sourceFile: ts.SourceFile,
-	project: ProjectConfig
-): {
-	isPureBarrel: boolean;
-	/** binding-name → resolved absolute path of canonical source */
-	bindingToResolvedPath: Map<string, string>;
-	/** resolved absolute path for a wildcard `export * from` source, or null */
-	wildcardResolvedPath: string | null;
-	/** single canonical resolved absolute path when barrel has exactly one source, else null */
-	canonicalResolvedPath: string | null;
-} {
-	// Walk statements to check purity (every statement must be export … from "…")
-	let isPureBarrel = true;
-	for (const stmt of sourceFile.statements) {
-		if (
-			ts.isExportDeclaration(stmt) &&
-			stmt.moduleSpecifier &&
-			ts.isStringLiteral(stmt.moduleSpecifier)
-		) {
-			// Valid re-export statement
-			continue;
-		}
-		// Any other statement (import, export const, bare export {}, etc.) → impure
-		isPureBarrel = false;
-		break;
-	}
-
-	if (!isPureBarrel) {
-		return {
-			isPureBarrel: false,
-			bindingToResolvedPath: new Map(),
-			wildcardResolvedPath: null,
-			canonicalResolvedPath: null,
-		};
-	}
-
-	const barrelExports = scanBarrelExports(sourceFile, project);
-
-	// Maps binding name → the resolved absolute path of the canonical source
-	const bindingToResolvedPath = new Map<string, string>();
-	let wildcardResolvedPath: string | null = null;
-
-	for (const barrel of barrelExports) {
-		for (const entry of barrel.exports) {
-			if (entry.type === "named") {
-				// The exported name on the barrel surface is `entry.alias ?? entry.name`
-				const exportedName = entry.alias ?? entry.name;
-				if (exportedName) {
-					bindingToResolvedPath.set(exportedName, barrel.resolvedPath);
-				}
-			} else if (entry.type === "all") {
-				// export * from "@pkg" — record as wildcard fallback (resolved absolute path)
-				wildcardResolvedPath = barrel.resolvedPath;
-			}
-			// "all-as" (export * as ns) — skip (not per-binding inlinable)
-		}
-	}
-
-	// Determine single canonical resolved path when there is exactly one source
-	const canonicalResolvedPath =
-		barrelExports.length === 1
-			? (barrelExports[0]?.resolvedPath ?? null)
-			: null;
-
-	return {
-		isPureBarrel: true,
-		bindingToResolvedPath,
-		wildcardResolvedPath,
-		canonicalResolvedPath,
-	};
-}
 
 /**
  * Compute the specifier to write into `importerFile` that points to `resolvedTargetPath`.
@@ -153,18 +81,16 @@ function resolveSpecifierForImporter(
  */
 function getCanonicalResolvedPathForRef(
 	ref: ModuleReference,
-	bindingToResolvedPath: Map<string, string>,
-	wildcardResolvedPath: string | null
+	barrel: InlineBarrelBindings
 ): string | null {
 	const bindings = ref.bindings;
 	if (!bindings || bindings.length === 0) {
-		// No named bindings — use wildcard if available
-		return wildcardResolvedPath;
+		return null;
 	}
 
 	const resolvedPaths = new Set<string>();
 	for (const binding of bindings) {
-		const rp = bindingToResolvedPath.get(binding.name) ?? wildcardResolvedPath;
+		const rp = resolveInlineBinding(barrel, binding.name)?.resolvedPath;
 		if (!rp) {
 			return null; // Cannot resolve this binding
 		}
@@ -180,8 +106,8 @@ function getCanonicalResolvedPathForRef(
 }
 
 /**
- * Pure compute seam: analyses the barrel and builds the rewrite plan.
- * No file I/O is performed; call `applyChanges` directly, or route through
+ * Read-only planning seam: analyses the barrel and builds exact rewrite edits.
+ * No files are written; call `applyChanges` directly, or route through
  * `runMutation` (as `inlineCommand`/`inlineTool` do) to materialise the
  * rewrites with the guard/journal/verify/rollback sequence applied.
  */
@@ -200,7 +126,7 @@ export async function inlineBarrel(
 	const barrelAnalysis = withGraphSourceFile(
 		merged,
 		normalizedBarrel,
-		(sf) => analyzeBarrel(sf, project),
+		(sf) => analyzeInlineBarrel(sf, project),
 		null
 	);
 
@@ -248,8 +174,7 @@ export async function inlineBarrel(
 		};
 	}
 
-	const { bindingToResolvedPath, wildcardResolvedPath, canonicalResolvedPath } =
-		barrelAnalysis;
+	const { canonicalResolvedPath } = barrelAnalysis;
 
 	// Derive a human-readable canonicalSpecifier for the result (alias or relative
 	// from the barrel itself, so callers can show it without an importer context).
@@ -315,13 +240,28 @@ export async function inlineBarrel(
 
 		// export-all: e.g. `export * from "<barrel>"` — single-source retarget
 		if (type === "export-all") {
-			if (canonicalResolvedPath) {
+			if (canonicalResolvedPath && barrelAnalysis.transparentWildcard) {
 				const newSpecifier = resolveSpecifierForImporter(
 					importerFile,
 					canonicalResolvedPath,
 					specifier,
 					project
 				);
+				const plan = withGraphSourceFile(
+					merged,
+					importerFile,
+					(sf) =>
+						planInlineReferenceEdits(sf, ref, newSpecifier, barrelAnalysis),
+					null
+				);
+				if (!plan || plan.conflict) {
+					conflicts.push({
+						file: importerFile,
+						line,
+						reason: plan?.conflict ?? "Could not locate importer",
+					});
+					continue;
+				}
 				rewrites.push({
 					file: importerFile,
 					line,
@@ -336,13 +276,14 @@ export async function inlineBarrel(
 					oldSpecifier: specifier,
 					newSpecifier,
 					strategy: INLINE_STRATEGY,
+					edits: plan.edits,
 				});
 			} else {
 				conflicts.push({
 					file: importerFile,
 					line,
 					reason:
-						"Multi-source barrel: cannot retarget export-all without specifying the canonical source",
+						"Cannot preserve export-all bindings unless the barrel is a single unmodified wildcard re-export",
 				});
 			}
 			continue;
@@ -351,8 +292,7 @@ export async function inlineBarrel(
 		// import (default), import-named, export-from — resolve canonical per bindings
 		const canonicalResolvedPathForRef = getCanonicalResolvedPathForRef(
 			ref,
-			bindingToResolvedPath,
-			wildcardResolvedPath
+			barrelAnalysis
 		);
 
 		if (!canonicalResolvedPathForRef) {
@@ -369,7 +309,7 @@ export async function inlineBarrel(
 			// Check if any binding maps to a different source (multi-source case)
 			const distinctPaths = new Set<string>();
 			for (const b of bindings ?? []) {
-				const rp = bindingToResolvedPath.get(b.name) ?? wildcardResolvedPath;
+				const rp = resolveInlineBinding(barrelAnalysis, b.name)?.resolvedPath;
 				if (rp) {
 					distinctPaths.add(rp);
 				}
@@ -417,6 +357,20 @@ export async function inlineBarrel(
 		}
 		// Under --force (or no existing canonical import): proceed with the swap and
 		// rely on verification to catch genuine duplicate-binding TS errors
+		const plan = withGraphSourceFile(
+			merged,
+			importerFile,
+			(sf) => planInlineReferenceEdits(sf, ref, newSpecifier, barrelAnalysis),
+			null
+		);
+		if (!plan || plan.conflict) {
+			conflicts.push({
+				file: importerFile,
+				line,
+				reason: plan?.conflict ?? "Could not locate importer",
+			});
+			continue;
+		}
 
 		const bindingNames = (bindings ?? []).map((b) => b.alias ?? b.name);
 		rewrites.push({
@@ -433,6 +387,7 @@ export async function inlineBarrel(
 			oldSpecifier: specifier,
 			newSpecifier,
 			strategy: INLINE_STRATEGY,
+			edits: plan.edits,
 		});
 	}
 
@@ -447,6 +402,7 @@ export async function inlineBarrel(
 			conflicts,
 			filesChanged: dryRun ? 0 : uniqueFiles.size,
 			dryRun,
+			edits: await planAliasEdits(changes),
 		},
 		changes,
 	};
@@ -516,6 +472,13 @@ function printInlineResults(
 			logger.warn(`   ${rel}:${c.line}: ${c.reason}`);
 		}
 		logger.empty();
+	}
+	if (result.dryRun && result.edits?.length) {
+		logger.info(
+			formatUnifiedDiff(result.edits, (file) =>
+				path.relative(projectRoot, file)
+			)
+		);
 	}
 }
 
@@ -643,6 +606,9 @@ async function runInlineCommand(
 	if (json) {
 		logger.json({
 			...result,
+			edits: serializeStructuredEdits(result.edits ?? [], (file) =>
+				path.relative(project.rootDir, file)
+			),
 			barrelFile: path.relative(project.rootDir, result.barrelFile),
 			rewrites: result.rewrites.map((r) => ({
 				...r,

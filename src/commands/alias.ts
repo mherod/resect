@@ -100,6 +100,8 @@ interface WorkspaceAliasPackageResult {
 
 export interface AliasChange extends UpdatedReference {
 	strategy: string;
+	/** Exact planned edits, including binding changes; supersede specifier lookup. */
+	edits?: StructuredEdit[];
 }
 
 interface AliasConflict extends AliasChange {
@@ -932,20 +934,32 @@ export async function planAliasEdits(
 			let content: string;
 			try {
 				content = await rt.fs.readFile(filePath);
-			} catch {
+			} catch (error) {
+				if (fileChanges.some((change) => change.edits !== undefined)) {
+					throw error;
+				}
 				return undefined;
 			}
 
-			// Parse the file to find precise specifier locations via AST
-			const sourceFile = createSourceFileFromText(filePath, content);
-			const textChanges = specifierEditsToTextChanges(
-				sourceFile,
-				fileChanges
-			).map((pair) => pair.change);
+			const specifierChanges = fileChanges.filter(
+				(change) => change.edits === undefined
+			);
+			const textChanges =
+				specifierChanges.length > 0
+					? specifierEditsToTextChanges(
+							createSourceFileFromText(filePath, content),
+							specifierChanges
+						).map((pair) => pair.change)
+					: [];
+			const exactEdits = fileChanges.flatMap((change) => change.edits ?? []);
+			const exactContent = applyStructuredEdits(content, exactEdits);
 
-			if (textChanges.length > 0) {
-				const unique = deduplicateChanges(textChanges);
-				const newContent = applyTextChanges(content, unique);
+			if (textChanges.length > 0 || exactEdits.length > 0) {
+				const unique = deduplicateChanges([...textChanges, ...exactEdits]);
+				const newContent =
+					textChanges.length > 0 || unique.length !== exactEdits.length
+						? applyTextChanges(content, unique)
+						: exactContent;
 				return createStructuredEdit(filePath, content, newContent);
 			}
 			return undefined;

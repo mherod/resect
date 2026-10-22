@@ -667,6 +667,9 @@ export async function inlineTool(args: {
 		filesChanged,
 		plannedFiles: new Set(changes.map((change) => change.file)).size,
 		partial: filesChanged > 0 && result.conflicts.length > 0,
+		edits: serializeStructuredEdits(result.edits ?? [], (file) =>
+			path.relative(root, file)
+		),
 		rewrites: result.rewrites.map((r: InlineRewrite) => ({
 			file: path.relative(root, r.file),
 			line: r.line,
