@@ -46,7 +46,7 @@ import { analyzeSimilarity } from "../core/similarity.ts";
 import { serializeStructuredEdits } from "../core/text-changes.ts";
 import { discoverProject } from "../core/tsconfig-discovery.ts";
 import { discoverWorkspace } from "../core/workspace.ts";
-import type { FilenameCasing } from "../types/naming.ts";
+import type { FilenameCasing, NamingOptions } from "../types/naming.ts";
 import type { TidyFixCategory } from "../types/tidy.ts";
 import {
 	type ReadOnlyWorkerJob,
@@ -575,6 +575,16 @@ export async function namingTool(
 		includeIgnored?: boolean;
 	}
 ): Promise<CallToolResult> {
+	const reportOptions: NamingOptions = {
+		directory,
+		project: options.project,
+		workspace: options.workspace,
+		minSiblings: options.minSiblings,
+		majorityThreshold: options.majorityThreshold,
+		case: options.case,
+		includeTests: options.includeTests,
+		includeIgnored: options.includeIgnored,
+	};
 	if (options.fix && !options.dryRun) {
 		const { applyNamingFix } = await import("../commands/naming.ts");
 		const absoluteDir = path.resolve(directory);
@@ -588,29 +598,15 @@ export async function namingTool(
 			return errorText(WORKTREE_BLOCKED_MESSAGE);
 		}
 		const result = await applyNamingFix({
+			...reportOptions,
 			directory: absoluteDir,
-			project: options.project,
-			workspace: options.workspace,
-			minSiblings: options.minSiblings,
-			majorityThreshold: options.majorityThreshold,
-			case: options.case,
-			includeTests: options.includeTests,
 			fix: true,
 			force: options.force,
 			dryRun: false,
 		});
 		return jsonText(result);
 	}
-	const report = await buildNamingReport({
-		directory,
-		project: options.project,
-		workspace: options.workspace,
-		minSiblings: options.minSiblings,
-		majorityThreshold: options.majorityThreshold,
-		case: options.case,
-		includeTests: options.includeTests,
-		includeIgnored: options.includeIgnored,
-	});
+	const report = await buildNamingReport(reportOptions);
 	return jsonText(report);
 }
 

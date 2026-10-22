@@ -1,15 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { namingTool } from "../mcp-tools/read-only.ts";
 import { readRegistrationSource } from "../mcp-tools/registration-test-helpers.ts";
+import type { NamingReport } from "../types/naming.ts";
 import {
 	captureOutput,
 	cleanup,
 	makeStrictFixture as makeFixture,
 	makeGitFixture,
+	makeProject,
+	parseMcpTextPayload,
 	runCli,
+	runGitCommand,
 } from "./__test-helpers";
-import { namingCommand } from "./naming.ts";
+import { type NamingFixResult, namingCommand } from "./naming.ts";
 
 // Case-only renames are invisible to stat() on case-insensitive filesystems
 // (macOS APFS), so compare the exact on-disk basename via a directory listing.
@@ -48,6 +53,134 @@ const NEXT_METADATA_CODE_FILES = [
 	"manifest.ts",
 	"robots.ts",
 ] as const;
+
+async function makeIgnoredNamingFixture() {
+	return makeProject({
+		name: "naming-ignored-mcp",
+		outsideRepo: true,
+		git: true,
+		tsconfig: "bundler",
+		files: {
+			".gitignore": "ignored/\n",
+			"ignored/BadName.ts": "export const x = 1;\n",
+			"consumer.ts":
+				'import { x } from "./ignored/BadName"; export const value = x;\n',
+		},
+	});
+}
+
+test("MCP naming applies its previewed ignored candidate and updates importers", async () => {
+	const fixture = await makeIgnoredNamingFixture();
+	expect(
+		await runGitCommand(fixture.dir, ["check-ignore", "ignored/BadName.ts"])
+	).toContain("ignored/BadName.ts");
+	expect(
+		await runGitCommand(fixture.dir, ["ls-files", "--", "ignored/BadName.ts"])
+	).toBe("");
+	const preview = parseMcpTextPayload<NamingReport>(
+		await namingTool(fixture.dir, {
+			case: "kebab-case",
+			includeIgnored: true,
+			fix: true,
+			dryRun: true,
+		})
+	);
+	expect(preview.findings).toHaveLength(1);
+	expect(preview.findings[0]?.suggestedName).toBe("bad-name.ts");
+	expect(await hasExactFile(fixture.path("ignored/BadName.ts"))).toBe(true);
+	expect(await hasExactFile(fixture.path("ignored/bad-name.ts"))).toBe(false);
+	const applied = parseMcpTextPayload<NamingFixResult>(
+		await namingTool(fixture.dir, {
+			case: "kebab-case",
+			includeIgnored: true,
+			fix: true,
+			dryRun: false,
+		})
+	);
+	expect(applied.success).toBe(true);
+	expect(applied.renames).toHaveLength(1);
+	expect(applied.errors).toEqual([]);
+	expect(applied.rolledBack).toBe(false);
+	expect(applied.worktreeDirtyRollbackDisabled).toBe(false);
+	expect(await hasExactFile(fixture.path("ignored/BadName.ts"))).toBe(false);
+	expect(await hasExactFile(fixture.path("ignored/bad-name.ts"))).toBe(true);
+	expect(await Bun.file(fixture.path("consumer.ts")).text()).toContain(
+		'"./ignored/bad-name"'
+	);
+});
+
+for (const includeIgnored of [undefined, false]) {
+	test(`MCP naming excludes ignored files from preview and apply when includeIgnored is ${includeIgnored}`, async () => {
+		const fixture = await makeIgnoredNamingFixture();
+		const before = await Bun.file(fixture.path("consumer.ts")).text();
+		const preview = parseMcpTextPayload<NamingReport>(
+			await namingTool(fixture.dir, {
+				case: "kebab-case",
+				includeIgnored,
+				fix: true,
+				dryRun: true,
+			})
+		);
+		expect(preview.findings).toEqual([]);
+		const applied = parseMcpTextPayload<NamingFixResult>(
+			await namingTool(fixture.dir, {
+				case: "kebab-case",
+				includeIgnored,
+				fix: true,
+				dryRun: false,
+			})
+		);
+		expect(applied.success).toBe(true);
+		expect(applied.renames).toEqual([]);
+		expect(await hasExactFile(fixture.path("ignored/BadName.ts"))).toBe(true);
+		expect(await hasExactFile(fixture.path("ignored/bad-name.ts"))).toBe(false);
+		expect(await Bun.file(fixture.path("consumer.ts")).text()).toBe(before);
+	});
+}
+
+test("MCP naming protects dirty importers and preserves their edits when forced", async () => {
+	const fixture = await makeIgnoredNamingFixture();
+	const importer = fixture.path("consumer.ts");
+	const before = `${await Bun.file(importer).text()}// retained user edit\n`;
+	await Bun.write(importer, before);
+	const preview = parseMcpTextPayload<NamingReport>(
+		await namingTool(fixture.dir, {
+			case: "kebab-case",
+			includeIgnored: true,
+			fix: true,
+			dryRun: true,
+		})
+	);
+	expect(preview.findings).toHaveLength(1);
+	expect(await Bun.file(importer).text()).toBe(before);
+	const blocked = await namingTool(fixture.dir, {
+		case: "kebab-case",
+		includeIgnored: true,
+		fix: true,
+		dryRun: false,
+	});
+	expect(blocked.isError).toBe(true);
+	expect(await hasExactFile(fixture.path("ignored/BadName.ts"))).toBe(true);
+	expect(await hasExactFile(fixture.path("ignored/bad-name.ts"))).toBe(false);
+	expect(await Bun.file(importer).text()).toBe(before);
+	const forced = parseMcpTextPayload<NamingFixResult>(
+		await namingTool(fixture.dir, {
+			case: "kebab-case",
+			includeIgnored: true,
+			fix: true,
+			dryRun: false,
+			force: true,
+		})
+	);
+	expect(forced.success).toBe(true);
+	expect(forced.renames).toHaveLength(1);
+	expect(forced.worktreeDirtyRollbackDisabled).toBe(true);
+	expect(await hasExactFile(fixture.path("ignored/BadName.ts"))).toBe(false);
+	expect(await hasExactFile(fixture.path("ignored/bad-name.ts"))).toBe(true);
+	expect(await Bun.file(importer).text()).toBe(
+		before.replace("./ignored/BadName", "./ignored/bad-name")
+	);
+});
 
 function functionFile(name: string): string {
 	return `export function ${name}() { return "${name}"; }\n`;
