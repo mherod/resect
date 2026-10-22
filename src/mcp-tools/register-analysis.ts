@@ -18,7 +18,16 @@ import {
 } from "../commands/command-descriptor.ts";
 import { mcpDescription } from "../commands/command-spec.ts";
 import { toZodShape } from "../commands/option-descriptor-zod.ts";
-import { FIND_TYPES } from "../commands/option-domains.ts";
+import {
+	AFFECTED_OPTION_DESCRIPTORS,
+	AFFECTED_POSITIONAL_DESCRIPTORS,
+	ANALYZE_IMPACT_OPTION_DESCRIPTORS,
+	ANALYZE_IMPACT_POSITIONAL_DESCRIPTORS,
+	ANALYZE_OPTION_DESCRIPTORS,
+	ANALYZE_POSITIONAL_DESCRIPTORS,
+	FIND_OPTION_DESCRIPTORS,
+	FIND_POSITIONAL_DESCRIPTORS,
+} from "../commands/query-descriptors.ts";
 import {
 	BARREL_OPTION_DESCRIPTORS,
 	BARREL_POSITIONAL_DESCRIPTORS,
@@ -46,24 +55,10 @@ export function registerAnalysisTools(server: McpServer): void {
 		"find",
 		{
 			description: mcpDescription("find"),
-			inputSchema: {
-				query: z
-					.string()
-					.describe(
-						"Symbol or filename fragment, case-insensitive and partial (e.g. 'Entity', 'parseConfig')"
-					),
-				project: z
-					.string()
-					.describe(
-						"Absolute or cwd-relative path to the project root or a tsconfig.json; its tsconfig determines which files are in scope"
-					),
-				type: z
-					.enum(FIND_TYPES)
-					.optional()
-					.describe(
-						"Restrict matches: 'file' = filenames only, 'export' = exported symbol names only, 'all' = both (default 'all')"
-					),
-			},
+			inputSchema: toZodShape([
+				...FIND_POSITIONAL_DESCRIPTORS,
+				...FIND_OPTION_DESCRIPTORS,
+			]),
 		},
 		async ({ query, project, type }) => {
 			return withErrorHandling(async () => {
@@ -76,25 +71,10 @@ export function registerAnalysisTools(server: McpServer): void {
 		"analyze",
 		{
 			description: mcpDescription("analyze"),
-			inputSchema: {
-				file: z
-					.string()
-					.describe(
-						"Absolute or cwd-relative path to the single source file to analyze (e.g. 'src/core/graph.ts')"
-					),
-				project: z
-					.string()
-					.optional()
-					.describe(
-						"Optional path to the project root or tsconfig.json. Omit to auto-resolve the nearest tsconfig that owns the file (recommended)"
-					),
-				entrypointGlobs: z
-					.union([z.string(), z.array(z.string())])
-					.optional()
-					.describe(
-						"Optional glob pattern(s) for filename-dispatched entrypoints whose exports should be treated as externally consumed"
-					),
-			},
+			inputSchema: toZodShape([
+				...ANALYZE_POSITIONAL_DESCRIPTORS,
+				...ANALYZE_OPTION_DESCRIPTORS,
+			]),
 		},
 		async ({ file, project, entrypointGlobs }) => {
 			return withErrorHandling(async () => {
@@ -107,24 +87,10 @@ export function registerAnalysisTools(server: McpServer): void {
 		"analyze-impact",
 		{
 			description: mcpDescription("analyze-impact"),
-			inputSchema: {
-				source: z
-					.string()
-					.describe(
-						"Absolute or cwd-relative path to the file you plan to move or rename (e.g. 'src/utils/foo.ts')"
-					),
-				target: z
-					.string()
-					.describe(
-						"Proposed destination path for the move/rename (e.g. 'packages/shared/src/foo.ts')"
-					),
-				project: z
-					.string()
-					.optional()
-					.describe(
-						"Optional path to the project root or tsconfig.json. Omit to auto-resolve the nearest tsconfig that owns the source file (recommended)"
-					),
-			},
+			inputSchema: toZodShape([
+				...ANALYZE_IMPACT_POSITIONAL_DESCRIPTORS,
+				...ANALYZE_IMPACT_OPTION_DESCRIPTORS,
+			]),
 		},
 		async ({ source, target, project }) => {
 			return withErrorHandling(async () => {
@@ -137,19 +103,10 @@ export function registerAnalysisTools(server: McpServer): void {
 		"affected",
 		{
 			description: mcpDescription("affected"),
-			inputSchema: {
-				files: z
-					.array(z.string())
-					.describe("List of file paths that have changed"),
-				project: z
-					.string()
-					.optional()
-					.describe("Optional path to the project root or tsconfig.json"),
-				workspace: z
-					.boolean()
-					.optional()
-					.describe("Scan across all workspace packages"),
-			},
+			inputSchema: toZodShape([
+				...AFFECTED_POSITIONAL_DESCRIPTORS,
+				...AFFECTED_OPTION_DESCRIPTORS,
+			]),
 		},
 		async ({ files, project, workspace }) => {
 			return withErrorHandling(async () => {

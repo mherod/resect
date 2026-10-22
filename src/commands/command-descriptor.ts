@@ -4,9 +4,16 @@ import type { OptionName } from "./option-names.ts";
 
 type RawCliValues = Partial<Record<OptionName, boolean | string | string[]>>;
 
+export interface CliParseFailure {
+	ok: false;
+	message: string;
+	/** The registry renders command-specific usage with the active CLI name. */
+	usageCommand?: string;
+}
+
 export type CliParseResult<Value = unknown> =
 	| { ok: true; value: Value }
-	| { ok: false; message: string };
+	| CliParseFailure;
 
 export type CliOptionParser = (raw: RawCliValues[OptionName]) => CliParseResult;
 
@@ -52,6 +59,8 @@ interface OptionDescriptorBase<
 	mcp?: McpPresentation;
 	/** Pure compatibility parsing; rendering and process exit stay in the CLI. */
 	parseCli?: CliOptionParser;
+	/** Missing and empty CLI values fail before coercion; MCP is independent. */
+	cliRequired?: { message: string; usageCommand?: string };
 }
 
 export interface BooleanOptionDescriptor<
@@ -89,6 +98,8 @@ export interface EnumOptionDescriptor<
 > extends OptionDescriptorBase<Name, Key> {
 	type: "enum";
 	domain: readonly string[];
+	/** Preserve a shipped CLI error without repeating the enum's domain check. */
+	cliInvalidMessage?: string;
 	multiple?: true;
 	default?: string | readonly string[];
 }
@@ -174,7 +185,17 @@ export type DescriptorInputOptions<
 };
 
 export type RegistryOptions<Descriptors extends readonly OptionDescriptor[]> = {
-	[Descriptor in Descriptors[number] as Descriptor["key"]]?: DescriptorValue<Descriptor>;
+	[Descriptor in Descriptors[number] as Descriptor extends {
+		cliRequired: unknown;
+	}
+		? Descriptor["key"]
+		: never]: DescriptorValue<Descriptor>;
+} & {
+	[Descriptor in Descriptors[number] as Descriptor extends {
+		cliRequired: unknown;
+	}
+		? never
+		: Descriptor["key"]]?: DescriptorValue<Descriptor>;
 };
 
 export type RegistryDefaults<Descriptors extends readonly OptionDescriptor[]> =
@@ -188,9 +209,7 @@ export type RegistryDefaults<Descriptors extends readonly OptionDescriptor[]> =
 
 export type RegistryOptionsResult<
 	Descriptors extends readonly OptionDescriptor[],
-> =
-	| { ok: true; value: RegistryOptions<Descriptors> }
-	| { ok: false; message: string };
+> = { ok: true; value: RegistryOptions<Descriptors> } | CliParseFailure;
 
 function numberExpectation(descriptor: NumberOptionDescriptor): string {
 	const kind = descriptor.integer ? "an integer" : "a finite number";
@@ -230,7 +249,9 @@ function coerceScalar(
 			}
 			return {
 				ok: false,
-				message: `Error: --${descriptor.name} must be one of ${descriptor.domain.map((value) => `'${value}'`).join(", ")}`,
+				message:
+					descriptor.cliInvalidMessage ??
+					`Error: --${descriptor.name} must be one of ${descriptor.domain.map((value) => `'${value}'`).join(", ")}`,
 			};
 		case "number": {
 			if (typeof raw !== "string" || raw === "") {
@@ -277,6 +298,9 @@ export function toRegistryOptions<
 
 	for (const descriptor of descriptors) {
 		const raw = values[descriptor.name];
+		if (descriptor.cliRequired && (raw === undefined || raw === "")) {
+			return { ok: false, ...descriptor.cliRequired };
+		}
 		if (descriptor.parseCli) {
 			const parsed = descriptor.parseCli(raw);
 			if (!parsed.ok) {

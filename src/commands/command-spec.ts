@@ -46,6 +46,16 @@ import {
 } from "./move-descriptors.ts";
 import { toCliHelpOptions } from "./option-descriptor-help.ts";
 import {
+	AFFECTED_OPTION_DESCRIPTORS,
+	AFFECTED_POSITIONAL_DESCRIPTORS,
+	ANALYZE_IMPACT_OPTION_DESCRIPTORS,
+	ANALYZE_IMPACT_POSITIONAL_DESCRIPTORS,
+	ANALYZE_OPTION_DESCRIPTORS,
+	ANALYZE_POSITIONAL_DESCRIPTORS,
+	FIND_OPTION_DESCRIPTORS,
+	FIND_POSITIONAL_DESCRIPTORS,
+} from "./query-descriptors.ts";
+import {
 	BARREL_OPTION_DESCRIPTORS,
 	BARREL_POSITIONAL_DESCRIPTORS,
 	SIMILAR_OPTION_DESCRIPTORS,
@@ -92,6 +102,8 @@ export interface CommandSpec extends CommandDescriptor {
 export const COMMAND_SPECS: readonly CommandSpec[] = [
 	{
 		name: "find",
+		options: FIND_OPTION_DESCRIPTORS,
+		positionals: FIND_POSITIONAL_DESCRIPTORS,
 		usage: "<query> -p <project>",
 		summary: "Find files and exports by name",
 		cliHelp: `
@@ -103,12 +115,7 @@ Arguments:
   query    Name to search for (case-insensitive, partial match)
 
 Options:
-  -p, --project      Path to project directory (required)
-  -t, --type         Filter: file, export, or all (default: all)
-  --verbose          Show helpful tips for next steps
-  --workspace        Scan across all workspace packages
-  --only-related-to  Limit searched files to a file, folder, or glob pattern
-  --json             Output results as JSON
+${toCliHelpOptions(FIND_OPTION_DESCRIPTORS)}
 
 Output includes:
   • Files matching the query by filename
@@ -125,6 +132,8 @@ Examples:
 	},
 	{
 		name: "analyze",
+		options: ANALYZE_OPTION_DESCRIPTORS,
+		positionals: ANALYZE_POSITIONAL_DESCRIPTORS,
 		usage: "<file>",
 		summary: "Analyze a module's imports, exports, and references",
 		cliHelp: `
@@ -136,12 +145,7 @@ Arguments:
   file    Path to the file to analyze
 
 Options:
-  --verbose          Show detailed reference information
-  -p, --project      Path to project directory or tsconfig.json
-  --workspace        Scan across all workspace packages
-  --only-related-to  Filter referencedBy results to a file, folder, or glob pattern
-  --entrypoint-globs Glob pattern(s) for externally dispatched entrypoints; repeatable
-  --json             Output results as JSON
+${toCliHelpOptions(ANALYZE_OPTION_DESCRIPTORS)}
 
 Output includes:
   • All exports from the file
@@ -160,6 +164,8 @@ Examples:
 	},
 	{
 		name: "analyze-impact",
+		options: ANALYZE_IMPACT_OPTION_DESCRIPTORS,
+		positionals: ANALYZE_IMPACT_POSITIONAL_DESCRIPTORS,
 		usage: "<source> <target>",
 		summary: "Scout the impact radius of a proposed move/rename",
 		cliHelp: `
@@ -173,10 +179,7 @@ Arguments:
   target    Proposed destination path
 
 Options:
-  -p, --project   Path to project directory or tsconfig.json
-  --workspace     Scan across all workspace packages
-  --verbose       Show resolved source/target paths
-  --json          Output results as JSON
+${toCliHelpOptions(ANALYZE_IMPACT_OPTION_DESCRIPTORS)}
 
 Output includes:
   • Impacted files (direct + indirect importers)
@@ -192,6 +195,8 @@ Examples:
 	},
 	{
 		name: "affected",
+		options: AFFECTED_OPTION_DESCRIPTORS,
+		positionals: AFFECTED_POSITIONAL_DESCRIPTORS,
 		usage: "<files...>",
 		summary: "List all files affected by changes to the specified files",
 		cliHelp: `
@@ -204,10 +209,7 @@ Arguments:
   files...      One or more file paths that have changed
 
 Options:
-  -p, --project      Path to project directory or tsconfig.json
-  --workspace        Scan across all workspace packages
-  --json             Output results as JSON
-  --verbose          Show detailed reference information
+${toCliHelpOptions(AFFECTED_OPTION_DESCRIPTORS)}
 
 Output includes:
   • The input files themselves (since they were changed)

@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { makeFixture, parseMcpTextPayload } from "./commands/__test-helpers.ts";
+import {
+	makeFixture,
+	makeProject,
+	parseMcpTextPayload,
+} from "./commands/__test-helpers.ts";
 import { COMMAND_SPECS, cliHelp } from "./commands/command-spec.ts";
 import { MCP_DESCRIPTIONS } from "./commands/mcp-descriptions.ts";
 import { COMMANDS } from "./commands/registry.ts";
@@ -136,6 +140,48 @@ const REPORT_BASELINE = {
 	},
 } as const;
 
+// D1 receipts captured from the shipped registrations at f05fa67 before migration.
+const QUERY_BASELINE = {
+	find: {
+		help: "3ec09fcc9ff8934f4643acdf275310e363036e5e44a87aa8ed91202be5baad43",
+		schema: "acbe04cab166250921b0d11ce0596c109aae6728c5cbae4cfa0c6c06d31c9233",
+		prose: "671bd14dc9cf3bd5d550f2b9da7985dc4e67d6311d7b82f2c93acd90571767d1",
+		flags: [
+			"project",
+			"type",
+			"verbose",
+			"workspace",
+			"only-related-to",
+			"json",
+		],
+	},
+	analyze: {
+		help: "0027f72533b7a3e7fafb64170faedd3e9ffee460aa151ac5dc53d4d055bac687",
+		schema: "f4d2da0b8e6d99e0e6e1c9e76fcce7e7065953b1a52273f69ffb899757d22008",
+		prose: "8bd9e65139bc3ac4086c4841bf61ded2e2ec25443712d0ecf8f0c20b38e8580f",
+		flags: [
+			"verbose",
+			"project",
+			"workspace",
+			"only-related-to",
+			"entrypoint-globs",
+			"json",
+		],
+	},
+	"analyze-impact": {
+		help: "6897b589dcbe323c22312e2985e3bbb877e014ca87ebe8d61b3f64b413a89840",
+		schema: "6d57ca1f802e97bded7f16860b8773362f7dcfec85b77a34ffdc4b5b6db21c98",
+		prose: "b7cb26d27a7255864fa476d5d0a9eb8ab26e0bc0a80e85d12e93de555158169f",
+		flags: ["verbose", "project", "workspace", "json"],
+	},
+	affected: {
+		help: "ce089608185c429f80ac8eb376193e75804af086caa2a9092a269df052edcdd2",
+		schema: "a953fcf831cdb6a070464035bb4a3cc3421ca87909bc77410f3c5d7740e77501",
+		prose: "24bfbbca5b7f7b943a58e5166a20a9909dd2fd8d74dd2b3477b135aa4a207077",
+		flags: ["verbose", "project", "workspace", "json"],
+	},
+} as const;
+
 function stableContract(value: unknown): unknown {
 	if (Array.isArray(value)) {
 		return value.map(stableContract);
@@ -158,7 +204,10 @@ function contractHash(value: unknown): string {
 		.digest("hex");
 }
 
-for (const [name, baseline] of Object.entries(REPORT_BASELINE)) {
+for (const [name, baseline] of Object.entries({
+	...REPORT_BASELINE,
+	...QUERY_BASELINE,
+})) {
 	test(`${name} preserves its registered schema and exact CLI presentation`, () => {
 		const command = COMMANDS.find((candidate) => candidate.name === name);
 		const spec = COMMAND_SPECS.find((candidate) => candidate.name === name);
@@ -174,6 +223,186 @@ for (const [name, baseline] of Object.entries(REPORT_BASELINE)) {
 		);
 	});
 }
+
+for (const { name, keys, required } of [
+	{
+		name: "find",
+		keys: ["query", "project", "type"],
+		required: { query: "", project: "" },
+	},
+	{
+		name: "analyze",
+		keys: ["file", "project", "entrypointGlobs"],
+		required: { file: "" },
+	},
+	{
+		name: "analyze-impact",
+		keys: ["source", "target", "project"],
+		required: { source: "", target: "" },
+	},
+	{
+		name: "affected",
+		keys: ["files", "project", "workspace"],
+		required: { files: [] },
+	},
+]) {
+	test(`${name} MCP preserves exact keys, required inputs and empty values`, () => {
+		const shape = registeredSchema(name);
+		const schema = z.object(shape);
+		expect(Object.keys(shape)).toEqual(keys);
+		expect(schema.parse(required)).toEqual(required);
+		for (const key of Object.keys(required)) {
+			const missing = Object.fromEntries(
+				Object.entries(required).filter(([name]) => name !== key)
+			);
+			expect(schema.safeParse(missing).success).toBeFalse();
+			const invalid =
+				key === "files"
+					? ["", 1, false, null, {}, [1]]
+					: [1, false, null, {}, []];
+			for (const value of invalid) {
+				expect(
+					schema.safeParse({ ...required, [key]: value }).success
+				).toBeFalse();
+			}
+		}
+		if (name !== "find") {
+			expect(schema.parse({ ...required, project: "" })).toEqual({
+				...required,
+				project: "",
+			});
+			expect(
+				schema.safeParse({ ...required, project: [] }).success
+			).toBeFalse();
+		}
+	});
+}
+
+test("query MCP cardinalities and optional fields retain their existing domains", async () => {
+	const find = z.object(registeredSchema("find"));
+	for (const type of ["file", "export", "all"]) {
+		expect(find.parse({ query: "", project: "", type })).toEqual({
+			query: "",
+			project: "",
+			type,
+		});
+	}
+	for (const type of ["", "invalid", [], false]) {
+		expect(
+			find.safeParse({ query: "", project: "", type }).success
+		).toBeFalse();
+	}
+	const analyze = z.object(registeredSchema("analyze"));
+	for (const entrypointGlobs of [
+		"",
+		"hooks/**",
+		[],
+		["hooks/**", "scripts/**"],
+	]) {
+		expect(analyze.parse({ file: "", entrypointGlobs })).toEqual({
+			file: "",
+			entrypointGlobs,
+		});
+	}
+	for (const entrypointGlobs of [1, false, null, [1]]) {
+		expect(
+			analyze.safeParse({ file: "", entrypointGlobs }).success
+		).toBeFalse();
+	}
+	const affected = z.object(registeredSchema("affected"));
+	expect(affected.parse({ files: [""], workspace: false })).toEqual({
+		files: [""],
+		workspace: false,
+	});
+	expect(
+		affected.safeParse({ files: [], workspace: "false" }).success
+	).toBeFalse();
+	const handler = REGISTERED_HANDLERS.get("affected");
+	if (!handler) {
+		throw new Error("Missing affected handler");
+	}
+	expect(
+		parseMcpTextPayload<string[]>(await handler(affected.parse({ files: [] })))
+	).toEqual([]);
+});
+
+test("registered query MCP handlers preserve CLI results on a real project", async () => {
+	const fixture = await makeProject({
+		name: "query-mcp",
+		outsideRepo: true,
+		tsconfig: "bundler",
+		files: {
+			"src/model.ts": "export const Widget = 1;\n",
+			"src/consumer.ts":
+				'import { Widget } from "./model"; export const value = Widget;\n',
+			"src/hooks/dispatch.ts": "export function dispatch() { return 1; }\n",
+		},
+	});
+	const model = fixture.path("src/model.ts");
+	const hook = fixture.path("src/hooks/dispatch.ts");
+	const target = fixture.path("src/renamed.ts");
+	const cases = [
+		{
+			name: "find",
+			input: { query: "Widget", project: fixture.dir, type: "export" },
+			args: ["find", "Widget", "-p", fixture.dir, "-t", "export", "--json"],
+		},
+		{
+			name: "analyze",
+			input: {
+				file: hook,
+				project: fixture.dir,
+				entrypointGlobs: "src/hooks/**",
+			},
+			args: [
+				"analyze",
+				hook,
+				"-p",
+				fixture.dir,
+				"--entrypoint-globs=src/hooks/**",
+				"--json",
+			],
+		},
+		{
+			name: "analyze",
+			input: {
+				file: hook,
+				project: fixture.dir,
+				entrypointGlobs: ["src/hooks/**", "src/scripts/**"],
+			},
+			args: [
+				"analyze",
+				hook,
+				"-p",
+				fixture.dir,
+				"--entrypoint-globs=src/hooks/**",
+				"--entrypoint-globs=src/scripts/**",
+				"--json",
+			],
+		},
+		{
+			name: "analyze-impact",
+			input: { source: model, target, project: fixture.dir },
+			args: ["analyze-impact", model, target, "-p", fixture.dir, "--json"],
+		},
+		{
+			name: "affected",
+			input: { files: [model], project: fixture.dir },
+			args: ["affected", model, "-p", fixture.dir, "--json"],
+		},
+	];
+	for (const { name, input, args } of cases) {
+		const handler = REGISTERED_HANDLERS.get(name);
+		if (!handler) {
+			throw new Error(`Missing ${name} handler`);
+		}
+		const mcp = await handler(z.object(registeredSchema(name)).parse(input));
+		expect(mcp.isError).not.toBeTrue();
+		const cli = await fixture.run(args, { cwd: process.cwd() });
+		expect(cli.exitCode).toBe(0);
+		expect(parseMcpTextPayload<unknown>(mcp)).toEqual(JSON.parse(cli.stdout));
+	}
+});
 
 test("move MCP inputs retain optional scalars and non-empty structured batches", () => {
 	const schema = z.object(registeredSchema("move"));

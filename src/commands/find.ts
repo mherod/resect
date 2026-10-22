@@ -10,13 +10,12 @@ import {
 	filterToWorkspaceBoundary,
 } from "../core/workspace.ts";
 import type { ExportInfo } from "../types/analysis.ts";
-import type { ReadOnlyCommandOptions } from "../types/commands.ts";
+import type { RegistryOptions } from "./command-descriptor.ts";
+import type { FIND_OPTION_DESCRIPTORS } from "./query-descriptors.ts";
 
-export interface FindOptions extends ReadOnlyCommandOptions {
+export interface FindOptions
+	extends RegistryOptions<typeof FIND_OPTION_DESCRIPTORS> {
 	query: string;
-	project: string;
-	type?: "file" | "export" | "all";
-	onlyRelatedTo?: string;
 }
 
 export interface FindResult {

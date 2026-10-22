@@ -8,9 +8,11 @@ import {
 import { resolveTsConfig } from "../core/project.ts";
 import { normalizePath } from "../core/resolver.ts";
 import { buildWorkspaceGraphs } from "../core/workspace-graphs.ts";
-import type { ReadOnlyCommandOptions } from "../types.ts";
+import type { DescriptorInputOptions } from "./command-descriptor.ts";
+import type { AFFECTED_OPTION_DESCRIPTORS } from "./query-descriptors.ts";
 
-export interface AffectedOptions extends ReadOnlyCommandOptions {
+export interface AffectedOptions
+	extends DescriptorInputOptions<typeof AFFECTED_OPTION_DESCRIPTORS> {
 	files: string[];
 }
 

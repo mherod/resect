@@ -22,12 +22,18 @@ import {
 import { collectUnresolvableDiagnostics } from "../core/verify.ts";
 import { filterToWorkspaceBoundary } from "../core/workspace.ts";
 import type { AnalysisResult } from "../types/analysis.ts";
-import type { ProjectConfig, ReadOnlyCommandOptions } from "../types.ts";
+import type { ProjectConfig } from "../types.ts";
 import { setupCommandContext } from "./command-context.ts";
+import type { DescriptorInputOptions } from "./command-descriptor.ts";
+import type { ANALYZE_OPTION_DESCRIPTORS } from "./query-descriptors.ts";
 
-export interface AnalyzeOptions extends ReadOnlyCommandOptions {
+export interface AnalyzeOptions
+	extends Omit<
+		DescriptorInputOptions<typeof ANALYZE_OPTION_DESCRIPTORS>,
+		"entrypointGlobs"
+	> {
 	file: string;
-	onlyRelatedTo?: string;
+	/** Library callers may also supply readonly glob arrays. */
 	entrypointGlobs?: EntrypointGlobs;
 }
 

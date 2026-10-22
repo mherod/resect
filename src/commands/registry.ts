@@ -7,6 +7,8 @@ import { auditCommand } from "./audit.ts";
 import { barrelCommand } from "./barrel.ts";
 import {
 	AUDIT_OPTION_DESCRIPTORS,
+	type OptionDescriptor,
+	type RegistryOptions,
 	toRegistryOptions,
 } from "./command-descriptor.ts";
 import { CLI_NAME, cliHelp } from "./command-spec.ts";
@@ -27,7 +29,6 @@ import { namingCommand } from "./naming.ts";
 import {
 	EXTENSION_POLICIES,
 	FILENAME_CASING_STYLES,
-	FIND_TYPES,
 	isInDomain,
 	PREFER_STRATEGIES,
 } from "./option-domains.ts";
@@ -36,6 +37,12 @@ import type { CliValues, OptionName } from "./option-flags.ts";
 export type { CliValues } from "./option-flags.ts";
 
 import { organiseCommand } from "./organise.ts";
+import {
+	AFFECTED_OPTION_DESCRIPTORS,
+	ANALYZE_IMPACT_OPTION_DESCRIPTORS,
+	ANALYZE_OPTION_DESCRIPTORS,
+	FIND_OPTION_DESCRIPTORS,
+} from "./query-descriptors.ts";
 import { renameCommand } from "./rename.ts";
 import {
 	BARREL_OPTION_DESCRIPTORS,
@@ -58,6 +65,20 @@ function requireArg(
 		logger.error(`Run '${CLI_NAME} ${cmdName} --help' for usage`);
 		process.exit(1);
 	}
+}
+
+function parseDeclaredOptions<
+	const Descriptors extends readonly OptionDescriptor[],
+>(descriptors: Descriptors, values: CliValues): RegistryOptions<Descriptors> {
+	const parsed = toRegistryOptions(descriptors, values);
+	if (!parsed.ok) {
+		logger.error(parsed.message);
+		if (parsed.usageCommand) {
+			logger.error(`Run '${CLI_NAME} ${parsed.usageCommand} --help' for usage`);
+		}
+		process.exit(1);
+	}
+	return parsed.value;
 }
 
 /**
@@ -195,24 +216,12 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "analyze",
 		helpText: cliHelp("analyze"),
-		options: [
-			"verbose",
-			"project",
-			"workspace",
-			"only-related-to",
-			"entrypoint-globs",
-			"json",
-		],
+		options: ANALYZE_OPTION_DESCRIPTORS.map(({ name }) => name),
 		run: async ([file], values) => {
 			requireArg("analyze", "<file>", file);
 			await analyzeCommand({
 				file,
-				verbose: values.verbose,
-				project: values.project,
-				workspace: values.workspace,
-				json: values.json,
-				onlyRelatedTo: values["only-related-to"],
-				entrypointGlobs: values["entrypoint-globs"],
+				...parseDeclaredOptions(ANALYZE_OPTION_DESCRIPTORS, values),
 			});
 		},
 	},
@@ -220,17 +229,14 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "analyze-impact",
 		helpText: cliHelp("analyze-impact"),
-		options: ["verbose", "project", "workspace", "json"],
+		options: ANALYZE_IMPACT_OPTION_DESCRIPTORS.map(({ name }) => name),
 		run: async ([source, target], values) => {
 			requireArg("analyze-impact", "<source>", source);
 			requireArg("analyze-impact", "<target>", target);
 			await analyzeImpactCommand({
 				source,
 				target,
-				verbose: values.verbose,
-				project: values.project,
-				workspace: values.workspace,
-				json: values.json,
+				...parseDeclaredOptions(ANALYZE_IMPACT_OPTION_DESCRIPTORS, values),
 			});
 		},
 	},
@@ -238,7 +244,7 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "affected",
 		helpText: cliHelp("affected"),
-		options: ["verbose", "project", "workspace", "json"],
+		options: AFFECTED_OPTION_DESCRIPTORS.map(({ name }) => name),
 		run: async (files, values) => {
 			if (files.length === 0) {
 				logger.error("Error: affected requires at least one <file> argument");
@@ -247,10 +253,7 @@ export const COMMANDS: CommandDef[] = [
 			}
 			await affectedCommand({
 				files,
-				verbose: values.verbose,
-				project: values.project,
-				workspace: values.workspace,
-				json: values.json,
+				...parseDeclaredOptions(AFFECTED_OPTION_DESCRIPTORS, values),
 			});
 		},
 	},
@@ -305,34 +308,12 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "find",
 		helpText: cliHelp("find"),
-		options: [
-			"project",
-			"type",
-			"verbose",
-			"workspace",
-			"only-related-to",
-			"json",
-		],
+		options: FIND_OPTION_DESCRIPTORS.map(({ name }) => name),
 		run: async ([query], values) => {
 			requireArg("find", "<query>", query);
-			if (!values.project) {
-				logger.error("Error: find requires -p <project> option");
-				logger.error(`Run '${CLI_NAME} find --help' for usage`);
-				process.exit(1);
-			}
-			const findType = values.type;
-			if (findType !== undefined && !isInDomain(FIND_TYPES, findType)) {
-				logger.error("Error: --type must be 'file', 'export', or 'all'");
-				process.exit(1);
-			}
 			await findCommand({
 				query,
-				project: values.project,
-				type: findType,
-				verbose: values.verbose,
-				workspace: values.workspace,
-				json: values.json,
-				onlyRelatedTo: values["only-related-to"],
+				...parseDeclaredOptions(FIND_OPTION_DESCRIPTORS, values),
 			});
 		},
 	},

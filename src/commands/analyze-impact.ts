@@ -11,11 +11,14 @@ import {
 import { parseSourceFile } from "../core/source-file.ts";
 import type { WorkspaceInfo } from "../core/workspace.ts";
 import type { BreakingRisk, ImpactReport } from "../types/impact.ts";
-import type { ProjectConfig, ReadOnlyCommandOptions } from "../types.ts";
+import type { ProjectConfig } from "../types.ts";
 import { computeMetrics } from "./audit.ts";
 import { setupCommandContext } from "./command-context.ts";
+import type { DescriptorInputOptions } from "./command-descriptor.ts";
+import type { ANALYZE_IMPACT_OPTION_DESCRIPTORS } from "./query-descriptors.ts";
 
-export interface AnalyzeImpactOptions extends ReadOnlyCommandOptions {
+export interface AnalyzeImpactOptions
+	extends DescriptorInputOptions<typeof ANALYZE_IMPACT_OPTION_DESCRIPTORS> {
 	/** File proposed to move/rename. */
 	source: string;
 	/** Proposed destination path. */

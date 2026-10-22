@@ -42,6 +42,40 @@ const CONTRACT_DESCRIPTORS = [
 ] as const satisfies readonly OptionDescriptor[];
 
 describe("command option descriptors", () => {
+	test("CLI requiredness reports missing and empty values without changing false", () => {
+		const descriptors = [
+			{
+				name: "project",
+				key: "project",
+				type: "string",
+				cliRequired: { message: "Project required", usageCommand: "example" },
+			},
+			{
+				name: "verbose",
+				key: "verbose",
+				type: "boolean",
+				cliRequired: { message: "Verbose required" },
+			},
+		] as const satisfies readonly OptionDescriptor[];
+		for (const project of [undefined, ""]) {
+			expect(toRegistryOptions(descriptors, { project })).toEqual({
+				ok: false,
+				message: "Project required",
+				usageCommand: "example",
+			});
+		}
+		const parsed = toRegistryOptions(descriptors, {
+			project: ".",
+			verbose: false,
+		});
+		expect(parsed.ok).toBeTrue();
+		if (parsed.ok) {
+			const project: string = parsed.value.project;
+			const verbose: boolean = parsed.value.verbose;
+			expect({ project, verbose }).toEqual({ project: ".", verbose: false });
+		}
+	});
+
 	test("toFlagSpec preserves parseArgs-compatible flag shapes", () => {
 		const projectFlag: { type: "string"; short: "p" } = toFlagSpec(
 			CONTRACT_DESCRIPTORS[1]
