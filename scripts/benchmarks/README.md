@@ -90,6 +90,31 @@ comparison again.
 
 ## Mutation acceptance
 
+For incremental batch-session updates, capture a baseline and candidate with:
+
+```sh
+bun scripts/benchmarks/move-session.ts /tmp/new-move-session-baseline
+bun scripts/benchmarks/move-session.ts /tmp/new-move-session-candidate /tmp/new-move-session-baseline
+```
+
+This runs three fresh processes for preview and application at each of 50 and
+5,000 unrelated source files. Each process builds one streamed graph, moves one
+file through 20 destinations and performs 10,000 before-file translations.
+Receipts retain complete report/content hashes, ordered references in canonical
+graph-key order, phase timings and the native process/worker peak bound. Hashes
+must match across repeated runs and the supplied baseline; peaks must stay below
+2,000,000,000 bytes. Metadata includes the source revision, tracked diff hash,
+benchmark hash, runtime and hardware. Preserve the matching source diff when
+benchmarking an uncommitted candidate.
+
+Instrumentation counts full forward/barrel sweeps, reverse-map clears and Map
+constructions during translation. `fetchedReferenceRecords` counts the lengths
+of retrieved buckets, not actual edge visits. Touched buckets may contain other
+importers of the same destination; unrelated destination buckets stay untouched.
+The synthetic workload includes graph construction and parser threads but no
+compiler verification. It is not VS Code mutation acceptance. Run it without
+concurrent tests, builds or benchmarks, and retain all output directories.
+
 ```sh
 bun scripts/benchmarks/mutations.ts /path/to/pinned/vscode /tmp/new-mutation-results 3 /tmp/mutation-baseline
 ```

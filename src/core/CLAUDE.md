@@ -195,6 +195,12 @@ package self-import that the destination's own configuration cannot resolve.
 `move-graph.ts` owns sequential relocation and refresh of forward references,
 reverse references and barrel relationships. Move sessions supply current source
 contents; keep graph mutations here and retain no additional TypeScript program.
+Use `MoveGraphUpdater` once per session. Rescan changed virtual contents and
+discover affected exporters through existing reverse buckets. Replace only
+touched forward/reverse/barrel entries; never clear/rebuild the reverse map or
+sweep unrelated edges per move. Preserve importer order within affected buckets
+with the session's file-order index. Finish reads before publishing, and detach
+the matching graph from the filesystem cache before its first mutation.
 
 Bundler-owned stylesheet and SQL imports resolve as `asset`, never as TypeScript graph nodes. DO preserve the reported module specifier while stripping `?query` and `#fragment` suffixes only for extension classification and filesystem lookup. Missing relative assets must remain unresolvable; bare package assets remain external.
 

@@ -245,6 +245,11 @@ Batch moves (`move --batch`) validate non-empty `{ source, target }[]`, build co
 after the shared move planner/applier succeeds. Keep injected contexts and overlay
 callbacks in-process. Delegate graph changes to `core/move-graph.ts`; command
 adapters must not maintain a second set of graph indexes or advance failed moves.
+Preview resolution must read the same overlay as planning, including deleted
+files and newly created directories, with a fresh resolution cache per move.
+Publish path history only after graph advancement succeeds. Track original file
+identities so a reused pathname cannot redirect an earlier file; translator
+lookups must not rebuild maps or walk the full move history.
 
 ## Audit, tidy, and barrel
 

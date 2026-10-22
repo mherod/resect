@@ -200,6 +200,19 @@ export const clearGraphCache = createCacheResetter(
 	graphCacheFingerprints
 );
 
+/** A mutable session must not publish virtual state through the filesystem cache. */
+export function detachGraphFromCache(
+	project: ProjectConfig,
+	graph: DependencyGraph
+): void {
+	if (graphCache.get(project.tsconfigPath) !== graph) {
+		return;
+	}
+	graphCache.delete(project.tsconfigPath);
+	graphCacheMtimes.delete(project.tsconfigPath);
+	graphCacheFingerprints.delete(project.tsconfigPath);
+}
+
 /**
  * Compiler options that change resolution, program construction, or proof of
  * emitted package entrypoints. Options that only affect diagnostics (e.g.

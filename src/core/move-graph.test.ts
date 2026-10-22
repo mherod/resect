@@ -3,7 +3,7 @@ import path from "node:path";
 import { cleanup, makeFixture } from "../commands/__test-helpers.ts";
 import { bunRuntime } from "../runtime/index.ts";
 import { buildDependencyGraph } from "./graph.ts";
-import { refreshMoveGraph } from "./move-graph.ts";
+import { MoveGraphUpdater } from "./move-graph.ts";
 import { loadProject } from "./project.ts";
 import { createSourceFileFromText } from "./source-file.ts";
 
@@ -61,24 +61,21 @@ test.each([
 	await bunRuntime.fs.deleteFile(source);
 	await Bun.write(oldBarrel, after);
 	await Bun.write(newBarrel, destination);
-	await refreshMoveGraph(
-		graph,
-		{
-			success: true,
-			movedFile: { from: source, to: target },
-			edits: [],
-			errors: [],
-			updatedReferences: [oldBarrel, newBarrel].map((file) => ({
-				file,
-				line: 1,
-				oldSpecifier: "./value",
-				newSpecifier: "./nested/value",
-			})),
-		},
-		project,
-		async (file) => createSourceFileFromText(file, await Bun.file(file).text()),
-		false
+	const updater = new MoveGraphUpdater(graph, project, async (file) =>
+		createSourceFileFromText(file, await Bun.file(file).text())
 	);
+	await updater.update({
+		success: true,
+		movedFile: { from: source, to: target },
+		edits: [],
+		errors: [],
+		updatedReferences: [oldBarrel, newBarrel].map((file) => ({
+			file,
+			line: 1,
+			oldSpecifier: "./value",
+			newSpecifier: "./nested/value",
+		})),
+	});
 	const fresh = await buildDependencyGraph(loadProject(projectPath), {
 		retainProgram: false,
 	});
@@ -88,4 +85,44 @@ test.each([
 	expect(graph.barrelReExports).toEqual(fresh.barrelReExports);
 	expect(graph.imports.has(source)).toBe(false);
 	expect(graph.importedBy.has(source)).toBe(false);
+});
+
+test("a failed rescan preserves indexes and the reusable graph cache", async () => {
+	const directory = await makeFixture(
+		"move-graph-failure",
+		{
+			"src/value.ts": "export const value = 1;\n",
+			"src/index.ts": 'export * from "./value";\n',
+		},
+		{ outsideRepo: true, tsconfig: "bundler" }
+	);
+	directories.push(directory);
+	const project = loadProject(path.join(directory, "tsconfig.json"));
+	const graph = await buildDependencyGraph(project, { retainProgram: false });
+	const before = structuredClone(graph);
+	const source = path.join(directory, "src/value.ts");
+	const target = path.join(directory, "src/nested/value.ts");
+	const updater = new MoveGraphUpdater(graph, project, async (file) => {
+		if (file !== target) {
+			throw new Error("rescan failed");
+		}
+		return createSourceFileFromText(file, "export const value = 1;\n");
+	});
+	let failure: unknown;
+	try {
+		await updater.update({
+			success: true,
+			movedFile: { from: source, to: target },
+			edits: [],
+			updatedReferences: [],
+			errors: [],
+		});
+	} catch (error) {
+		failure = error;
+	}
+	expect(failure).toEqual(new Error("rescan failed"));
+	expect(graph).toEqual(before);
+	expect(await buildDependencyGraph(project, { retainProgram: false })).toBe(
+		graph
+	);
 });

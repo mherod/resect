@@ -1,6 +1,8 @@
+import path from "node:path";
+import ts from "typescript";
 import type { DependencyGraph } from "../core/graph.ts";
-import { refreshMoveGraph } from "../core/move-graph.ts";
-import { normalizePath } from "../core/resolver.ts";
+import { MoveGraphUpdater } from "../core/move-graph.ts";
+import { createResolutionContext, normalizePath } from "../core/resolver.ts";
 import { createSourceFileFromText } from "../core/source-file.ts";
 import {
 	applyStructuredEdits,
@@ -31,7 +33,10 @@ export class MoveSession {
 	private readonly dryRun: boolean;
 	private readonly executeMove: typeof moveModule;
 	private readonly overlay = new Map<string, string | null>();
-	private readonly successfulMoves: { source: string; target: string }[] = [];
+	private readonly virtualDirectories = new Set<string>();
+	private readonly originalPaths = new Map<string, { currentPath: string }>();
+	private readonly activePaths = new Map<string, { currentPath: string }>();
+	private readonly graphUpdater: MoveGraphUpdater;
 
 	constructor(
 		project: ProjectConfig,
@@ -42,6 +47,11 @@ export class MoveSession {
 		this.project = project;
 		this.dryRun = dryRun;
 		this.executeMove = executeMove;
+		this.graphUpdater = new MoveGraphUpdater(
+			graph,
+			project,
+			this.getSourceFile
+		);
 		this.context = {
 			graph,
 			readFile: this.readFile,
@@ -76,16 +86,32 @@ export class MoveSession {
 	}
 
 	readonly translateBeforeFile = (file: string): string => {
-		const destinations = new Map(
-			this.successfulMoves.map(({ source, target }) => [source, target])
-		);
-		let translated = normalizePath(file);
-		const visited = new Set<string>();
-		while (destinations.has(translated) && !visited.has(translated)) {
-			visited.add(translated);
-			translated = destinations.get(translated) as string;
-		}
-		return translated;
+		const normalized = normalizePath(file);
+		return this.originalPaths.get(normalized)?.currentPath ?? normalized;
+	};
+
+	private readonly resolutionHost: ts.ModuleResolutionHost = {
+		...ts.sys,
+		fileExists: (file) => {
+			const normalized = normalizePath(file);
+			return this.overlay.has(normalized)
+				? this.overlay.get(normalized) !== null
+				: ts.sys.fileExists(file);
+		},
+		readFile: (file) => {
+			const normalized = normalizePath(file);
+			return this.overlay.has(normalized)
+				? (this.overlay.get(normalized) ?? undefined)
+				: ts.sys.readFile(file);
+		},
+		directoryExists: (directory) =>
+			this.virtualDirectories.has(normalizePath(directory)) ||
+			ts.sys.directoryExists(directory),
+		realpath: (file) =>
+			this.overlay.has(normalizePath(file)) ||
+			this.virtualDirectories.has(normalizePath(file))
+				? file
+				: (ts.sys.realpath?.(file) ?? file),
 	};
 
 	private readonly readFile = async (file: string): Promise<string> => {
@@ -118,25 +144,69 @@ export class MoveSession {
 	private async advance(result: MoveResult): Promise<void> {
 		const source = normalizePath(result.movedFile.from);
 		const target = normalizePath(result.movedFile.to);
-		this.successfulMoves.push({ source, target });
+		const previous = new Map<string, string | null | undefined>();
+		const addedDirectories = new Set<string>();
 		if (this.dryRun) {
-			await this.advancePreview(result, source, target);
+			for (const [file, content] of await this.previewChanges(
+				result,
+				source,
+				target
+			)) {
+				previous.set(file, this.overlay.get(file));
+				this.overlay.set(file, content);
+				if (content !== null) {
+					this.addVirtualDirectories(file, addedDirectories);
+				}
+			}
 		}
-		await refreshMoveGraph(
-			this.context.graph,
-			result,
-			this.project,
-			this.getSourceFile,
-			this.dryRun
-		);
+		try {
+			await this.graphUpdater.update(
+				result,
+				createResolutionContext(this.project, this.resolutionHost)
+			);
+		} catch (error) {
+			for (const [file, content] of previous) {
+				if (content === undefined) {
+					this.overlay.delete(file);
+				} else {
+					this.overlay.set(file, content);
+				}
+			}
+			for (const directory of addedDirectories) {
+				this.virtualDirectories.delete(directory);
+			}
+			throw error;
+		}
+		const identity = this.activePaths.get(source) ?? { currentPath: source };
+		identity.currentPath = target;
+		if (!this.originalPaths.has(source)) {
+			this.originalPaths.set(source, identity);
+		}
+		this.activePaths.delete(source);
+		this.activePaths.set(target, identity);
 	}
 
-	private async advancePreview(
+	private addVirtualDirectories(file: string, added: Set<string>): void {
+		let directory = normalizePath(path.dirname(file));
+		while (!this.virtualDirectories.has(directory)) {
+			this.virtualDirectories.add(directory);
+			added.add(directory);
+			const parent = normalizePath(path.dirname(directory));
+			if (parent === directory) {
+				break;
+			}
+			directory = parent;
+		}
+	}
+
+	private async previewChanges(
 		result: MoveResult,
 		source: string,
 		target: string
-	): Promise<void> {
-		this.overlay.set(target, await this.readFile(source));
+	): Promise<Map<string, string | null>> {
+		const changes = new Map<string, string | null>([
+			[target, await this.readFile(source)],
+		]);
 		const editsByFile = new Map<string, StructuredEdit[]>();
 		for (const edit of result.edits) {
 			const file = normalizePath(edit.file);
@@ -145,11 +215,15 @@ export class MoveSession {
 			editsByFile.set(file, edits);
 		}
 		for (const [file, edits] of editsByFile) {
-			this.overlay.set(
+			changes.set(
 				file,
-				applyStructuredEdits(await this.readFile(file), edits)
+				applyStructuredEdits(
+					changes.get(file) ?? (await this.readFile(file)),
+					edits
+				)
 			);
 		}
-		this.overlay.set(source, null);
+		changes.set(source, null);
+		return changes;
 	}
 }
