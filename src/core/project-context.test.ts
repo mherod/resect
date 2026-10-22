@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { unlink, utimes } from "node:fs/promises";
 import path from "node:path";
-import { makeProject } from "../commands/__test-helpers.ts";
+import { createProjectFixtures } from "../commands/__test-helpers.ts";
 import {
 	analyzeExtractComponentFreeVariables,
 	buildExtractComponentModule,
@@ -21,6 +21,8 @@ import {
 } from "./project-context.ts";
 import { discoverProject, toProjectConfig } from "./tsconfig-discovery.ts";
 import { discoverWorkspace } from "./workspace.ts";
+
+const makeProject = createProjectFixtures();
 
 async function makeWorkspace(
 	name: string,

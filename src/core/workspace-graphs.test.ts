@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
-import { makeProject } from "../commands/__test-helpers.ts";
+import { createProjectFixtures } from "../commands/__test-helpers.ts";
 import { buildWorkspaceGraphs } from "./workspace-graphs.ts";
+
+const makeProject = createProjectFixtures();
 
 const workspaceFiles = {
 	"package.json": JSON.stringify({ name: "context-workspace", private: true }),
