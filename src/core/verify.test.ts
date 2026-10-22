@@ -6,8 +6,58 @@ import {
 	isIncompleteTypeCheck,
 	parseTsCompilerOutput,
 	runTypeCheckDetailed,
+	runWithWorkspaceTypecheckGuard,
 	VERIFY_INCOMPLETE_PREFIX,
 } from "./verify.ts";
+
+test("a workspace closing exception preserves other projects' completed diagnostics", async () => {
+	const projects: ProjectConfig[] = ["a", "b"].map((name) => ({
+		rootDir: `/workspace/${name}`,
+		tsconfigPath: `/workspace/${name}/tsconfig.json`,
+		compilerOptions: {},
+		pathAliases: new Map(),
+		include: [],
+		exclude: [],
+		files: [],
+	}));
+	const checks = new Map<string, number>();
+	const diagnostic = "src/value.ts(1,1): error TS2322: new project-b error";
+	setRuntime({
+		...bunRuntime,
+		process: {
+			exec: async (_args, options) => {
+				const cwd = options?.cwd ?? "";
+				const count = (checks.get(cwd) ?? 0) + 1;
+				checks.set(cwd, count);
+				if (cwd.endsWith("/a") && count === 2) {
+					throw new Error("project-a compiler unavailable");
+				}
+				const exitCode = count === 2 ? 1 : 0;
+				return {
+					exitCode,
+					stdout: count === 2 ? diagnostic : "",
+					stderr: "",
+					outputTruncated: false,
+					termination: { kind: "exit", exitCode },
+				};
+			},
+		},
+	});
+	try {
+		const { delta, result } = await runWithWorkspaceTypecheckGuard(
+			projects,
+			async () => "applied"
+		);
+		expect(result).toBe("applied");
+		expect(delta.success).toBe(false);
+		expect(delta.verificationIncomplete).toBe(true);
+		expect(delta.verificationException).toBe("project-a compiler unavailable");
+		expect(delta.newErrors).toEqual([diagnostic]);
+		expect([...checks.values()]).toEqual([2, 2]);
+	} finally {
+		setRuntime(bunRuntime);
+	}
+});
 
 describe("parseTsCompilerOutput", () => {
 	test("returns empty list when tsc exits zero", () => {

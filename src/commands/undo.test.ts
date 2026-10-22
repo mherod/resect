@@ -47,6 +47,47 @@ const baseDependencies = {
 };
 
 describe("executeUndo", () => {
+	test("reports a closing exception and restores exactly once without marking the journal undone", async () => {
+		let checks = 0;
+		let restores = 0;
+		let marks = 0;
+		const result = await executeUndo(
+			{},
+			{
+				...baseDependencies,
+				createUndoRollback: async () => ({
+					snapshot: undefined,
+					restore: async () => {
+						restores += 1;
+					},
+				}),
+				runTypeCheckDetailed: async () => {
+					checks += 1;
+					if (checks === 2) {
+						throw new Error("undo compiler unavailable");
+					}
+					return { errors: [], incomplete: false };
+				},
+				markOperationJournalEntryUndone: async () => {
+					marks += 1;
+					return entry;
+				},
+				undoJournalOperation: async (_root, options) => ({
+					dryRun: options?.dryRun ?? false,
+					entry,
+					restoredFiles: ["src/value.ts"],
+				}),
+			}
+		);
+		expect(restores).toBe(1);
+		expect(marks).toBe(0);
+		expect(result.success).toBe(false);
+		expect(result.verification).toMatchObject({
+			rolledBack: true,
+			verificationIncomplete: true,
+			verificationException: "undo compiler unavailable",
+		});
+	});
 	test("previews a named entry without running post-undo verification", async () => {
 		let receivedOptions: UndoJournalOptions | undefined;
 		let verificationRuns = 0;

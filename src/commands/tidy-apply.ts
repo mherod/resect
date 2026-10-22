@@ -132,29 +132,34 @@ async function applyTextTidyChanges(
 async function applyMoveTidyChanges(
 	moveChanges: PlannedMoveChange[],
 	reportDirectory: string,
-	project: ProjectConfig
-): Promise<
-	{ applied: TidyAppliedFix[] } & Omit<AppliedTidyChanges, "applied">
-> {
-	const { moveModule } = await import("./move.ts");
-	const applied: TidyAppliedFix[] = [];
-	const moveRenames: MoveRename[] = [];
-	const importerFiles = new Set<string>();
+	project: ProjectConfig,
+	progress: AppliedTidyChanges
+): Promise<void> {
+	const { moveModuleWithRecovery } = await import("./move-apply.ts");
+	const { applied, moveRenames, importerFiles } = progress;
 
 	for (const move of moveChanges) {
-		const result = await moveModule(
+		await moveModuleWithRecovery(
 			move.source,
 			move.target,
 			project,
 			false,
-			false
-		);
-		moveRenames.push({ from: move.source, to: move.target });
-		for (const ref of result.updatedReferences) {
-			if (ref.file !== move.source && ref.file !== move.target) {
-				importerFiles.add(ref.file);
+			false,
+			undefined,
+			false,
+			[],
+			undefined,
+			undefined,
+			undefined,
+			(plannedResult) => {
+				moveRenames.push({ from: move.source, to: move.target });
+				for (const ref of plannedResult.updatedReferences) {
+					if (ref.file !== move.source && ref.file !== move.target) {
+						importerFiles.add(ref.file);
+					}
+				}
 			}
-		}
+		);
 		applied.push({
 			category: move.category,
 			file: toRelativePath(reportDirectory, move.target),
@@ -163,14 +168,13 @@ async function applyMoveTidyChanges(
 			wasRolledBack: false,
 		});
 	}
-
-	return { applied, moveRenames, importerFiles };
 }
 
 async function applyPlannedTidyFixes(
 	planned: PlannedTidyChange[],
 	reportDirectory: string,
-	project: ProjectConfig
+	project: ProjectConfig,
+	progress: AppliedTidyChanges
 ): Promise<AppliedTidyChanges> {
 	const textChanges = planned.filter(
 		(change): change is PlannedTextChange => change.kind === "text"
@@ -180,17 +184,10 @@ async function applyPlannedTidyFixes(
 	);
 
 	const appliedText = await applyTextTidyChanges(textChanges, reportDirectory);
-	const moveResult = await applyMoveTidyChanges(
-		moveChanges,
-		reportDirectory,
-		project
-	);
+	progress.applied.push(...appliedText);
+	await applyMoveTidyChanges(moveChanges, reportDirectory, project, progress);
 
-	return {
-		applied: [...appliedText, ...moveResult.applied],
-		moveRenames: moveResult.moveRenames,
-		importerFiles: moveResult.importerFiles,
-	};
+	return progress;
 }
 
 function markRolledBack(applied: TidyAppliedFix[]): TidyAppliedFix[] {
@@ -296,13 +293,19 @@ export async function applyTidyFixes(
 		};
 	}
 
+	const progress: AppliedTidyChanges = {
+		applied: [],
+		moveRenames: [],
+		importerFiles: new Set(),
+	};
 	const outcome = await runMutation<AppliedTidyChanges>(
 		{
 			apply: async () =>
 				applyPlannedTidyFixes(
 					planned,
 					context.reportDirectory,
-					context.project
+					context.project,
+					progress
 				),
 			dryRun: false,
 			force: options.force ?? false,
@@ -323,7 +326,7 @@ export async function applyTidyFixes(
 			project: context.project,
 			rollbackStrategy: async (applyResult) => {
 				await rollbackAppliedTidyChanges({
-					applyResult,
+					applyResult: applyResult ?? progress,
 					planned,
 					projectRoot: context.project.rootDir,
 				});

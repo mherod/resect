@@ -807,7 +807,7 @@ export async function applyNamingFix(
 	const { loadProject } = await import("../core/project.ts");
 	const { runMutation } = await import("../core/mutation-pipeline.ts");
 	const { normalizePath } = await import("../core/resolver.ts");
-	const { moveModule } = await import("./move.ts");
+	const { moveModuleWithRecovery } = await import("./move-apply.ts");
 
 	const reportDirectory = path.resolve(options.directory);
 	const tsconfigPath = resolveTsConfig(options.project, reportDirectory);
@@ -868,32 +868,42 @@ export async function applyNamingFix(
 		])
 	);
 
+	const importerFiles = new Set<string>();
+	const attemptedRenames: typeof computedRenames = [];
 	const outcome = await runMutation<{
 		errors: string[];
 		importerFiles: Set<string>;
 	}>(
 		{
 			apply: async () => {
-				const importerFiles = new Set<string>();
 				const errors: string[] = [];
 				for (const { from: oldAbs, to: newAbs } of computedRenames) {
-					const result = await moveModule(
+					const result = await moveModuleWithRecovery(
 						oldAbs,
 						newAbs,
 						project,
 						false,
-						false
+						false,
+						undefined,
+						false,
+						[],
+						undefined,
+						undefined,
+						undefined,
+						(plannedResult) => {
+							attemptedRenames.push({ from: oldAbs, to: newAbs });
+							for (const ref of plannedResult.updatedReferences) {
+								if (ref.file !== oldAbs && ref.file !== newAbs) {
+									importerFiles.add(ref.file);
+								}
+							}
+						}
 					);
 					if (!result.success) {
 						for (const e of result.errors) {
 							errors.push(
 								`${path.relative(reportDirectory, oldAbs)}: ${e.message}`
 							);
-						}
-					}
-					for (const ref of result.updatedReferences) {
-						if (ref.file !== oldAbs && ref.file !== newAbs) {
-							importerFiles.add(ref.file);
 						}
 					}
 				}
@@ -905,8 +915,8 @@ export async function applyNamingFix(
 			journalEnabled: false,
 			operation: "naming",
 			project,
-			rollbackStrategy: async ({ importerFiles }) => {
-				await rollbackMoves(project.rootDir, computedRenames, importerFiles);
+			rollbackStrategy: async () => {
+				await rollbackMoves(project.rootDir, attemptedRenames, importerFiles);
 				return true;
 			},
 			translateBeforeFile: (file) =>
@@ -918,9 +928,14 @@ export async function applyNamingFix(
 
 	const delta = outcome.delta;
 	if (delta && !delta.success) {
-		const reason = delta.verificationIncomplete
-			? "type checking did not complete"
-			: "type checking introduced new errors";
+		const reason =
+			delta.verificationException ??
+			(delta.verificationIncomplete
+				? "type checking did not complete"
+				: "type checking introduced new errors");
+		const recovery = outcome.worktreeDirtyRollbackDisabled
+			? "rollback was disabled (--force on dirty tree)"
+			: "automatic rollback could not restore the changed files";
 		return {
 			dryRun: false,
 			success: false,
@@ -931,7 +946,7 @@ export async function applyNamingFix(
 			errors: [
 				outcome.rolledBack
 					? `naming --fix rolled back because ${reason}.`
-					: `naming --fix failed because ${reason}; changes remain applied because rollback was disabled (--force on dirty tree).`,
+					: `naming --fix failed because ${reason}; changes remain applied because ${recovery}.`,
 				...delta.newErrors,
 			],
 		};

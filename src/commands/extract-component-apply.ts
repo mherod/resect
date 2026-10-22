@@ -632,7 +632,10 @@ export async function executeExtractComponent(
 			modifiedFiles,
 			rolledBack: outcome.rolledBack,
 			errors: delta.verificationIncomplete
-				? ["Type checking did not complete after extract-component."]
+				? [
+						delta.verificationException ??
+							"Type checking did not complete after extract-component.",
+					]
 				: delta.newErrors,
 			typecheck,
 		};

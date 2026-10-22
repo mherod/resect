@@ -118,13 +118,28 @@ export function createFileContentsRollbackStrategy(
 		},
 		async restore(snapshot) {
 			const rt = getRuntime();
-			await mapConcurrent(snapshot, async (fileSnapshot) => {
-				if (fileSnapshot.existed && fileSnapshot.original !== null) {
-					await rt.fs.writeFile(fileSnapshot.file, fileSnapshot.original);
-				} else if (await rt.fs.exists(fileSnapshot.file)) {
-					await rt.fs.deleteFile(fileSnapshot.file);
+			const failures: unknown[] = [];
+			await mapConcurrent(
+				snapshot,
+				async (fileSnapshot) => {
+					if (fileSnapshot.existed && fileSnapshot.original !== null) {
+						await rt.fs.writeFile(fileSnapshot.file, fileSnapshot.original);
+					} else if (await rt.fs.exists(fileSnapshot.file)) {
+						await rt.fs.deleteFile(fileSnapshot.file);
+					}
+				},
+				{
+					onError: (_snapshot, error) => {
+						failures.push(error);
+					},
 				}
-			});
+			);
+			if (failures.length > 0) {
+				throw new AggregateError(
+					failures,
+					"Could not restore every checkpoint file"
+				);
+			}
 		},
 	};
 }

@@ -29,7 +29,10 @@ import {
 import { setupCommandContext } from "../commands/command-context.ts";
 import { runExtractCommon } from "../commands/extract-common.ts";
 import { inlineBarrel } from "../commands/inline.ts";
-import { moveModule, rollbackTransformMove } from "../commands/move.ts";
+import {
+	moveModuleWithRecovery,
+	rollbackTransformMove,
+} from "../commands/move-apply.ts";
 import {
 	type MoveBatchEntry,
 	MoveBatchWorktreeBlockedError,
@@ -151,8 +154,9 @@ export async function moveTool(args: {
 		}
 	}
 
+	let appliedMove: MoveResult | undefined;
 	const runMove = async () =>
-		moveModule(
+		moveModuleWithRecovery(
 			absoluteSource,
 			absoluteTarget,
 			project,
@@ -166,7 +170,11 @@ export async function moveTool(args: {
 			false,
 			transformRules,
 			args.prefer,
-			args.extensions
+			args.extensions,
+			undefined,
+			(result) => {
+				appliedMove = result;
+			}
 		);
 
 	const outcome = await runMutation<MoveResult>({
@@ -192,10 +200,11 @@ export async function moveTool(args: {
 		// #103 C: a transform move whose post-move verify introduced new type
 		// errors is rolled back, mirroring the CLI. Plain moves keep the
 		// report-only delta (leave-applied), expressed here as a no-op strategy.
-		rollbackStrategy: async (moveResult) =>
-			(moveResult.transformRewrites?.length ?? 0) > 0
-				? rollbackTransformMove(project, moveResult)
-				: Promise.resolve(false),
+		rollbackStrategy:
+			transformRules.length === 0
+				? null
+				: async (moveResult) =>
+						rollbackTransformMove(project, moveResult ?? appliedMove),
 		translateBeforeFile: translateMovedFile(absoluteSource, absoluteTarget),
 		verify: args.verify ? "rollback" : "none",
 	});
@@ -283,6 +292,7 @@ export async function renameTool(args: {
 	}
 	const { extraProjects, project } = context;
 
+	let appliedRename: RenameResult | undefined;
 	const outcome = await runMutation<RenameResult>({
 		apply: async () =>
 			renameSymbol(
@@ -293,7 +303,10 @@ export async function renameTool(args: {
 				args.dryRun,
 				args.verbose,
 				extraProjects,
-				args.force
+				args.force,
+				(result) => {
+					appliedRename = result;
+				}
 			),
 		blockDirtyDryRun: true,
 		dryRun: args.dryRun,
@@ -312,7 +325,7 @@ export async function renameTool(args: {
 		operation: "rename",
 		project,
 		rollbackStrategy: async (renameResult) =>
-			rollbackRenameChanges(project, renameResult),
+			rollbackRenameChanges(project, renameResult ?? appliedRename),
 		verify: args.verify ? "rollback" : "none",
 	});
 	if (outcome.blocked || !outcome.result) {

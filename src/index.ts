@@ -236,6 +236,8 @@ export {
 	getImports,
 	isBarrelFile,
 } from "./core/graph.ts";
+// ── Core: mutation failures ─────────────────────────────────────────
+export { MutationExecutionError } from "./core/mutation-pipeline.ts";
 // ── Core: project & graph ───────────────────────────────────────────
 export {
 	createProgram,

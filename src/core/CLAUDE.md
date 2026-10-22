@@ -137,6 +137,17 @@ a successful verification or an empty passing delta.
 
 DO keep every seam in `MutationPipelineDependencies` — `checkRollbackSafeWorktree`, `prepareOperationJournal`, `completeOperationJournal`, `runWithTypecheckGuard` — injectable. Commands with a different verification shape override them rather than rebuilding the sequence: `alias --workspace` injects `runWithWorkspaceTypecheckGuard()`, and `undo` injects a guard over `runTypeCheckDetailed()` so it reads `TypeCheckOutcome.incomplete` directly instead of re-deriving incompleteness from diagnostic strings.
 
+DO convert closing compiler exceptions through `checkAfterMutation` and compare
+outcomes through `compareTypeCheckOutcomes`; preserve the explicit incomplete
+flag, original failure message, and diagnostic path translation. Baseline
+exceptions must propagate before apply starts. Keep exceptional cleanup inside
+`runMutation` and shield it from request cancellation.
+
+DO make `mapConcurrent` settle every started task before propagating an
+unhandled failure, and stop scheduling further tasks. Recovery must not race
+late writes. Checkpoint restoration uses per-item error handling so all files
+are attempted before reporting an aggregate restoration failure.
+
 DO let an injected `checkRollbackSafeWorktree` stand as already-decided. When a caller computes the guard to own its own refusal message and exit code, the pipeline must not re-check; that is what keeps one guard per command.
 
 DO keep `ensureCleanWorktree()` and `ensureRollbackSafeWorktree()` exiting only as CLI-renderer conveniences, and keep `checkRollbackSafeWorktree()` free of `process.exit`. A data-layer exit kills the `resect-mcp` stdio server.

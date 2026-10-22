@@ -124,14 +124,21 @@ function unverifiableProject(rootDir: string): ProjectConfig {
 
 function extractCommonVerificationFailure(
 	delta: VerificationResult,
-	rolledBack: boolean
+	rolledBack: boolean,
+	rollbackDisabled: boolean
 ): string {
-	const reason = delta.verificationIncomplete
-		? "type checking did not complete"
-		: "type checking introduced new errors";
-	return rolledBack
-		? `extract-common rolled back because ${reason}.`
-		: `extract-common failed because ${reason}; changes remain applied because rollback was disabled (--force on dirty tree).`;
+	const reason =
+		delta.verificationException ??
+		(delta.verificationIncomplete
+			? "type checking did not complete"
+			: "type checking introduced new errors");
+	if (rolledBack) {
+		return `extract-common rolled back because ${reason}.`;
+	}
+	const recovery = rollbackDisabled
+		? "rollback was disabled (--force on dirty tree)"
+		: "automatic rollback could not restore the changed files";
+	return `extract-common failed because ${reason}; changes remain applied because ${recovery}.`;
 }
 
 export async function runExtractCommon(
@@ -400,7 +407,11 @@ export async function runExtractCommon(
 			worktreeDirty,
 			errors: [
 				{
-					message: extractCommonVerificationFailure(delta, outcome.rolledBack),
+					message: extractCommonVerificationFailure(
+						delta,
+						outcome.rolledBack,
+						outcome.worktreeDirtyRollbackDisabled
+					),
 				},
 			],
 			typecheck: delta,

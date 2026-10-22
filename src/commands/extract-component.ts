@@ -99,9 +99,11 @@ function printExtractComponentResult(
 		logger.error(`⛔ ${result.errors.join(" ")}`);
 		return;
 	}
-	if (result.rolledBack) {
+	if (!result.success) {
 		logger.error(
-			`❌ Extraction introduced ${result.errors.length} new type error(s) — all writes rolled back:`
+			result.rolledBack
+				? "❌ Extraction failed verification — all writes rolled back:"
+				: "❌ Extraction failed verification; changes remain applied:"
 		);
 		for (const error of result.errors.slice(0, 10)) {
 			logger.error(`   ${error}`);

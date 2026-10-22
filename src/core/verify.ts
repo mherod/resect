@@ -91,6 +91,59 @@ export interface VerificationResult {
 	verificationException?: string;
 }
 
+interface ClosingTypeCheckOutcome extends TypeCheckOutcome {
+	verificationException?: string;
+}
+
+/** Convert a failed closing check into an incomplete, rollback-eligible result. */
+export async function checkAfterMutation(
+	project: ProjectConfig,
+	before: TypeCheckOutcome,
+	check: typeof runTypeCheckDetailed = runTypeCheckDetailed
+): Promise<ClosingTypeCheckOutcome> {
+	try {
+		return await check(project);
+	} catch (error) {
+		return {
+			errors: before.errors,
+			incomplete: true,
+			verificationException:
+				error instanceof Error ? error.message : String(error),
+		};
+	}
+}
+
+/** Preserve explicit incompleteness and diagnostic path translation in every guard. */
+export function compareTypeCheckOutcomes(
+	project: ProjectConfig,
+	before: TypeCheckOutcome,
+	after: ClosingTypeCheckOutcome,
+	options?: { translateBeforeFile?: (file: string) => string }
+): VerificationResult {
+	const { newErrors, fixedErrors } = diffDiagnostics(
+		before.errors,
+		after.errors,
+		{
+			resolveFile: (file) => resolveDiagnosticFile(project, file),
+			translateBeforeFile: options?.translateBeforeFile,
+		}
+	);
+	const verificationIncomplete = before.incomplete || after.incomplete;
+	return {
+		success: !verificationIncomplete && newErrors.length === 0,
+		errorsBefore: before.errors,
+		errorsAfter: after.errors,
+		newErrors,
+		fixedErrors,
+		verificationIncomplete,
+		...(after.verificationException === undefined
+			? {}
+			: {
+					verificationException: after.verificationException,
+				}),
+	};
+}
+
 /**
  * Verify type checking before and after changes
  */
@@ -110,36 +163,13 @@ export async function verifyTypeChecking(
 	await applyChanges();
 
 	// Run type check after changes
-	const after = await runTypeCheckDetailed(project);
+	const after = await checkAfterMutation(project, before);
 
 	// Collect unresolvable imports after changes are applied
 	const unresolvableDiagnostics = collectUnresolvableDiagnostics(project);
 
-	const errorsBefore = before.errors;
-	const errorsAfter = after.errors;
-
-	// Compare errors by normalized identity (file+code+message), not raw string
-	// equality, with optional translation of pre-existing errors' file paths so a
-	// moved file's inherited errors aren't misreported as new (#128).
-	const { newErrors, fixedErrors } = diffDiagnostics(
-		errorsBefore,
-		errorsAfter,
-		{
-			resolveFile: (file) => resolveDiagnosticFile(project, file),
-			translateBeforeFile: options?.translateBeforeFile,
-		}
-	);
-
-	const verificationIncomplete = before.incomplete || after.incomplete;
-	const success = newErrors.length === 0 && !verificationIncomplete;
-
 	return {
-		success,
-		errorsBefore,
-		errorsAfter,
-		newErrors,
-		fixedErrors,
-		verificationIncomplete,
+		...compareTypeCheckOutcomes(project, before, after, options),
 		unresolvableDiagnostics,
 	};
 }
@@ -155,45 +185,13 @@ export async function runWithTypecheckGuard<T>(
 	applyChanges: () => Promise<T>,
 	options?: { translateBeforeFile?: (file: string) => string }
 ): Promise<{ result: T; delta: VerificationResult }> {
-	const errorsBefore = await runTypeCheck(project);
+	const before = await runTypeCheckDetailed(project);
 	const result = await applyChanges();
-	// The closing typecheck runs after writes have already landed, so a thrown
-	// exception here (not just a nonzero tsc exit) must still surface as an
-	// incomplete, rollback-eligible verification rather than crash the whole
-	// mutation uncaught with changes already on disk.
-	let errorsAfter: string[];
-	let verificationException: string | undefined;
-	try {
-		errorsAfter = await runTypeCheck(project);
-	} catch (error) {
-		verificationException =
-			error instanceof Error ? error.message : String(error);
-		errorsAfter = errorsBefore;
-	}
-	const { newErrors, fixedErrors } = diffDiagnostics(
-		errorsBefore,
-		errorsAfter,
-		{
-			resolveFile: (file) => resolveDiagnosticFile(project, file),
-			translateBeforeFile: options?.translateBeforeFile,
-		}
-	);
-	const verificationIncomplete =
-		verificationException !== undefined ||
-		isIncompleteTypeCheck(errorsBefore) ||
-		isIncompleteTypeCheck(errorsAfter);
+	const after = await checkAfterMutation(project, before);
 
 	return {
 		result,
-		delta: {
-			success: !verificationIncomplete && newErrors.length === 0,
-			errorsBefore,
-			errorsAfter,
-			newErrors,
-			fixedErrors,
-			verificationIncomplete,
-			...(verificationException === undefined ? {} : { verificationException }),
-		},
+		delta: compareTypeCheckOutcomes(project, before, after, options),
 	};
 }
 
@@ -217,32 +215,22 @@ export async function runWithWorkspaceTypecheckGuard<T>(
 	];
 	const before = await mapConcurrent(uniqueProjects, runTypeCheckDetailed);
 	const result = await applyChanges();
-	const after = await mapConcurrent(uniqueProjects, runTypeCheckDetailed);
-
-	const deltas = before.map((beforeResult, index) => {
+	const checks = before.map((beforeResult, index) => {
 		const project = uniqueProjects[index];
-		const afterResult = after[index];
-		if (!(project && afterResult)) {
+		if (!project) {
 			throw new Error(
 				"Workspace verification result count changed after apply"
 			);
 		}
-		const { newErrors, fixedErrors } = diffDiagnostics(
-			beforeResult.errors,
-			afterResult.errors,
-			{
-				resolveFile: (file) => resolveDiagnosticFile(project, file),
-				translateBeforeFile: options?.translateBeforeFile,
-			}
-		);
-		return {
-			errorsAfter: afterResult.errors,
-			errorsBefore: beforeResult.errors,
-			fixedErrors,
-			newErrors,
-			verificationIncomplete: beforeResult.incomplete || afterResult.incomplete,
-		};
+		return { project, beforeResult };
 	});
+	const deltas = await mapConcurrent(
+		checks,
+		async ({ project, beforeResult }) => {
+			const after = await checkAfterMutation(project, beforeResult);
+			return compareTypeCheckOutcomes(project, beforeResult, after, options);
+		}
+	);
 
 	const errorsBefore = deltas.flatMap((delta) => delta.errorsBefore);
 	const errorsAfter = deltas.flatMap((delta) => delta.errorsAfter);
@@ -250,6 +238,11 @@ export async function runWithWorkspaceTypecheckGuard<T>(
 	const fixedErrors = deltas.flatMap((delta) => delta.fixedErrors);
 	const verificationIncomplete = deltas.some(
 		(delta) => delta.verificationIncomplete
+	);
+	const verificationExceptions = deltas.flatMap((delta) =>
+		delta.verificationException === undefined
+			? []
+			: [delta.verificationException]
 	);
 
 	return {
@@ -261,6 +254,11 @@ export async function runWithWorkspaceTypecheckGuard<T>(
 			fixedErrors,
 			newErrors,
 			verificationIncomplete,
+			...(verificationExceptions.length === 0
+				? {}
+				: {
+						verificationException: verificationExceptions.join("\n"),
+					}),
 		},
 	};
 }
@@ -471,6 +469,9 @@ export function printVerificationResults(result: VerificationResult): void {
 		logger.error(
 			"\n❌ Type checking did not complete — tsc fatalled before per-file checks could run. The before/after delta is not trustworthy."
 		);
+		if (result.verificationException !== undefined) {
+			logger.error(`   ${result.verificationException}`);
+		}
 		for (const error of result.errorsAfter.slice(0, 5)) {
 			logger.error(`   ${error}`);
 		}

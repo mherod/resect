@@ -22,7 +22,8 @@ import { getRuntime } from "../runtime/index.ts";
 import type { MoveResult } from "../types/move.ts";
 import type { MutatingCommandOptions } from "../types.ts";
 import { setupCommandContext } from "./command-context.ts";
-import { moveModule, runPackageBuilds } from "./move.ts";
+import { runPackageBuilds } from "./move.ts";
+import { moveModuleWithRecovery as moveModule } from "./move-apply.ts";
 import { MoveSession } from "./move-session.ts";
 import type { ExtensionPolicy, PreferStrategy } from "./option-domains.ts";
 
@@ -173,9 +174,11 @@ export async function moveBatchWithDependencies(
 		? await loadTransformConfig(project.rootDir, options.transform)
 		: [];
 
+	const appliedItems: MoveBatchItemResult[] = [];
 	const applyMoves = async (): Promise<MoveBatchItemResult[]> => {
-		const items: MoveBatchItemResult[] = [];
+		const items = appliedItems;
 		for (const move of moves) {
+			let retained: MoveBatchItemResult | undefined;
 			const result = await session.move(move.source, move.target, {
 				verbose: options.verbose,
 				workspace,
@@ -183,9 +186,16 @@ export async function moveBatchWithDependencies(
 				transformRules,
 				prefer: options.prefer,
 				extensions: options.extensions,
+				retainApplyResult: (plannedResult) => {
+					retained = { move, result: plannedResult };
+					items.push(retained);
+				},
 			});
-			const item = { move, result };
-			items.push(item);
+			if (retained) {
+				retained.result = result;
+			} else {
+				items.push({ move, result });
+			}
 			if (!result.success) {
 				continue;
 			}
@@ -241,7 +251,9 @@ export async function moveBatchWithDependencies(
 			project,
 			rollbackRequiresApplySuccess: false,
 			rollbackStrategy: async (items) => {
-				const attemptedApplied = items.filter(({ result }) => result.success);
+				const attemptedApplied = (items ?? appliedItems).filter(
+					({ result }) => result.success
+				);
 				return attemptedApplied.length > 0
 					? rollbackMoveBatch(project.rootDir, attemptedApplied)
 					: Promise.resolve(false);

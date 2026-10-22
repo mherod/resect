@@ -13,7 +13,7 @@ import { getRuntime } from "../runtime/index.ts";
 import type { MoveResult } from "../types/move.ts";
 import type { TransformRule } from "../types/transform.ts";
 import type { ProjectConfig } from "../types.ts";
-import { moveModule } from "./move-apply.ts";
+import { moveModuleWithRecovery } from "./move-apply.ts";
 import type { MoveModuleContext } from "./move-module-plan.ts";
 import type { ExtensionPolicy, PreferStrategy } from "./option-domains.ts";
 
@@ -24,6 +24,7 @@ interface SessionMoveOptions {
 	transformRules?: TransformRule[];
 	prefer?: PreferStrategy;
 	extensions?: ExtensionPolicy;
+	retainApplyResult?: (result: MoveResult) => void;
 }
 
 /** In-process state shared by sequential plans, applications and previews. */
@@ -31,7 +32,7 @@ export class MoveSession {
 	readonly context: MoveModuleContext;
 	private readonly project: ProjectConfig;
 	private readonly dryRun: boolean;
-	private readonly executeMove: typeof moveModule;
+	private readonly executeMove: typeof moveModuleWithRecovery;
 	private readonly overlay = new Map<string, string | null>();
 	private readonly virtualDirectories = new Set<string>();
 	private readonly originalPaths = new Map<string, { currentPath: string }>();
@@ -42,7 +43,7 @@ export class MoveSession {
 		project: ProjectConfig,
 		graph: DependencyGraph,
 		dryRun: boolean,
-		executeMove = moveModule
+		executeMove = moveModuleWithRecovery
 	) {
 		this.project = project;
 		this.dryRun = dryRun;
@@ -77,7 +78,8 @@ export class MoveSession {
 			options.transformRules ?? [],
 			options.prefer,
 			options.extensions,
-			this.context
+			this.context,
+			options.retainApplyResult
 		);
 		if (result.success) {
 			await this.advance(result);

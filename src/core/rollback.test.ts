@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import path from "node:path";
 import { cleanup, makeTempDir } from "../commands/__test-helpers.ts";
+import { bunRuntime, setRuntime } from "../runtime/index.ts";
 import {
 	createFileContentsRollbackStrategy,
 	createGitFilesRollbackStrategy,
@@ -17,6 +18,40 @@ afterAll(async () => {
 });
 
 describe("rollback checkpoints", () => {
+	test("attempts every checkpoint file even when an earlier restoration fails", async () => {
+		const files = Array.from(
+			{ length: 7 },
+			(_, index) => `/checkpoint/${index}.ts`
+		);
+		const restored: string[] = [];
+		setRuntime({
+			...bunRuntime,
+			fs: {
+				...bunRuntime.fs,
+				writeFile: async (file) => {
+					restored.push(file);
+					if (file === files[0]) {
+						throw new Error("restore denied");
+					}
+				},
+			},
+		});
+		try {
+			const strategy = createFileContentsRollbackStrategy(files);
+			const error = await strategy
+				.restore(
+					files.map((file) => ({ file, existed: true, original: "original" }))
+				)
+				.catch((caught: unknown) => caught);
+			expect(error).toBeInstanceOf(AggregateError);
+			expect(error instanceof Error && error.message).toBe(
+				"Could not restore every checkpoint file"
+			);
+			expect(restored.sort()).toEqual(files);
+		} finally {
+			setRuntime(bunRuntime);
+		}
+	});
 	test("restores existing files and removes files created after a snapshot", async () => {
 		const dir = await makeTempDir("rollback-contents");
 		dirs.push(dir);

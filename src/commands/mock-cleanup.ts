@@ -358,7 +358,10 @@ export async function applyMockCleanup(
 			operation: "mock-cleanup",
 			project: options.project,
 			rollbackStrategy: async (modifiedFiles) =>
-				rollbackFiles(options.reportDirectory, modifiedFiles).then(() => true),
+				rollbackFiles(
+					options.reportDirectory,
+					modifiedFiles ?? [...groupOrphansByFile(report.orphans).keys()]
+				).then(() => true),
 			verify: options.verify === false ? "none" : "rollback",
 		},
 		{ checkRollbackSafeWorktree: async () => Promise.resolve(guard) }
@@ -378,7 +381,7 @@ export async function applyMockCleanup(
 			errors: delta.verificationIncomplete
 				? [
 						mockCleanupVerificationFailure(
-							"did not complete",
+							delta.verificationException ?? "did not complete",
 							outcome.rolledBack
 						),
 					]

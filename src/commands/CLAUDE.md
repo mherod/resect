@@ -133,6 +133,15 @@ can neither delete a newly created path nor run outside a repository. Take the
 checkpoint inside `apply()`, immediately before the first write, once the
 destination list is known.
 
+DO retain checkpoints and partial apply metadata outside the successful return
+value. `rollbackStrategy` receives `undefined` when apply throws. Move and rename
+adapters use `retainApplyResult` to capture the validated write scope before the
+first write; keep move recovery callbacks in the internal
+`moveModuleWithRecovery` adapter so the public `moveModule` signature stays
+unchanged. Never infer a deletion target from an unvalidated requested move.
+Preserve deliberate report-only/plain-move and forced-dirty rollback policies,
+and report the original failure plus the actual recovery outcome.
+
 DON'T add a mutating command without a dirty-worktree guard and conflict detection.
 
 `move.ts` and `rename.ts` use AST `hasLocalBinding()` walkers over variables, functions, classes, types, interfaces, enums, and import bindings, excluding the changed import. `alias.ts` refuses duplicate target-specifier bindings. `extract-common --output` calls `checkOutputDeclarationConflicts()`.

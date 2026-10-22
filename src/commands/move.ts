@@ -7,6 +7,7 @@ import { serializeStructuredEdits } from "../core/text-changes.ts";
 import { loadTransformConfig } from "../core/transform-config.ts";
 import { printVerificationResults } from "../core/verify.ts";
 import { filterToWorkspaceBoundary } from "../core/workspace.ts";
+import type { MoveResult } from "../types/move.ts";
 import type { TransformRule } from "../types/transform.ts";
 import type { MutatingCommandOptions } from "../types.ts";
 import {
@@ -14,7 +15,7 @@ import {
 	warnIfExplicitExtensionsUnsupported,
 } from "./command-context.ts";
 import {
-	moveModule as executeMoveModule,
+	moveModuleWithRecovery as executeMoveModule,
 	rollbackTransformMove as rollbackFailedMove,
 } from "./move-apply.ts";
 import { runPackageBuilds as rebuildMovedPackages } from "./move-cross-package.ts";
@@ -138,6 +139,7 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 		logger.empty();
 	}
 
+	let appliedMove: MoveResult | undefined;
 	const outcome = await runMutation({
 		apply: async () => {
 			const moveResult = await executeMoveModule(
@@ -150,8 +152,13 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 				force,
 				transformRules,
 				prefer,
-				extensions
+				extensions,
+				undefined,
+				(result) => {
+					appliedMove = result;
+				}
 			);
+			appliedMove = moveResult;
 
 			// For cross-package moves, run build scripts to update dist/. Keep this
 			// inside the verification guard so the after-check sees the final state.
@@ -193,10 +200,11 @@ export async function moveCommand(options: MoveOptions): Promise<void> {
 		// Transform moves roll back on verification failure; plain moves are a
 		// deliberate leave-applied policy so the user can inspect or revert them
 		// explicitly (move.ts historical behaviour, now pipeline config).
-		rollbackStrategy: async (moveResult) =>
-			(moveResult.transformRewrites?.length ?? 0) > 0
-				? rollbackFailedMove(project, moveResult)
-				: Promise.resolve(false),
+		rollbackStrategy:
+			transformRules.length === 0
+				? null
+				: async (moveResult) =>
+						rollbackFailedMove(project, moveResult ?? appliedMove),
 		translateBeforeFile: translateMovedFile(absoluteSource, absoluteTarget),
 		verify: verify ? "rollback" : "none",
 	});

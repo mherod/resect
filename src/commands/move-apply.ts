@@ -45,6 +45,37 @@ export async function moveModule(
 	extensions?: ExtensionPolicy,
 	context?: MoveModuleContext
 ): Promise<MoveResult> {
+	const result = await moveModuleWithRecovery(
+		sourcePath,
+		targetPath,
+		project,
+		dryRun,
+		verbose,
+		workspace,
+		force,
+		transformRules,
+		prefer,
+		extensions,
+		context
+	);
+	return result;
+}
+
+/** Internal adapter that retains a validated write scope for pipeline recovery. */
+export async function moveModuleWithRecovery(
+	sourcePath: string,
+	targetPath: string,
+	project: ProjectConfig,
+	dryRun: boolean,
+	verbose: boolean,
+	workspace?: WorkspaceInfo,
+	force = false,
+	transformRules: TransformRule[] = [],
+	prefer?: PreferStrategy,
+	extensions?: ExtensionPolicy,
+	context?: MoveModuleContext,
+	retainApplyResult?: (result: MoveResult) => void
+): Promise<MoveResult> {
 	const args: Parameters<typeof planMoveModule> = [
 		sourcePath,
 		targetPath,
@@ -69,6 +100,9 @@ export async function moveModule(
 	if (dryRun || !plan.result.success) {
 		return plan.result;
 	}
+	// Retain the validated write scope before any write can throw. The caller
+	// owns recovery and must not depend on this function returning successfully.
+	retainApplyResult?.(plan.result);
 	return applyMoveModulePlan(plan, verbose);
 }
 
@@ -149,8 +183,11 @@ export async function applyMoveModulePlan(
  */
 export async function rollbackTransformMove(
 	project: ProjectConfig,
-	result: MoveResult
+	result: MoveResult | undefined
 ): Promise<boolean> {
+	if (!result || (result.transformRewrites?.length ?? 0) === 0) {
+		return false;
+	}
 	const checkpoint = await createRollbackCheckpoint(
 		createMoveRollbackStrategy(
 			project.rootDir,

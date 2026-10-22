@@ -1,6 +1,5 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
-import { diffDiagnostics } from "../core/diagnostics.ts";
 import { findGitRoot, type WorktreeGuardOutcome } from "../core/git.ts";
 import {
 	markOperationJournalEntryUndone,
@@ -17,9 +16,9 @@ import {
 	tryRestoreRollback,
 } from "../core/rollback.ts";
 import {
-	resolveDiagnosticFile,
+	checkAfterMutation,
+	compareTypeCheckOutcomes,
 	runTypeCheckDetailed,
-	type TypeCheckOutcome,
 	type VerificationResult,
 } from "../core/verify.ts";
 import type { ProjectConfig } from "../types.ts";
@@ -43,6 +42,7 @@ export interface UndoVerification {
 	errors: string[];
 	verificationIncomplete: boolean;
 	rolledBack: boolean;
+	verificationException?: string;
 }
 
 export interface UndoResult {
@@ -119,6 +119,11 @@ function undoVerification(
 		success: delta.success,
 		verificationIncomplete: delta.verificationIncomplete,
 		rolledBack,
+		...(delta.verificationException === undefined
+			? {}
+			: {
+					verificationException: delta.verificationException,
+				}),
 	};
 }
 
@@ -219,40 +224,14 @@ export async function executeUndo(
 			runWithTypecheckGuard: async (proj, apply, guardOptions) => {
 				const before = await dependencies.runTypeCheckDetailed(proj);
 				const result = await apply();
-				let after: TypeCheckOutcome;
-				try {
-					after = await dependencies.runTypeCheckDetailed(proj);
-				} catch (error) {
-					const rolledBack = rollback
-						? await tryRestoreRollback(rollback)
-						: false;
-					const message =
-						error instanceof Error ? error.message : String(error);
-					throw new Error(
-						rolledBack
-							? `Post-undo typecheck failed; the undo was rolled back: ${message}`
-							: `Post-undo typecheck failed and rollback also failed: ${message}`
-					);
-				}
-				const { newErrors, fixedErrors } = diffDiagnostics(
-					before.errors,
-					after.errors,
-					{
-						resolveFile: (file) => resolveDiagnosticFile(proj, file),
-						translateBeforeFile: guardOptions?.translateBeforeFile,
-					}
+				const after = await checkAfterMutation(
+					proj,
+					before,
+					dependencies.runTypeCheckDetailed
 				);
-				const verificationIncomplete = before.incomplete || after.incomplete;
 				return {
 					result,
-					delta: {
-						errorsAfter: after.errors,
-						errorsBefore: before.errors,
-						fixedErrors,
-						newErrors,
-						success: newErrors.length === 0 && !verificationIncomplete,
-						verificationIncomplete,
-					},
+					delta: compareTypeCheckOutcomes(proj, before, after, guardOptions),
 				};
 			},
 		}
@@ -325,6 +304,9 @@ export async function undoCommand(options: UndoOptions): Promise<void> {
 			if (result.verification) {
 				const status = result.verification.success ? "passed" : "failed";
 				logger.info(`Post-undo typecheck ${status}.`);
+				if (result.verification.verificationException !== undefined) {
+					logger.error(result.verification.verificationException);
+				}
 				for (const error of result.verification.errors.slice(0, 10)) {
 					logger.error(error);
 				}

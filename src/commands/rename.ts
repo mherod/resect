@@ -101,6 +101,7 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 		logger.info(`   ${oldName} → ${newName}\n`);
 	}
 
+	let appliedRename: RenameResult | undefined;
 	const outcome = await runMutation<RenameResult>({
 		apply: async () =>
 			renameSymbol(
@@ -111,7 +112,10 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 				dryRun,
 				json ? false : verbose,
 				extraProjects,
-				force
+				force,
+				(result) => {
+					appliedRename = result;
+				}
 			),
 		dryRun,
 		force,
@@ -129,7 +133,7 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 		operation: "rename",
 		project,
 		rollbackStrategy: async (renameResult) =>
-			rollbackRenameChanges(project, renameResult),
+			rollbackRenameChanges(project, renameResult ?? appliedRename),
 		verify: verify ? "rollback" : "none",
 	});
 	if (outcome.blocked || !outcome.result) {
@@ -210,8 +214,11 @@ export async function renameCommand(options: RenameOptions): Promise<void> {
 
 export async function rollbackRenameChanges(
 	project: ProjectConfig,
-	result: RenameResult
+	result: RenameResult | undefined
 ): Promise<boolean> {
+	if (!result) {
+		return false;
+	}
 	const checkpoint = await createRollbackCheckpoint(
 		createGitFilesRollbackStrategy(
 			project.rootDir,
@@ -242,7 +249,8 @@ export async function renameSymbol(
 	dryRun: boolean,
 	verbose: boolean,
 	extraProjects: ProjectConfig[] = [],
-	force = false
+	force = false,
+	retainApplyResult?: (result: RenameResult) => void
 ): Promise<RenameResult> {
 	const args: Parameters<typeof planRenameSymbol> = [
 		filePath,
@@ -262,6 +270,7 @@ export async function renameSymbol(
 			})
 		: await planRenameSymbol(...args);
 	if (!dryRun) {
+		retainApplyResult?.(plan.result);
 		await applyRenamePlan(plan);
 	}
 	return plan.result;

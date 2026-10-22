@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
+import { setImmediate } from "node:timers/promises";
 import ts from "typescript";
+import { MutationExecutionError } from "../core/mutation-pipeline.ts";
 import { createSourceFileFromText } from "../core/source-file.ts";
+import { bunRuntime, setRuntime } from "../runtime/index.ts";
 import { cleanup, makeFixture } from "./__test-helpers";
 import {
 	classifyFreeVariables,
@@ -446,6 +449,67 @@ async function makeEcFixture(
 }
 
 describe("executeExtractComponent — apply", () => {
+	test("restores non-Git contents after a partial write failure and a delayed source writer", async () => {
+		const original =
+			"export function App() { return <section>Hello</section>; }\n";
+		const dir = await makeEcFixture("write-failure", {
+			"App.tsx": original,
+			"untouched.txt": "keep me",
+		});
+		const source = path.join(dir, "App.tsx");
+		const target = path.join(dir, "Part.tsx");
+		const sourceStarted = Promise.withResolvers<void>();
+		const failedWrite = Promise.withResolvers<void>();
+		const releaseSource = Promise.withResolvers<void>();
+		const failure = new Error("EACCES: Part.tsx write denied");
+		setRuntime({
+			...bunRuntime,
+			fs: {
+				...bunRuntime.fs,
+				writeFile: async (file, contents) => {
+					if (file === source && contents !== original) {
+						sourceStarted.resolve();
+						await releaseSource.promise;
+					}
+					if (file === target) {
+						await sourceStarted.promise;
+						await bunRuntime.fs.writeFile(file, contents);
+						failedWrite.resolve();
+						throw failure;
+					}
+					await bunRuntime.fs.writeFile(file, contents);
+				},
+			},
+		});
+		try {
+			let settled = false;
+			const operation = executeExtractComponent({
+				file: source,
+				selector: "section",
+				newFile: target,
+			}).catch((error: unknown) => {
+				settled = true;
+				return error;
+			});
+			await failedWrite.promise;
+			await setImmediate();
+			expect(settled).toBe(false);
+			releaseSource.resolve();
+			const error = await operation;
+			expect(error).toBeInstanceOf(MutationExecutionError);
+			expect(error).toMatchObject({ cause: failure, rolledBack: true });
+			await setImmediate();
+			expect(await Bun.file(source).text()).toBe(original);
+			expect(await Bun.file(target).exists()).toBe(false);
+			expect(await Bun.file(path.join(dir, "untouched.txt")).text()).toBe(
+				"keep me"
+			);
+		} finally {
+			releaseSource.resolve();
+			setRuntime(bunRuntime);
+			await cleanup(dir);
+		}
+	});
 	test("happy-path: writes the new module and rewrites the call site", async () => {
 		const dir = await makeEcFixture("happy", {
 			"Panel.tsx": `export function Panel() {

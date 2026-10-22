@@ -1,12 +1,21 @@
 import { describe, expect, test } from "bun:test";
+import {
+	currentCancellationSignal,
+	withCancellationSignal,
+} from "../runtime/cancellation.ts";
+import { bunRuntime, setRuntime } from "../runtime/index.ts";
 import type { ProjectConfig } from "../types.ts";
 import type { WorktreeGuardOutcome } from "./git.ts";
 import {
+	MutationExecutionError,
 	type MutationPipelineDependencies,
 	type MutationPipelineOptions,
 	runMutation,
 } from "./mutation-pipeline.ts";
-import type { VerificationResult } from "./verify.ts";
+import {
+	runWithWorkspaceTypecheckGuard,
+	type VerificationResult,
+} from "./verify.ts";
 
 const FAKE_PROJECT: ProjectConfig = {
 	compilerOptions: {},
@@ -31,6 +40,257 @@ function cleanGuard(): WorktreeGuardOutcome {
 		worktreeDirtyRollbackDisabled: false,
 	};
 }
+
+test("restores a retained checkpoint when apply throws after writing", async () => {
+	const { baseOptions, dependencies, events } = makeRig();
+	let contents = "original";
+	const failure = new Error("second write failed");
+	const operation = runMutation(
+		{
+			...baseOptions,
+			apply: async () => {
+				contents = "partially changed";
+				throw failure;
+			},
+			rollbackStrategy: async () => {
+				contents = "original";
+				return true;
+			},
+		},
+		dependencies
+	);
+	const error = await operation.catch((caught: unknown) => caught);
+	expect(error instanceof Error && error.message).toContain(
+		"second write failed"
+	);
+	expect(contents).toBe("original");
+	expect(events).not.toContain("journal:complete");
+});
+
+test("restores after an injected closing verifier throws", async () => {
+	const { baseOptions, dependencies, events } = makeRig();
+	const operation = runMutation(baseOptions, {
+		...dependencies,
+		runWithTypecheckGuard: async (_project, apply) => {
+			await apply();
+			throw new Error("closing verifier failed");
+		},
+	});
+	const error = await operation.catch((caught: unknown) => caught);
+	expect(error instanceof Error && error.message).toContain(
+		"closing verifier failed"
+	);
+	expect(events.filter((event) => event === "rollback")).toHaveLength(1);
+	expect(events).not.toContain("journal:complete");
+});
+
+test("a baseline exception preserves the original failure without applying or restoring", async () => {
+	const { baseOptions, dependencies, events } = makeRig();
+	const failure = new Error("baseline could not start");
+	const error = await runMutation(baseOptions, {
+		...dependencies,
+		runWithTypecheckGuard: async () => {
+			throw failure;
+		},
+	}).catch((caught: unknown) => caught);
+	expect(error).toBe(failure);
+	expect(events).not.toContain("apply");
+	expect(events).not.toContain("rollback");
+	expect(events).not.toContain("journal:complete");
+});
+
+test("a closing exception restores partial application even when apply reported failure", async () => {
+	const { baseOptions, dependencies, events } = makeRig({
+		delta: {
+			success: false,
+			verificationIncomplete: true,
+			verificationException: "closing compiler failed",
+		},
+	});
+	const outcome = await runMutation(
+		{ ...baseOptions, apply: async () => ({ success: false }) },
+		dependencies
+	);
+	expect(outcome.success).toBe(false);
+	expect(outcome.rolledBack).toBe(true);
+	expect(events).not.toContain("journal:complete");
+});
+
+test("failed restoration retains the closing verification failure", async () => {
+	const { baseOptions, dependencies, events } = makeRig({
+		delta: {
+			success: false,
+			verificationIncomplete: true,
+			verificationException: "closing compiler failed",
+		},
+	});
+	const restoreFailure = new Error("restore permission denied");
+	const error = await runMutation(
+		{
+			...baseOptions,
+			rollbackStrategy: async () => {
+				throw restoreFailure;
+			},
+		},
+		dependencies
+	).catch((caught: unknown) => caught);
+	expect(error).toBeInstanceOf(MutationExecutionError);
+	expect(error).toMatchObject({
+		rolledBack: false,
+		rollbackAttempted: true,
+		rollbackError: restoreFailure,
+	});
+	expect(error instanceof Error && error.message).toContain(
+		"closing compiler failed"
+	);
+	expect(error instanceof Error && error.message).toContain(
+		"restore permission denied"
+	);
+	expect(events).not.toContain("journal:complete");
+});
+
+test.each([
+	"restored",
+	"failed",
+	"threw",
+] as const)("apply failure reports %s recovery and preserves its cause", async (recovery) => {
+	const { baseOptions, dependencies, events } = makeRig();
+	const failure = new Error("EACCES: second write");
+	const rollbackFailure = new Error("checkpoint is read-only");
+	const error = await runMutation(
+		{
+			...baseOptions,
+			apply: async () => {
+				throw failure;
+			},
+			rollbackStrategy: async () => {
+				if (recovery === "threw") {
+					throw rollbackFailure;
+				}
+				return recovery === "restored";
+			},
+		},
+		dependencies
+	).catch((caught: unknown) => caught);
+	expect(error).toBeInstanceOf(MutationExecutionError);
+	if (!(error instanceof MutationExecutionError)) {
+		throw new Error("Expected mutation failure");
+	}
+	expect(error.cause).toBe(failure);
+	expect(error.rollbackAttempted).toBe(true);
+	expect(error.rolledBack).toBe(recovery === "restored");
+	expect(error.rollbackError).toBe(
+		recovery === "threw" ? rollbackFailure : undefined
+	);
+	expect(error.message).toContain("EACCES: second write");
+	expect(error.message).toContain(
+		recovery === "restored" ? "Changes were rolled back" : "Rollback failed"
+	);
+	expect(events).not.toContain("journal:complete");
+});
+
+test.each([
+	"report",
+	"dirty",
+	"absent",
+] as const)("%s policy never invokes recovery after an apply exception", async (policy) => {
+	const { baseOptions, dependencies, events } = makeRig({
+		guard:
+			policy === "dirty"
+				? {
+						dirty: true,
+						rollbackEnabled: false,
+						worktreeDirtyRollbackDisabled: true,
+					}
+				: {},
+	});
+	const error = await runMutation(
+		{
+			...baseOptions,
+			verify: policy === "report" ? "report" : "rollback",
+			rollbackStrategy:
+				policy === "absent" ? null : baseOptions.rollbackStrategy,
+			apply: async () => {
+				throw new Error("write failed");
+			},
+		},
+		dependencies
+	).catch((caught: unknown) => caught);
+	expect(error).toBeInstanceOf(MutationExecutionError);
+	if (!(error instanceof MutationExecutionError)) {
+		throw new Error("Expected mutation failure");
+	}
+	expect(error.rollbackAttempted).toBe(false);
+	expect(error.rolledBack).toBe(false);
+	expect(error.worktreeDirtyRollbackDisabled).toBe(policy === "dirty");
+	expect(events).not.toContain("rollback");
+	expect(events).not.toContain("journal:complete");
+});
+
+test("an aborted apply still restores without the cancelled request signal when verification is disabled", async () => {
+	const { baseOptions, dependencies, events } = makeRig();
+	const controller = new AbortController();
+	let cleanupSignal: AbortSignal | undefined = controller.signal;
+	const error = await withCancellationSignal(controller.signal, async () =>
+		runMutation(
+			{
+				...baseOptions,
+				verify: "none",
+				apply: async () => {
+					controller.abort();
+					throw new Error("request cancelled after writing");
+				},
+				rollbackStrategy: async () => {
+					cleanupSignal = currentCancellationSignal();
+					return true;
+				},
+			},
+			dependencies
+		)
+	).catch((caught: unknown) => caught);
+	expect(error).toMatchObject({ rolledBack: true });
+	expect(cleanupSignal).toBeUndefined();
+	expect(events).not.toContain("verify:before");
+	expect(events).not.toContain("journal:complete");
+});
+
+test("workspace closing exceptions remain rollback-eligible outcomes", async () => {
+	const { baseOptions, dependencies, events } = makeRig();
+	let checks = 0;
+	setRuntime({
+		...bunRuntime,
+		process: {
+			exec: async () => {
+				checks += 1;
+				if (checks === 2) {
+					throw new Error("workspace tsc failed to start");
+				}
+				return {
+					exitCode: 0,
+					outputTruncated: false,
+					stderr: "",
+					stdout: "",
+					termination: { kind: "exit", exitCode: 0 },
+				};
+			},
+		},
+	});
+	try {
+		const outcome = await runMutation(baseOptions, {
+			...dependencies,
+			runWithTypecheckGuard: async (_project, apply, options) =>
+				runWithWorkspaceTypecheckGuard([FAKE_PROJECT], apply, options),
+		});
+		expect(outcome.success).toBe(false);
+		expect(outcome.rolledBack).toBe(true);
+		expect(outcome.delta?.verificationException).toContain(
+			"workspace tsc failed"
+		);
+		expect(events).not.toContain("journal:complete");
+	} finally {
+		setRuntime(bunRuntime);
+	}
+});
 
 function makeDelta(overrides: Partial<VerificationResult>): VerificationResult {
 	return {

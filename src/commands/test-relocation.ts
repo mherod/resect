@@ -33,6 +33,7 @@ import type {
 } from "../types/test-relocation.ts";
 import type { ProjectConfig } from "../types.ts";
 import { moveModule } from "./move.ts";
+import { moveModuleWithRecovery } from "./move-apply.ts";
 
 const TEST_RELOCATION_SCHEMA_VERSION = "1" as const;
 const DEFAULT_CONVENTION_THRESHOLD = 0.7;
@@ -454,20 +455,33 @@ export async function applyRelocations(
 		])
 	);
 
+	const startedRelocations: typeof relocationPairs = [];
+	const appliedMoves: MoveResult[] = [];
 	const outcome = await runMutation<MoveResult[]>(
 		{
 			apply: async () =>
 				mapConcurrent(
 					relocationPairs,
-					async ({ source, target }) =>
-						moveModule(
+					async ({ source, target }) => {
+						const result = await moveModuleWithRecovery(
 							source,
 							target,
 							options.project,
 							false,
 							options.verbose ?? false,
-							workspace
-						),
+							workspace,
+							false,
+							[],
+							undefined,
+							undefined,
+							undefined,
+							(plannedResult) => {
+								startedRelocations.push({ source, target });
+								appliedMoves.push(plannedResult);
+							}
+						);
+						return result;
+					},
 					{ concurrency: FIX_CONCURRENCY }
 				),
 			dryRun: false,
@@ -486,11 +500,11 @@ export async function applyRelocations(
 				const checkpoint = await createRollbackCheckpoint(
 					createMoveRollbackStrategy(
 						options.project.rootDir,
-						relocationPairs.map(({ source, target }) => ({
+						startedRelocations.map(({ source, target }) => ({
 							from: source,
 							to: target,
 						})),
-						moves.flatMap((move) =>
+						(moves ?? appliedMoves).flatMap((move) =>
 							move.updatedReferences.map((reference) => reference.file)
 						)
 					)
@@ -511,7 +525,10 @@ export async function applyRelocations(
 	let errors = applyErrors;
 	if (delta && !delta.success) {
 		errors = delta.verificationIncomplete
-			? ["Type checking did not complete after relocation"]
+			? [
+					delta.verificationException ??
+						"Type checking did not complete after relocation",
+				]
 			: delta.newErrors;
 	}
 

@@ -80,12 +80,12 @@ export interface MutationPipelineOptions<TResult> {
 		| JournalOperationDetails
 		| ((result: TResult) => JournalOperationDetails);
 	/**
-	 * Restores applied changes when verification finds new errors. Receives the
-	 * apply result so it can target exactly the files that changed; resolves to
-	 * whether the restore succeeded. `null` is a deliberate leave-applied policy
-	 * (e.g. plain moves) and is recorded as such by the caller.
+	 * Restores changes after a failed apply or verification. The result is
+	 * undefined if apply threw: retain checkpoints and partial write metadata
+	 * outside apply's return value. Resolves to whether restoration succeeded.
+	 * `null` is a deliberate leave-applied policy.
 	 */
-	rollbackStrategy?: ((result: TResult) => Promise<boolean>) | null;
+	rollbackStrategy?: ((result: TResult | undefined) => Promise<boolean>) | null;
 	/**
 	 * Whether rollback candidacy requires `isApplySuccessful` to be true.
 	 * Defaults to true (rename/move: nothing to roll back if the single apply
@@ -93,6 +93,7 @@ export interface MutationPipelineOptions<TResult> {
 	 * this false so a partially-failed batch still rolls back the items that
 	 * did apply when verification fails; `isApplySuccessful` still gates the
 	 * overall `success` and journal-completion independently.
+	 * A closing verification exception always permits recovery of partial writes.
 	 */
 	rollbackRequiresApplySuccess?: boolean;
 	/** Maps a before-side diagnostic's path to its expected post-change path (#128). */
@@ -124,12 +125,64 @@ const DEFAULT_DEPENDENCIES: MutationPipelineDependencies = {
 	runWithTypecheckGuard,
 };
 
+interface MutationRecovery {
+	attempted: boolean;
+	rolledBack: boolean;
+	failure?: { cause: unknown };
+}
+
+/** Exceptional mutations retain the original failure and their recovery result. */
+export class MutationExecutionError extends Error {
+	readonly rolledBack: boolean;
+	readonly rollbackAttempted: boolean;
+	readonly rollbackError: unknown;
+	readonly worktreeDirtyRollbackDisabled: boolean;
+
+	constructor(
+		operation: string,
+		cause: unknown,
+		recovery: MutationRecovery,
+		worktreeDirtyRollbackDisabled: boolean
+	) {
+		const original = cause instanceof Error ? cause.message : String(cause);
+		let restoration = "Rollback is disabled; changes may remain applied.";
+		if (recovery.rolledBack) {
+			restoration = "Changes were rolled back.";
+		} else if (recovery.attempted) {
+			restoration = "Rollback failed; changes may remain applied.";
+			if (recovery.failure) {
+				const failure = recovery.failure.cause;
+				restoration += ` ${failure instanceof Error ? failure.message : String(failure)}`;
+			}
+		}
+		super(`${operation} failed: ${original}. ${restoration}`, { cause });
+		this.name = "MutationExecutionError";
+		this.rolledBack = recovery.rolledBack;
+		this.rollbackAttempted = recovery.attempted;
+		this.rollbackError = recovery.failure?.cause;
+		this.worktreeDirtyRollbackDisabled = worktreeDirtyRollbackDisabled;
+	}
+}
+
+async function restoreMutation<TResult>(
+	strategy: (result: TResult | undefined) => Promise<boolean>,
+	result: TResult | undefined
+): Promise<MutationRecovery> {
+	try {
+		// An aborted request must not cancel its own cleanup.
+		const rolledBack = await withoutCancellation(async () => strategy(result));
+		return { attempted: true, rolledBack };
+	} catch (cause) {
+		return { attempted: true, rolledBack: false, failure: { cause } };
+	}
+}
+
 /**
  * One owner for the mutation safety sequence (#221): worktree guard ->
  * journal prepare -> apply (under the typecheck guard) -> rollback or
- * journal complete -> structured outcome. Returns results in every path and
- * never exits the process; renderers own printing, exit codes, and MCP
- * payload shape.
+ * journal complete -> structured outcome. Exceptions after apply starts are
+ * recovered before rejection. Never exits the process; renderers own printing,
+ * exit codes, and MCP payload shape.
  */
 export async function runMutation<TResult>(
 	options: MutationPipelineOptions<TResult>,
@@ -167,15 +220,51 @@ export async function runMutation<TResult>(
 	);
 
 	const shouldVerify = options.verify !== "none" && !options.dryRun;
-	const { result, delta } = shouldVerify
-		? await deps.runWithTypecheckGuard(options.project, options.apply, {
-				translateBeforeFile: options.translateBeforeFile,
-			})
-		: { delta: undefined, result: await options.apply() };
+	const application = { started: false };
+	let applied: { result: TResult } | undefined;
+	const apply = async (): Promise<TResult> => {
+		application.started = true;
+		const result = await options.apply();
+		applied = { result };
+		return result;
+	};
+	let result: TResult;
+	let delta: VerificationResult | undefined;
+	try {
+		if (shouldVerify) {
+			({ result, delta } = await deps.runWithTypecheckGuard(
+				options.project,
+				apply,
+				{ translateBeforeFile: options.translateBeforeFile }
+			));
+		} else {
+			result = await apply();
+		}
+	} catch (error) {
+		if (!application.started || options.dryRun) {
+			throw error;
+		}
+		// --no-verify skips compiler checks, not recovery from a failed write.
+		// Report-only and forced-dirty operations still deliberately leave edits.
+		const recovery =
+			options.verify !== "report" &&
+			guard.rollbackEnabled &&
+			options.rollbackStrategy
+				? await restoreMutation(options.rollbackStrategy, applied?.result)
+				: { attempted: false, rolledBack: false };
+		throw new MutationExecutionError(
+			options.operation,
+			error,
+			recovery,
+			guard.worktreeDirtyRollbackDisabled
+		);
+	}
 
 	const applySucceeded = options.isApplySuccessful?.(result) ?? true;
 	const rollbackEligible =
-		options.rollbackRequiresApplySuccess === false || applySucceeded;
+		options.rollbackRequiresApplySuccess === false ||
+		applySucceeded ||
+		delta?.verificationException !== undefined;
 	let rolledBack = false;
 	if (delta) {
 		delta.worktreeDirtyRollbackDisabled = guard.worktreeDirtyRollbackDisabled;
@@ -186,11 +275,19 @@ export async function runMutation<TResult>(
 			guard.rollbackEnabled &&
 			options.rollbackStrategy != null;
 		if (shouldRollback && options.rollbackStrategy) {
-			// Rollback must not be cancelled by an already-aborted request
-			// signal (#245): a cancelled mutation still restores its files, so
-			// the recovery runs in a fresh, unaborted cancellation scope.
-			const strategy = options.rollbackStrategy;
-			rolledBack = await withoutCancellation(async () => strategy(result));
+			const recovery = await restoreMutation(options.rollbackStrategy, result);
+			if (recovery.failure) {
+				throw new MutationExecutionError(
+					options.operation,
+					new Error(
+						delta.verificationException ??
+							`Verification failed: ${delta.newErrors.join("\n") || "type checking did not complete"}`
+					),
+					recovery,
+					guard.worktreeDirtyRollbackDisabled
+				);
+			}
+			rolledBack = recovery.rolledBack;
 		}
 		delta.rolledBack = rolledBack;
 	}
