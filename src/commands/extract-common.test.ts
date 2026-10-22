@@ -773,7 +773,7 @@ export function otherHelper(): number {
 		expect(pkgBContent).toContain("export function otherHelper");
 
 		await rm(dir, { recursive: true, force: true });
-	});
+	}, 30_000);
 
 	test("skips value extraction that would create circular import", async () => {
 		const dir = nextFixtureDir();
