@@ -4,6 +4,8 @@ import type { ProjectConfig, ProjectReference } from "../types.ts";
 import {
 	discoverProject,
 	findOwningConfig,
+	type ProjectDiscovery,
+	type TsConfigInfo,
 	toProjectConfig,
 } from "./tsconfig-discovery.ts";
 
@@ -46,19 +48,113 @@ export function loadProject(
 	tsconfigPath: string,
 	targetFile?: string
 ): ProjectConfig {
-	// If we have a target file, use smart discovery to find the owning config
-	if (targetFile) {
-		const projectDir = path.dirname(tsconfigPath);
-		const discovery = discoverProject(projectDir);
-		const owningConfig = findOwningConfig(targetFile, discovery);
+	return createProjectLoader().load(tsconfigPath, targetFile);
+}
 
-		if (owningConfig) {
-			return toProjectConfig(owningConfig);
+export interface ProjectLoaderDependencies {
+	resolveTsConfig: typeof resolveTsConfig;
+	discoverProject: typeof discoverProject;
+	loadProjectDirect: typeof loadProjectDirect;
+	toProjectConfig: typeof toProjectConfig;
+}
+
+export interface ProjectLoader {
+	resolve: typeof resolveTsConfig;
+	load: typeof loadProject;
+	configs: (tsconfigPath: string) => ProjectConfig[];
+}
+
+/**
+ * Synchronous configuration loading for one setup request. These maps never
+ * outlive the caller; discovery still validates its existing bounded cache.
+ */
+export function createProjectLoader(
+	dependencies: Partial<ProjectLoaderDependencies> = {}
+): ProjectLoader {
+	const deps = {
+		resolveTsConfig,
+		discoverProject,
+		loadProjectDirect,
+		toProjectConfig,
+		...dependencies,
+	};
+	const resolutions = new Map<string, string | null>();
+	const discoveries = new Map<string, ProjectDiscovery>();
+	const projects = new Map<string, ProjectConfig>();
+	const directProjects = new Map<string, ProjectConfig>();
+	const discover = (directory: string): ProjectDiscovery => {
+		const key = path.resolve(directory);
+		let discovery = discoveries.get(key);
+		if (!discovery) {
+			discovery = deps.discoverProject(directory);
+			discoveries.set(key, discovery);
 		}
-		// Fall through to traditional loading if no owner found
-	}
-
-	return loadProjectDirect(tsconfigPath);
+		return discovery;
+	};
+	const fromConfig = (
+		config: TsConfigInfo,
+		reuseDirect: boolean
+	): ProjectConfig => {
+		const key = path.resolve(config.path);
+		const existing = projects.get(key);
+		if (existing) {
+			return existing;
+		}
+		const direct = reuseDirect ? directProjects.get(key) : undefined;
+		// Graph construction can reuse an already loaded absolute config. An
+		// owning-file lookup still needs discovery's projection, including its
+		// absolute paths and normalization of empty reference lists.
+		if (direct?.tsconfigPath === config.path) {
+			return direct;
+		}
+		const project = deps.toProjectConfig(config);
+		projects.set(key, project);
+		return project;
+	};
+	const loadDirect = (tsconfigPath: string): ProjectConfig => {
+		const key = path.resolve(tsconfigPath);
+		let project = directProjects.get(key);
+		if (!project) {
+			project = deps.loadProjectDirect(tsconfigPath);
+			directProjects.set(key, project);
+			// A solution config can load its first reference. Reuse that actual
+			// project's configuration when assembling its graph later.
+			const actualKey = path.resolve(project.tsconfigPath);
+			directProjects.set(actualKey, project);
+		}
+		return project;
+	};
+	return {
+		resolve(projectArg, startDir) {
+			const key = JSON.stringify(
+				projectArg ? [path.resolve(projectArg)] : [null, startDir]
+			);
+			if (!resolutions.has(key)) {
+				resolutions.set(key, deps.resolveTsConfig(projectArg, startDir));
+			}
+			return resolutions.get(key) ?? null;
+		},
+		load(tsconfigPath, targetFile) {
+			if (targetFile) {
+				const owningConfig = findOwningConfig(
+					targetFile,
+					discover(path.dirname(tsconfigPath))
+				);
+				if (owningConfig) {
+					return fromConfig(owningConfig, false);
+				}
+			}
+			return loadDirect(tsconfigPath);
+		},
+		configs(tsconfigPath) {
+			const configs = discover(path.dirname(tsconfigPath)).configs.filter(
+				(config) => !config.isSolution
+			);
+			return configs.length > 0
+				? configs.map((config) => fromConfig(config, true))
+				: [loadDirect(tsconfigPath)];
+		},
+	};
 }
 
 /**

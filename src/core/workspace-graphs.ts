@@ -1,18 +1,16 @@
 import path from "node:path";
 import type { ProgressCallback } from "../types/progress.ts";
-import { mapConcurrent } from "./concurrency.ts";
-import { buildProjectGraphs } from "./graph.ts";
-import { dedupeTsconfigResults } from "./path-utils.ts";
-import { discoverWorkspace } from "./workspace.ts";
+import {
+	buildProjectGraphContext,
+	type ProjectGraphContext,
+} from "./project-context.ts";
 
 /**
  * One discovered tsconfig and the graph built from it. Derived from
  * `buildProjectGraphs` so this module stays in the core layer instead of
  * importing the command-layer alias of the same shape.
  */
-export type ProjectGraphResult = Awaited<
-	ReturnType<typeof buildProjectGraphs>
->[number];
+export type { ProjectGraphResult } from "./project-context.ts";
 
 export interface WorkspaceGraphOptions {
 	/** Config resolved for the requested directory; always contributes graphs. */
@@ -28,15 +26,7 @@ export interface WorkspaceGraphOptions {
 	retainProgram?: boolean;
 }
 
-export interface WorkspaceGraphSet {
-	graphs: ProjectGraphResult[];
-	/**
-	 * Workspace root when workspace mode actually widened the scan, otherwise
-	 * null. Callers that re-scope their report boundary key off this rather than
-	 * re-deriving whether the widening happened.
-	 */
-	workspaceRoot: string | null;
-}
+export type WorkspaceGraphSet = ProjectGraphContext;
 
 /**
  * Directory to search for the workspace manifest.
@@ -73,33 +63,12 @@ function workspaceSearchDir(
 export async function buildWorkspaceGraphs(
 	options: WorkspaceGraphOptions
 ): Promise<WorkspaceGraphSet> {
-	const baseGraphs = await buildProjectGraphs(options.tsconfigPath, {
+	return buildProjectGraphContext({
+		tsconfigPath: options.tsconfigPath,
+		workspaceStart: options.workspace
+			? workspaceSearchDir(options.project, options.reportDirectory)
+			: undefined,
 		onProgress: options.onProgress,
 		retainProgram: options.retainProgram,
 	});
-	if (!options.workspace) {
-		return { graphs: baseGraphs, workspaceRoot: null };
-	}
-
-	const workspace = await discoverWorkspace(
-		workspaceSearchDir(options.project, options.reportDirectory)
-	);
-	if (!workspace || workspace.packages.length === 0) {
-		return { graphs: baseGraphs, workspaceRoot: null };
-	}
-
-	const packageGraphs = await mapConcurrent(
-		workspace.packages.filter((pkg) => pkg.tsconfigPath),
-		async (pkg) =>
-			buildProjectGraphs(pkg.tsconfigPath as string, {
-				onProgress: options.onProgress,
-				retainProgram: options.retainProgram,
-			}),
-		{ onError: () => [] as ProjectGraphResult[] }
-	);
-
-	return {
-		graphs: dedupeTsconfigResults([...baseGraphs, ...packageGraphs.flat()]),
-		workspaceRoot: workspace.root,
-	};
 }

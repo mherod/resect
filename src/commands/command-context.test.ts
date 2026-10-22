@@ -27,6 +27,138 @@ afterAll(async () => {
 });
 
 describe("setupCommandContext", () => {
+	test("relative search paths retain absolute all-config graph paths", async () => {
+		const directory = await createFixture("command-context-relative", {
+			"package.json": '{"name":"relative-context"}',
+			"tsconfig.json": JSON.stringify({ include: ["*.ts"] }),
+			"index.ts": "export const value = 1;\n",
+		});
+		const context = await setupCommandContext({
+			searchPath: path.relative(process.cwd(), directory),
+			graph: "project-configs",
+			retainProgram: false,
+		});
+		expect(context?.graphs.map(({ tsconfigPath }) => tsconfigPath)).toEqual([
+			path.join(directory, "tsconfig.json"),
+		]);
+		expect(context?.graph?.imports.has(path.join(directory, "index.ts"))).toBe(
+			true
+		);
+	});
+
+	test("requested workspace merging preserves the merged graph even without siblings", async () => {
+		const directory = await createFixture("command-context-empty-merge", {
+			"package.json": '{"name":"empty-merge-context"}',
+			"tsconfig.json": JSON.stringify({ include: ["*.ts"] }),
+			"index.ts": "export const value = 1;\n",
+		});
+		const context = await setupCommandContext({
+			searchPath: directory,
+			graph: "project",
+			mergeWorkspaceGraphs: true,
+		});
+		expect(context?.graphs).toHaveLength(1);
+		expect(context?.graph).not.toBe(context?.graphs[0]?.graph);
+		expect(context?.graph?.imports).toEqual(context?.graphs[0]?.graph.imports);
+	});
+
+	test("defaults to loading only the project for directory and explicit config inputs", async () => {
+		const directory = await createFixture("command-context-defaults", {
+			"package.json": JSON.stringify({ name: "context-defaults" }),
+			"tsconfig.json": JSON.stringify({ include: ["src/**/*.ts"] }),
+			"src/index.ts": "export const value = 1;\n",
+		});
+		for (const project of [directory, path.join(directory, "tsconfig.json")]) {
+			const progress: number[] = [];
+			const context = await setupCommandContext({
+				project,
+				searchPath: directory,
+				onProgress: (completed) => progress.push(completed),
+			});
+			expect(context?.tsconfigPath).toBe(path.join(directory, "tsconfig.json"));
+			expect(context?.project.files).toEqual([
+				path.join(directory, "src/index.ts"),
+			]);
+			expect(context?.graph).toBeUndefined();
+			expect(context?.graphs).toEqual([]);
+			expect(context?.workspace).toBeUndefined();
+			expect(context?.extraProjects).toEqual([]);
+			expect(progress).toEqual([]);
+		}
+	});
+
+	test("preserves resolved versus owning config graph coverage", async () => {
+		const directory = await createFixture("command-context-coverage", {
+			"package.json": JSON.stringify({ name: "context-coverage" }),
+			"tsconfig.json": JSON.stringify({
+				references: [{ path: "./a" }, { path: "./b" }],
+			}),
+			"a/tsconfig.json": JSON.stringify({ include: ["*.ts"] }),
+			"a/index.ts": "export const a = 1;\n",
+			"b/tsconfig.json": JSON.stringify({ include: ["*.ts"] }),
+			"b/index.ts": "export const b = 2;\n",
+		});
+		const targetFile = path.join(directory, "b/index.ts");
+		for (const retainProgram of [false, true]) {
+			for (const [graph, projectConfigsFrom, count] of [
+				["project", "resolved", 1],
+				["project-configs", "owning", 1],
+				["project-configs", "resolved", 2],
+			] as const) {
+				const context = await setupCommandContext({
+					project: directory,
+					searchPath: directory,
+					targetFile,
+					graph,
+					projectConfigsFrom,
+					retainProgram,
+				});
+				expect(context?.project.tsconfigPath).toBe(
+					path.join(directory, "b/tsconfig.json")
+				);
+				expect(context?.graphs).toHaveLength(count);
+				expect(context?.graph?.imports.has(targetFile)).toBe(true);
+				for (const result of context?.graphs ?? []) {
+					expect(Boolean(result.graph.program)).toBe(retainProgram);
+				}
+			}
+		}
+	});
+
+	test("discovers workspace metadata or sibling projects without constructing graphs", async () => {
+		const directory = await createFixture("command-context-no-graphs", {
+			"pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n',
+			"package.json": JSON.stringify({
+				name: "context-no-graphs",
+				private: true,
+			}),
+			"packages/a/package.json": JSON.stringify({ name: "@test/a" }),
+			"packages/a/tsconfig.json": JSON.stringify({ include: ["*.ts"] }),
+			"packages/a/index.ts": "export const a = 1;\n",
+			"packages/b/package.json": JSON.stringify({ name: "@test/b" }),
+			"packages/b/tsconfig.json": JSON.stringify({ include: ["*.ts"] }),
+			"packages/b/index.ts": "export const b = 2;\n",
+		});
+		for (const workspace of ["discover", "projects"] as const) {
+			const progress: number[] = [];
+			const context = await setupCommandContext({
+				project: path.join(directory, "packages/a"),
+				searchPath: directory,
+				workspace,
+				workspaceFromProjectRoot: true,
+				mergeWorkspaceGraphs: true,
+				onProgress: (completed) => progress.push(completed),
+			});
+			expect(context?.workspace?.root).toBe(directory);
+			expect(context?.extraProjects).toHaveLength(
+				workspace === "projects" ? 1 : 0
+			);
+			expect(context?.graph).toBeUndefined();
+			expect(context?.graphs).toEqual([]);
+			expect(progress).toEqual([]);
+		}
+	});
+
 	test("returns null when no TypeScript project can be found", async () => {
 		const directory = await createFixture("command-context-missing", {
 			"source.ts": "export const value = 1;\n",

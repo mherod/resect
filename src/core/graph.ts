@@ -19,7 +19,12 @@ import {
 	trackResolutionInputs,
 } from "./graph-inputs.ts";
 import { fileMtimeMs, mtimesUnchanged, snapshotMtimes } from "./path-utils.ts";
-import { createProgram, getProjectFiles, loadProject } from "./project.ts";
+import {
+	createProgram,
+	createProjectLoader,
+	getProjectFiles,
+	type ProjectLoader,
+} from "./project.ts";
 import { createResolutionContext, normalizePath } from "./resolver.ts";
 import {
 	scanBarrelExports,
@@ -31,7 +36,6 @@ import {
 	parseSourceFile,
 	withSourceFile,
 } from "./source-file.ts";
-import { discoverProject, toProjectConfig } from "./tsconfig-discovery.ts";
 
 /** Read one covered file's syntax without retaining a whole-program AST. */
 export function getGraphSyntaxFile(
@@ -677,6 +681,11 @@ export function findBarrelReExports(
 	return barrels;
 }
 
+export interface ProjectGraphDependencies {
+	loadProjects: ProjectLoader["configs"];
+	buildGraph: typeof buildDependencyGraph;
+}
+
 /**
  * Build a dependency graph for every non-solution tsconfig discovered in the
  * project that owns `tsconfigPath`. Falls back to the single resolved config
@@ -689,19 +698,15 @@ export function findBarrelReExports(
  */
 export async function buildProjectGraphs(
 	tsconfigPath: string,
-	options: GraphBuildOptions = {}
+	options: GraphBuildOptions = {},
+	dependencies: ProjectGraphDependencies = {
+		loadProjects: createProjectLoader().configs,
+		buildGraph: buildDependencyGraph,
+	}
 ): Promise<{ tsconfigPath: string; graph: DependencyGraph }[]> {
-	const discovery = discoverProject(path.dirname(tsconfigPath));
-	const configs = discovery.configs.filter((c) => !c.isSolution);
-
-	const projects =
-		configs.length > 0
-			? configs.map(toProjectConfig)
-			: [loadProject(tsconfigPath)];
-
 	const results: { tsconfigPath: string; graph: DependencyGraph }[] = [];
-	for (const project of projects) {
-		const graph = await buildDependencyGraph(project, options);
+	for (const project of dependencies.loadProjects(tsconfigPath)) {
+		const graph = await dependencies.buildGraph(project, options);
 		results.push({ tsconfigPath: project.tsconfigPath, graph });
 	}
 	return results;
