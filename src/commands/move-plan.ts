@@ -15,6 +15,7 @@ import {
 import { parseSourceFile } from "../core/source-file.ts";
 import { applyTextChanges } from "../core/text-changes.ts";
 import { findSpecifierLocation } from "../core/updater.ts";
+import type { WorkspaceInfo } from "../core/workspace.ts";
 import type { UpdatedReference } from "../types/move.ts";
 import type { ProjectConfig } from "../types.ts";
 import type { ExtensionPolicy, PreferStrategy } from "./option-domains.ts";
@@ -28,7 +29,8 @@ export function updateInternalImports(
 	program: Pick<ts.Program, "getSourceFile">,
 	preferRelative = false,
 	prefer?: PreferStrategy,
-	extensions?: ExtensionPolicy
+	extensions?: ExtensionPolicy,
+	workspace?: WorkspaceInfo
 ): { newContent: string; updates: UpdatedReference[] } {
 	const changes: { start: number; end: number; newText: string }[] = [];
 	const updates: UpdatedReference[] = [];
@@ -53,7 +55,8 @@ export function updateInternalImports(
 					ref.resolvedPath, // Target hasn't moved
 					project,
 					prefer,
-					extensions
+					extensions,
+					workspace
 				);
 
 		// #121: an alias/bare import that the move turned into a relative

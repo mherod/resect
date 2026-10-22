@@ -920,6 +920,210 @@ describe("calculateNewSpecifier intra-package self-import (#121)", () => {
 	});
 });
 
+describe("calculateNewSpecifier subpath self-import (#262)", () => {
+	const project = makeProject("/repo", {
+		"@scope/ui": ["packages/ui/src"],
+		"@scope/ui/*": ["packages/ui/src/*"],
+	});
+	const barrel = "/repo/packages/ui/src/widgets/index.ts";
+
+	test.each([
+		undefined,
+		"relative",
+		"alias",
+		"shortest",
+	] as const)("keeps a safe relative fallback with preference %s when exports are unknown", (prefer) => {
+		for (const extensions of ["preserve", "explicit"] as const) {
+			expect(
+				calculateNewSpecifier(
+					"@scope/ui/widgets",
+					"/repo/packages/ui/src/loaders/detail.ts",
+					barrel,
+					barrel,
+					project,
+					prefer,
+					extensions
+				)
+			).toBe(extensions === "explicit" ? "../widgets/index.ts" : "../widgets");
+		}
+	});
+
+	test("preserves the outside consumer's existing subpath spelling", () => {
+		expect(
+			calculateNewSpecifier(
+				"@scope/ui/widgets",
+				"/repo/apps/web/consumer.ts",
+				barrel,
+				barrel,
+				project
+			)
+		).toBe("@scope/ui/widgets");
+	});
+
+	test.each([
+		{
+			name: "declared emitted target",
+			exports: {
+				"./widgets": {
+					types: "./dist/widgets/index.d.ts",
+					default: "./dist/widgets/index.js",
+				},
+			},
+			expected: "@scope/ui/widgets",
+		},
+		{
+			name: "declared wildcard pattern",
+			exports: { "./*": "./dist/*/index.js" },
+			expected: "@scope/ui/widgets",
+		},
+		{
+			name: "undeclared subpath",
+			exports: { ".": "./dist/index.js" },
+			expected: "../widgets",
+		},
+		{
+			name: "null exclusion over wildcard",
+			exports: { "./widgets": null, "./*": "./dist/*/index.js" },
+			expected: "../widgets",
+		},
+		{
+			name: "different declared target",
+			exports: { "./widgets": "./dist/other/index.js" },
+			expected: "../widgets",
+		},
+		{
+			name: "divergent conditional targets",
+			exports: {
+				"./widgets": {
+					types: "./dist/widgets/index.d.ts",
+					default: "./dist/other/index.js",
+				},
+			},
+			expected: "../widgets",
+		},
+	])("prefers an existing alias only for a valid $name", ({
+		exports,
+		expected,
+	}) => {
+		const workspace = makeWorkspace("/repo", [
+			{
+				name: "@scope/ui",
+				subdir: "packages/ui",
+				srcDir: "src",
+				exports: JSON.parse(JSON.stringify(exports)),
+			},
+		]);
+		expect(
+			calculateNewSpecifier(
+				"@scope/ui/widgets",
+				"/repo/packages/ui/src/loaders/detail.ts",
+				barrel,
+				barrel,
+				project,
+				"alias",
+				"preserve",
+				workspace
+			)
+		).toBe(expected);
+	});
+
+	test("shortest compares a declared alias with the relative path", () => {
+		const workspace = makeWorkspace("/repo", [
+			{
+				name: "@scope/ui",
+				subdir: "packages/ui",
+				srcDir: "src",
+				exports: { "./widgets": "./dist/widgets/index.js" },
+			},
+		]);
+		expect(
+			calculateNewSpecifier(
+				"@scope/ui/widgets",
+				"/repo/packages/ui/src/a/b/c/d/e/f/g/h/detail.ts",
+				barrel,
+				barrel,
+				project,
+				"shortest",
+				"explicit",
+				workspace
+			)
+		).toBe("@scope/ui/widgets");
+	});
+
+	test.each([
+		{
+			specifier: "../widgets",
+			exports: { "./widgets": "./dist/widgets/index.js" },
+			expected: "@scope/ui/widgets",
+		},
+		{
+			specifier: "../widgets",
+			exports: { ".": "./dist/index.js" },
+			expected: "../widgets",
+		},
+		{
+			specifier: "@scope/ui/widgets/index",
+			exports: { "./widgets/index": "./dist/widgets/index.js" },
+			expected: "@scope/ui/widgets/index",
+		},
+	])("validates the final alias candidate for $specifier ($expected)", ({
+		specifier,
+		exports,
+		expected,
+	}) => {
+		const workspace = makeWorkspace("/repo", [
+			{
+				name: "@scope/ui",
+				subdir: "packages/ui",
+				srcDir: "src",
+				exports: JSON.parse(JSON.stringify(exports)),
+			},
+		]);
+		expect(
+			calculateNewSpecifier(
+				specifier,
+				"/repo/packages/ui/src/loaders/detail.ts",
+				barrel,
+				barrel,
+				project,
+				"alias",
+				"preserve",
+				workspace
+			)
+		).toBe(expected);
+	});
+
+	test.each([
+		"ts",
+		"tsx",
+		"js",
+		"jsx",
+		"mts",
+		"cts",
+		"mjs",
+		"cjs",
+	])("keeps index.%s as a barrel filename rather than an invented public subpath", (extension) => {
+		const target = `/repo/packages/ui/src/widgets/index.${extension}`;
+		for (const extensions of ["preserve", "explicit"] as const) {
+			expect(
+				calculateNewSpecifier(
+					"@scope/ui/widgets",
+					"/repo/packages/ui/src/loaders/detail.ts",
+					target,
+					target,
+					project,
+					undefined,
+					extensions
+				)
+			).toBe(
+				extensions === "explicit"
+					? `../widgets/index.${extension}`
+					: "../widgets"
+			);
+		}
+	});
+});
+
 describe("calculateNewSpecifier alias slash/extension normalization (#160)", () => {
 	test("wildcard alias: moving a sibling file never produces a double slash", () => {
 		// "@/*" -> "@/" once the trailing "*" is stripped; the remainder used to

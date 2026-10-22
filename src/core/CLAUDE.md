@@ -182,6 +182,14 @@ alone never proves the package root exists.
 
 DON'T run the barrel short-circuit before explicit exports or use relative cross-package paths.
 
+DO preserve a destination-local relative barrel import through final specifier
+selection. An `index.ts`/`index.js` filename does not declare a public `/index`
+export. For alias/shortest preferences, reuse an existing spelling or declared
+export pattern only when its targets map to that barrel; otherwise keep the
+relative fallback. Pass existing workspace metadata and retain the requested
+extension policy. DON'T let an originating app's wildcard alias invent a
+package self-import that the destination's own configuration cannot resolve.
+
 `DependencyGraph.barrelReExports` tracks actual `export ... from` relationships. DON'T infer re-exports from `graph.imports`; regular barrel imports are not exports.
 
 Bundler-owned stylesheet and SQL imports resolve as `asset`, never as TypeScript graph nodes. DO preserve the reported module specifier while stripping `?query` and `#fragment` suffixes only for extension classification and filesystem lookup. Missing relative assets must remain unresolvable; bare package assets remain external.

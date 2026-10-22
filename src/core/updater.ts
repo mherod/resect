@@ -217,7 +217,8 @@ export function updateFileReferences(
 					newPath,
 					project,
 					prefer,
-					extensions
+					extensions,
+					workspace
 				);
 		} else {
 			newSpecifier = calculateNewSpecifier(
@@ -227,7 +228,8 @@ export function updateFileReferences(
 				newPath,
 				project,
 				prefer,
-				extensions
+				extensions,
+				workspace
 			);
 		}
 
@@ -623,7 +625,8 @@ export function updateBarrelExports(
 				newPath,
 				project,
 				prefer,
-				extensions
+				extensions,
+				workspace
 			);
 
 			if (newSpecifier !== specifier) {

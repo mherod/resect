@@ -11,7 +11,11 @@ import {
 	TS_JS_VUE_EXTENSIONS,
 	VUE_EXTENSION,
 } from "./constants.ts";
-import { subpathBarrelCandidates } from "./package-export-targets.ts";
+import {
+	collectExportSpecifiers,
+	expandEntrypointCandidates,
+	subpathBarrelCandidates,
+} from "./package-export-targets.ts";
 import { isWithinPath } from "./path-utils.ts";
 import type { WorkspaceInfo, WorkspacePackage } from "./workspace.ts";
 
@@ -221,7 +225,8 @@ export function calculateNewSpecifier(
 	newTargetPath: string,
 	project: ProjectConfig,
 	prefer?: PreferStrategy,
-	extensions: ExtensionPolicy = "preserve"
+	extensions: ExtensionPolicy = "preserve",
+	workspace?: WorkspaceInfo
 ): string {
 	if (prefer === "relative") {
 		return calculateRelativeSpecifier(
@@ -233,28 +238,61 @@ export function calculateNewSpecifier(
 	}
 
 	const aliasMatch = matchPathAlias(oldSpecifier, project);
-
-	if (prefer === "alias") {
-		if (aliasMatch) {
-			const updated = updateAliasedSpecifier(
+	let updated = aliasMatch
+		? updateAliasedSpecifier(
 				oldSpecifier,
 				aliasMatch,
 				oldTargetPath,
 				newTargetPath,
 				fromFile,
-				project
+				project,
+				extensions
+			)
+		: null;
+	if (!aliasMatch && prefer) {
+		updated = findAliasForPath(newTargetPath, project);
+	}
+
+	const targetPackage = workspace
+		? resolvePackageSubpath(newTargetPath, workspace)?.pkg
+		: undefined;
+	if (
+		targetPackage &&
+		removeExtension(path.basename(newTargetPath)) === "index" &&
+		isWithinPath(targetPackage.path, fromFile) &&
+		[oldSpecifier, updated].some(
+			(specifier) =>
+				specifier !== null &&
+				packageNameFromSpecifier(specifier) === targetPackage.name
+		)
+	) {
+		// A barrel filename does not declare a public /index export. Reuse an
+		// existing spelling or directory convention only when the export map agrees.
+		const candidates = [
+			oldSpecifier,
+			updated,
+			updated?.replace(/\/index$/, ""),
+		];
+		const declared = prefer
+			? candidates.find(
+					(candidate) =>
+						candidate &&
+						isDeclaredPackageTarget(candidate, newTargetPath, targetPackage)
+				)
+			: undefined;
+		updated =
+			declared ??
+			calculateRelativeSpecifier(
+				fromFile,
+				newTargetPath,
+				oldSpecifier,
+				extensions
 			);
-			if (updated.startsWith("../") || updated.startsWith("./")) {
-				const crossPackageAlias = findAliasForPath(newTargetPath, project);
-				if (crossPackageAlias) {
-					return crossPackageAlias;
-				}
-			}
+	}
+
+	if (prefer === "alias") {
+		if (updated !== null) {
 			return updated;
-		}
-		const alias = findAliasForPath(newTargetPath, project);
-		if (alias) {
-			return alias;
 		}
 		return calculateRelativeSpecifier(
 			fromFile,
@@ -265,54 +303,23 @@ export function calculateNewSpecifier(
 	}
 
 	if (prefer === "shortest") {
-		let aliasedSpecifier: string | null = null;
-		if (aliasMatch) {
-			aliasedSpecifier = updateAliasedSpecifier(
-				oldSpecifier,
-				aliasMatch,
-				oldTargetPath,
-				newTargetPath,
-				fromFile,
-				project
-			);
-		}
-		if (!aliasedSpecifier || aliasedSpecifier.startsWith(".")) {
-			aliasedSpecifier = findAliasForPath(newTargetPath, project);
-		}
 		const relativeSpecifier = calculateRelativeSpecifier(
 			fromFile,
 			newTargetPath,
 			oldSpecifier,
 			extensions
 		);
-		if (
-			aliasedSpecifier &&
-			aliasedSpecifier.length < relativeSpecifier.length
-		) {
-			return aliasedSpecifier;
+		if (updated && updated.length < relativeSpecifier.length) {
+			return updated;
 		}
 		return relativeSpecifier;
 	}
 
 	// Default behavior (prefer === undefined):
 	// If the old specifier was a path alias: update aliased specifier
-	if (aliasMatch) {
-		const updated = updateAliasedSpecifier(
-			oldSpecifier,
-			aliasMatch,
-			oldTargetPath,
-			newTargetPath,
-			fromFile,
-			project
-		);
-		// If updateAliasedSpecifier couldn't map to the same alias,
-		// try to find a different alias that covers the new target
-		if (updated.startsWith("../") || updated.startsWith("./")) {
-			const crossPackageAlias = findAliasForPath(newTargetPath, project);
-			if (crossPackageAlias) {
-				return crossPackageAlias;
-			}
-		}
+	if (updated !== null) {
+		// A deliberate relative self-import must survive final policy selection.
+		// updateAliasedSpecifier already tries other aliases when its scope changes.
 		return updated;
 	}
 
@@ -435,7 +442,8 @@ function updateAliasedSpecifier(
 	oldTargetPath: string,
 	newTargetPath: string,
 	fromFile: string,
-	project: ProjectConfig
+	project: ProjectConfig,
+	extensions: ExtensionPolicy
 ): string {
 	const baseUrl = project.compilerOptions.baseUrl ?? project.rootDir;
 	const normalizedNewTarget = normalizePath(newTargetPath);
@@ -476,11 +484,12 @@ function updateAliasedSpecifier(
 					// #121: the importing file now lives inside this alias's own
 					// root — a self-referential barrel import. Rewrite it as a
 					// relative import to the (sibling) target instead.
-					if (normalizePath(fromFile).startsWith(`${absolutePattern}/`)) {
+					if (isWithinPath(absolutePattern, fromFile)) {
 						return calculateRelativeSpecifier(
 							fromFile,
 							newTargetPath,
-							oldSpecifier
+							oldSpecifier,
+							extensions
 						);
 					}
 					// #122: the importer is outside the alias root (e.g. an
@@ -505,7 +514,56 @@ function updateAliasedSpecifier(
 	}
 
 	// Last resort: fall back to relative path from the importing file
-	return calculateRelativeSpecifier(fromFile, newTargetPath, oldSpecifier);
+	return calculateRelativeSpecifier(
+		fromFile,
+		newTargetPath,
+		oldSpecifier,
+		extensions
+	);
+}
+
+/** Validate an existing spelling against declared targets, not permissive app aliases. */
+function isDeclaredPackageTarget(
+	specifier: string,
+	targetPath: string,
+	pkg: WorkspacePackage
+): boolean {
+	if (packageNameFromSpecifier(specifier) !== pkg.name) {
+		return false;
+	}
+	if (!pkg.exports || typeof pkg.exports !== "object") {
+		return false;
+	}
+	const subpath = specifier.slice(pkg.name.length + 1);
+	const key = subpath ? `./${subpath}` : ".";
+	const entries = Object.entries(pkg.exports);
+	const exact = entries.find(([exportKey]) => exportKey === key);
+	const matches = exact
+		? [{ value: exact[1], replacement: "" }]
+		: entries.flatMap(([exportKey, value]) => {
+				const match = buildWildcardExportPattern(exportKey)?.exec(subpath);
+				return match?.[1] ? [{ value, replacement: match[1] }] : [];
+			});
+	return (
+		matches.length > 0 &&
+		matches.every(({ value, replacement }) => {
+			const targets: string[] = [];
+			collectExportSpecifiers(value, targets);
+			return (
+				targets.length > 0 &&
+				targets.every((target) =>
+					expandEntrypointCandidates(
+						pkg.path,
+						target.replaceAll("*", replacement),
+						pkg.srcDir
+					).some(
+						(candidate) =>
+							normalizePath(candidate) === normalizePath(targetPath)
+					)
+				)
+			);
+		})
+	);
 }
 
 /**

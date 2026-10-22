@@ -472,7 +472,8 @@ export async function planMoveModule(
 				program,
 				shouldNormalizeMovedImports,
 				prefer,
-				extensions
+				extensions,
+				workspace
 			);
 
 			if (updates.length > 0) {
