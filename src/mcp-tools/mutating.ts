@@ -28,7 +28,7 @@ import {
 } from "../commands/alias.ts";
 import { setupCommandContext } from "../commands/command-context.ts";
 import { runExtractCommon } from "../commands/extract-common.ts";
-import { inlineBarrel } from "../commands/inline.ts";
+import { inlineBarrel, isInlinePlanBlocked } from "../commands/inline.ts";
 import {
 	moveModuleWithRecovery,
 	rollbackTransformMove,
@@ -615,8 +615,9 @@ export async function inlineTool(args: {
 		force: args.force,
 	});
 
+	const blocked = isInlinePlanBlocked(result, args.force);
 	let outcome: MutationOutcome<void> | undefined;
-	if (!args.dryRun && result.isPureBarrel && changes.length > 0) {
+	if (!(args.dryRun || blocked) && changes.length > 0) {
 		outcome = await runMutation<void>(
 			{
 				apply: async () => {
@@ -646,21 +647,26 @@ export async function inlineTool(args: {
 	const delta = outcome?.delta;
 	const rolledBack = outcome?.rolledBack ?? false;
 	const root = project.rootDir;
-	return jsonText({
+	const filesChanged =
+		outcome && !rolledBack
+			? new Set(changes.map((change) => change.file)).size
+			: 0;
+	const response = jsonText({
 		dryRun: args.dryRun,
 		force: args.force,
 		worktreeDirty: guard.dirty,
 		success:
 			result.isPureBarrel &&
 			result.conflicts.length === 0 &&
-			!rolledBack &&
-			(delta?.success ?? true),
+			(outcome?.success ?? true),
 		isPureBarrel: result.isPureBarrel,
 		canonicalSpecifier: result.canonicalSpecifier,
 		rolledBack,
 		worktreeDirtyRollbackDisabled:
 			delta?.worktreeDirtyRollbackDisabled ?? false,
-		filesChanged: rolledBack ? 0 : result.filesChanged,
+		filesChanged,
+		plannedFiles: new Set(changes.map((change) => change.file)).size,
+		partial: filesChanged > 0 && result.conflicts.length > 0,
 		rewrites: result.rewrites.map((r: InlineRewrite) => ({
 			file: path.relative(root, r.file),
 			line: r.line,
@@ -677,4 +683,8 @@ export async function inlineTool(args: {
 		typecheck: delta,
 		journalEntryId: outcome?.journalEntry?.id,
 	});
+	if (blocked && !(args.dryRun && result.isPureBarrel)) {
+		response.isError = true;
+	}
+	return response;
 }

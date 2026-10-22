@@ -7,7 +7,11 @@ import {
 	mergeDependencyGraphs,
 	withGraphSourceFile,
 } from "../core/graph.ts";
-import { runMutation } from "../core/mutation-pipeline.ts";
+import {
+	MutationExecutionError,
+	type MutationOutcome,
+	runMutation,
+} from "../core/mutation-pipeline.ts";
 import {
 	calculateRelativeSpecifier,
 	findAliasForPath,
@@ -448,6 +452,14 @@ export async function inlineBarrel(
 	};
 }
 
+/** All surfaces reject the same plan before entering the mutation pipeline. */
+export function isInlinePlanBlocked(
+	result: InlineResult,
+	force: boolean
+): boolean {
+	return !result.isPureBarrel || (result.conflicts.length > 0 && !force);
+}
+
 function printInlineResults(
 	result: InlineResult,
 	verbose: boolean,
@@ -460,12 +472,19 @@ function printInlineResults(
 	}
 
 	const barrelRel = path.relative(projectRoot, result.barrelFile);
-	const prefix = result.dryRun ? "📋 Would rewrite" : "✅ Rewrote";
+	let prefix = "📋 Planned";
+	if (result.dryRun) {
+		prefix = "📋 Would rewrite";
+	} else if (result.filesChanged > 0) {
+		prefix = "✅ Rewrote";
+	}
 
 	if (result.rewrites.length === 0) {
-		logger.info(
-			`\n✨ No importers found for ${barrelRel}; nothing to inline.\n`
-		);
+		const message =
+			result.conflicts.length > 0
+				? `No supported imports can be rewritten for ${barrelRel}.`
+				: `No importers found for ${barrelRel}; nothing to inline.`;
+		logger.info(`\n${message}\n`);
 	} else {
 		logger.info(
 			`\n${prefix} ${result.rewrites.length} import(s) across ${new Set(result.rewrites.map((r) => r.file)).size} file(s) for barrel ${barrelRel}\n`
@@ -506,6 +525,35 @@ function printInlineResults(
  * then applies and verifies.
  */
 export async function inlineCommand(options: InlineOptions): Promise<void> {
+	const state: { filesChanged: number | undefined } = { filesChanged: 0 };
+	try {
+		await runInlineCommand(options, state);
+	} catch (error) {
+		if (!options.json) {
+			throw error;
+		}
+		const recovery =
+			error instanceof MutationExecutionError ? error : undefined;
+		const message = error instanceof Error ? error.message : String(error);
+		logger.json({
+			success: false,
+			dryRun: options.dryRun ?? false,
+			force: options.force ?? false,
+			error: message,
+			filesChanged: recovery?.rolledBack ? 0 : state.filesChanged,
+			rolledBack: recovery?.rolledBack ?? false,
+			worktreeDirtyRollbackDisabled:
+				recovery?.worktreeDirtyRollbackDisabled ?? false,
+		});
+		logger.error(message);
+		process.exit(1);
+	}
+}
+
+async function runInlineCommand(
+	options: InlineOptions,
+	state: { filesChanged: number | undefined }
+): Promise<void> {
 	const {
 		barrelFile,
 		dryRun = false,
@@ -524,11 +572,10 @@ export async function inlineCommand(options: InlineOptions): Promise<void> {
 		dryRun,
 	});
 	if (guard.blocked) {
-		logger.error(
+		throw new Error(
 			"Error: working tree has uncommitted changes. " +
 				"Commit or stash your changes first, or rerun with --force to proceed anyway."
 		);
-		process.exit(1);
 	}
 
 	const context = await setupCommandContext({
@@ -537,25 +584,64 @@ export async function inlineCommand(options: InlineOptions): Promise<void> {
 		targetFile: absolute,
 	});
 	if (!context) {
-		logger.error("Could not find tsconfig.json");
-		process.exit(1);
+		throw new Error("Could not find tsconfig.json");
 	}
 	const { project } = context;
 
-	logger.info(`\n${dryRun ? "🔍 Dry run:" : "🔧"} Inlining barrel...`);
-	logger.info(`   Barrel: ${absolute}`);
-	if (verify && !dryRun) {
-		logger.info("   Verification: enabled");
+	if (!json) {
+		logger.info(`\n${dryRun ? "🔍 Dry run:" : "🔧"} Inlining barrel...`);
+		logger.info(`   Barrel: ${absolute}`);
+		if (verify && !dryRun) {
+			logger.info("   Verification: enabled");
+		}
+		logger.empty();
 	}
-	logger.empty();
 
 	const { result, changes } = await inlineBarrel(absolute, project, {
 		dryRun,
 		force,
 	});
 
+	const blocked = isInlinePlanBlocked(result, force);
+	const plannedFiles = new Set(changes.map((change) => change.file)).size;
+	let outcome: MutationOutcome<void> | undefined;
+	if (!(dryRun || blocked) && changes.length > 0) {
+		outcome = await runMutation<void>(
+			{
+				apply: async () => {
+					state.filesChanged = undefined;
+					await applyChanges(changes);
+					state.filesChanged = plannedFiles;
+				},
+				dryRun,
+				force,
+				guardDir: path.dirname(absolute),
+				journalDetails: {
+					args: { barrelFile: path.relative(project.rootDir, absolute) },
+					command: "inline",
+				},
+				journalEnabled: journal,
+				operation: "inline",
+				project,
+				rollbackStrategy: async () =>
+					rollbackAliasChanges(
+						project.rootDir,
+						changes.map((c) => c.file)
+					),
+				verify: verify ? "rollback" : "none",
+			},
+			{ checkRollbackSafeWorktree: async () => Promise.resolve(guard) }
+		);
+	}
+
+	result.filesChanged = outcome && !outcome.rolledBack ? plannedFiles : 0;
+	state.filesChanged = result.filesChanged;
+	const success =
+		result.isPureBarrel &&
+		result.conflicts.length === 0 &&
+		(outcome?.success ?? true);
 	if (json) {
-		const jsonResult = {
+		logger.json({
 			...result,
 			barrelFile: path.relative(project.rootDir, result.barrelFile),
 			rewrites: result.rewrites.map((r) => ({
@@ -566,68 +652,26 @@ export async function inlineCommand(options: InlineOptions): Promise<void> {
 				...c,
 				file: path.relative(project.rootDir, c.file),
 			})),
-		};
-		process.stdout.write(`${JSON.stringify(jsonResult, null, 2)}\n`);
-		if (!result.isPureBarrel || (result.conflicts.length > 0 && !dryRun)) {
-			process.exit(1);
-		}
-		return;
+			force,
+			success,
+			partial: result.filesChanged > 0 && result.conflicts.length > 0,
+			plannedFiles,
+			rolledBack: outcome?.rolledBack ?? false,
+			worktreeDirty: guard.dirty,
+			worktreeDirtyRollbackDisabled:
+				outcome?.worktreeDirtyRollbackDisabled ?? false,
+			typecheck: outcome?.delta,
+			journalEntryId: outcome?.journalEntry?.id,
+		});
+	} else {
+		printInlineResults(result, verbose || blocked, project.rootDir);
 	}
-
-	// If not a pure barrel, report and exit
-	if (!result.isPureBarrel) {
-		printInlineResults(result, verbose, project.rootDir);
-		process.exit(1);
-	}
-
-	// Conflicts block writes (non-force conflicts are already excluded from changes)
-	if (result.conflicts.length > 0 && !force) {
-		printInlineResults(result, true, project.rootDir);
+	if (blocked && !dryRun && result.isPureBarrel) {
 		logger.error(
 			"Inline has conflicts. No files were changed; resolve the listed imports and retry, or use --force."
 		);
-		process.exit(1);
 	}
-
-	if (dryRun) {
-		printInlineResults(result, verbose, project.rootDir);
-		return;
-	}
-
-	if (changes.length === 0) {
-		printInlineResults(result, verbose, project.rootDir);
-		return;
-	}
-
-	const outcome = await runMutation<void>(
-		{
-			apply: async () => {
-				await applyChanges(changes);
-			},
-			dryRun,
-			force,
-			guardDir: path.dirname(absolute),
-			journalDetails: {
-				args: { barrelFile: path.relative(project.rootDir, absolute) },
-				command: "inline",
-			},
-			journalEnabled: journal,
-			operation: "inline",
-			project,
-			rollbackStrategy: async () =>
-				rollbackAliasChanges(
-					project.rootDir,
-					changes.map((c) => c.file)
-				),
-			verify: verify ? "rollback" : "none",
-		},
-		{ checkRollbackSafeWorktree: async () => Promise.resolve(guard) }
-	);
-
-	// Update filesChanged after actual apply
-	result.filesChanged = new Set(changes.map((c) => c.file)).size;
-	printInlineResults(result, verbose, project.rootDir);
-	if (outcome.delta) {
+	if (outcome?.delta && !json) {
 		logger.empty();
 		printVerificationResults(outcome.delta);
 		if (!outcome.delta.success) {
@@ -636,10 +680,12 @@ export async function inlineCommand(options: InlineOptions): Promise<void> {
 					? "\nType checking failed. Inline changes were rolled back."
 					: "\nType checking failed. Inline changes remain applied because rollback was disabled (--force on dirty tree)."
 			);
-			process.exit(1);
 		}
 	}
-	if (outcome.journalEntry) {
+	if (outcome?.journalEntry && !json) {
 		logger.info(`Journaled operation ${outcome.journalEntry.id}`);
+	}
+	if (!(result.isPureBarrel && (dryRun || success))) {
+		process.exit(1);
 	}
 }

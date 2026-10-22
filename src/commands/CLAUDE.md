@@ -148,6 +148,17 @@ DON'T add a mutating command without a dirty-worktree guard and conflict detecti
 
 Specific conflict boundaries:
 
+Inline's CLI and MCP use `isInlinePlanBlocked` before entering `runMutation`.
+Unforced apply refuses the entire conflicted plan, including otherwise safe
+rewrites; previews retain those rewrites and conflicts without writing or
+completing a journal entry. Force may apply supported rewrites, but unsupported
+forms remain conflicts and the result reports `partial` rather than success.
+Both CLI renderers return a failing status for that incomplete result.
+Resolve application, verification and journaling before selecting human or JSON
+output. Use `logger.json` once, keep progress off JSON stdout, and derive
+`filesChanged` from actual effects after rollback; `plannedFiles` describes the
+plan even when previewed or refused.
+
 Move preserves import binding names: nested local shadowing is not a new
 module-level conflict. Rename must retain its nested capture checks. Stream
 importer conflict checks instead of retaining every importer's syntax tree.
