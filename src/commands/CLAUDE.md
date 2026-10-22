@@ -241,6 +241,11 @@ barrel and route consumers to its subpath without adding an export at the root.
 
 Batch moves (`move --batch`) validate non-empty `{ source, target }[]`, build context/graph once, check the worktree once, apply sequentially, refresh graph state between moves, and wrap one closing verification gate. Later moves must see earlier importer edits. CLI manifest and MCP/library array surfaces must stay in parity.
 
+`MoveSession` owns batch virtual contents, successful path history and advancement
+after the shared move planner/applier succeeds. Keep injected contexts and overlay
+callbacks in-process. Delegate graph changes to `core/move-graph.ts`; command
+adapters must not maintain a second set of graph indexes or advance failed moves.
+
 ## Audit, tidy, and barrel
 
 `audit` computes fan-out, fan-in, `fanOut / (fanIn + fanOut)` instability, export surface, and DFS cycles. `buildAuditReport()` filters thresholds and accepts per-project graph metadata so configured `outDir` artifacts can be excluded and safely mapped back to authored sources. It is read-only.

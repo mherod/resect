@@ -1,6 +1,6 @@
 import path from "node:path";
 import { logger } from "../cli-logger.ts";
-import { buildDependencyGraph, type DependencyGraph } from "../core/graph.ts";
+import { buildDependencyGraph } from "../core/graph.ts";
 import {
 	type MutationPipelineDependencies,
 	runMutation,
@@ -11,13 +11,7 @@ import {
 	createRollbackCheckpoint,
 	tryRestoreRollback,
 } from "../core/rollback.ts";
-import { scanBarrelExports, scanModuleReferences } from "../core/scanner.ts";
-import { createSourceFileFromText } from "../core/source-file.ts";
-import {
-	applyStructuredEdits,
-	type StructuredEdit,
-	serializeStructuredEdits,
-} from "../core/text-changes.ts";
+import { serializeStructuredEdits } from "../core/text-changes.ts";
 import { loadTransformConfig } from "../core/transform-config.ts";
 import {
 	printVerificationResults,
@@ -26,13 +20,10 @@ import {
 import { filterToWorkspaceBoundary } from "../core/workspace.ts";
 import { getRuntime } from "../runtime/index.ts";
 import type { MoveResult } from "../types/move.ts";
-import type { MutatingCommandOptions, ProjectConfig } from "../types.ts";
+import type { MutatingCommandOptions } from "../types.ts";
 import { setupCommandContext } from "./command-context.ts";
-import {
-	type MoveModuleContext,
-	moveModule,
-	runPackageBuilds,
-} from "./move.ts";
+import { moveModule, runPackageBuilds } from "./move.ts";
+import { MoveSession } from "./move-session.ts";
 import type { ExtensionPolicy, PreferStrategy } from "./option-domains.ts";
 
 export interface MoveBatchEntry {
@@ -92,66 +83,6 @@ const DEFAULT_DEPENDENCIES: MoveBatchDependencies = {
 	runPackageBuilds,
 	setupCommandContext,
 };
-
-class BatchFileState {
-	private readonly dryRun: boolean;
-	private readonly overlay = new Map<string, string | null>();
-
-	constructor(dryRun: boolean) {
-		this.dryRun = dryRun;
-	}
-
-	readFile = async (filePath: string): Promise<string> => {
-		const normalized = normalizePath(filePath);
-		if (this.overlay.has(normalized)) {
-			const content = this.overlay.get(normalized);
-			if (content === null || content === undefined) {
-				throw new Error(`File does not exist: ${filePath}`);
-			}
-			return content;
-		}
-		return getRuntime().fs.readFile(filePath);
-	};
-
-	exists = async (filePath: string): Promise<boolean> => {
-		const normalized = normalizePath(filePath);
-		if (this.overlay.has(normalized)) {
-			return this.overlay.get(normalized) !== null;
-		}
-		return getRuntime().fs.exists(filePath);
-	};
-
-	getSourceFile: MoveModuleContext["getSourceFile"] = async (filePath) => {
-		if (!(await this.exists(filePath))) {
-			return undefined;
-		}
-		return createSourceFileFromText(filePath, await this.readFile(filePath));
-	};
-
-	async applyPreview(result: MoveResult): Promise<void> {
-		if (!(this.dryRun && result.success)) {
-			return;
-		}
-		const source = normalizePath(result.movedFile.from);
-		const target = normalizePath(result.movedFile.to);
-		this.overlay.set(target, await this.readFile(source));
-
-		const editsByFile = new Map<string, StructuredEdit[]>();
-		for (const edit of result.edits) {
-			const file = normalizePath(edit.file);
-			const edits = editsByFile.get(file) ?? [];
-			edits.push(edit);
-			editsByFile.set(file, edits);
-		}
-		for (const [file, edits] of editsByFile) {
-			this.overlay.set(
-				file,
-				applyStructuredEdits(await this.readFile(file), edits)
-			);
-		}
-		this.overlay.set(source, null);
-	}
-}
 
 export function validateMoveBatch(
 	value: unknown,
@@ -232,43 +163,32 @@ export async function moveBatchWithDependencies(
 	const graph = await dependencies.buildDependencyGraph(project, {
 		retainProgram: false,
 	});
-	const fileState = new BatchFileState(dryRun);
-	const moduleContext: MoveModuleContext = {
+	const session = new MoveSession(
+		project,
 		graph,
-		readFile: fileState.readFile,
-		exists: fileState.exists,
-		getSourceFile: fileState.getSourceFile,
-	};
+		dryRun,
+		dependencies.moveModule
+	);
 	const transformRules = options.transform
 		? await loadTransformConfig(project.rootDir, options.transform)
 		: [];
-	const successfulMoves: MoveBatchEntry[] = [];
 
 	const applyMoves = async (): Promise<MoveBatchItemResult[]> => {
 		const items: MoveBatchItemResult[] = [];
 		for (const move of moves) {
-			const result = await dependencies.moveModule(
-				move.source,
-				move.target,
-				project,
-				dryRun,
-				options.verbose ?? false,
+			const result = await session.move(move.source, move.target, {
+				verbose: options.verbose,
 				workspace,
 				force,
 				transformRules,
-				options.prefer,
-				options.extensions,
-				moduleContext
-			);
+				prefer: options.prefer,
+				extensions: options.extensions,
+			});
 			const item = { move, result };
 			items.push(item);
 			if (!result.success) {
 				continue;
 			}
-			successfulMoves.push(move);
-
-			await fileState.applyPreview(result);
-			await refreshBatchGraph(graph, result, project, fileState, dryRun);
 			if (
 				!dryRun &&
 				workspace &&
@@ -326,7 +246,7 @@ export async function moveBatchWithDependencies(
 					? rollbackMoveBatch(project.rootDir, attemptedApplied)
 					: Promise.resolve(false);
 			},
-			translateBeforeFile: createBatchPathTranslator(successfulMoves),
+			translateBeforeFile: session.translateBeforeFile,
 			verify: verify ? "rollback" : "none",
 		},
 		dependencies.pipeline
@@ -497,117 +417,6 @@ function validateWorkspaceBoundaries(
 					`Batch move path is outside workspace root: ${candidate}`
 				);
 			}
-		}
-	}
-}
-
-function createBatchPathTranslator(
-	moves: MoveBatchEntry[]
-): (file: string) => string {
-	return (file) => {
-		const destinations = new Map(
-			moves.map(({ source, target }) => [
-				normalizePath(source),
-				normalizePath(target),
-			])
-		);
-		let translated = normalizePath(file);
-		const visited = new Set<string>();
-		while (destinations.has(translated) && !visited.has(translated)) {
-			visited.add(translated);
-			translated = destinations.get(translated) as string;
-		}
-		return translated;
-	};
-}
-
-async function refreshBatchGraph(
-	graph: DependencyGraph,
-	result: MoveResult,
-	project: ProjectConfig,
-	fileState: BatchFileState,
-	dryRun: boolean
-): Promise<void> {
-	const source = normalizePath(result.movedFile.from);
-	const target = normalizePath(result.movedFile.to);
-	const movedRefs = graph.imports.get(source) ?? [];
-	graph.imports.delete(source);
-	graph.imports.set(
-		target,
-		movedRefs.map((reference) => ({ ...reference, sourceFile: target }))
-	);
-
-	for (const references of graph.imports.values()) {
-		for (const reference of references) {
-			if (normalizePath(reference.sourceFile) === source) {
-				reference.sourceFile = target;
-			}
-			if (normalizePath(reference.resolvedPath) === source) {
-				reference.resolvedPath = target;
-			}
-		}
-	}
-	for (const update of result.updatedReferences) {
-		const references = graph.imports.get(normalizePath(update.file)) ?? [];
-		const reference = references.find(
-			(candidate) =>
-				candidate.line === update.line &&
-				candidate.specifier === update.oldSpecifier
-		);
-		if (reference) {
-			reference.specifier = update.newSpecifier;
-		}
-	}
-
-	if (graph.barrelFiles.delete(source)) {
-		graph.barrelFiles.add(target);
-	}
-	const movedBarrelExports = graph.barrelReExports.get(source);
-	graph.barrelReExports.delete(source);
-	if (movedBarrelExports) {
-		graph.barrelReExports.set(target, movedBarrelExports);
-	}
-	for (const [barrel, exports] of graph.barrelReExports) {
-		graph.barrelReExports.set(
-			barrel,
-			exports.map((exported) =>
-				normalizePath(exported) === source ? target : exported
-			)
-		);
-	}
-
-	if (!dryRun) {
-		const changedFiles = new Set([
-			target,
-			...result.updatedReferences.map(({ file }) => normalizePath(file)),
-		]);
-		for (const file of changedFiles) {
-			const sourceFile = await fileState.getSourceFile(file);
-			if (!sourceFile) {
-				continue;
-			}
-			graph.imports.set(file, scanModuleReferences(sourceFile, project));
-			const barrelExports = scanBarrelExports(sourceFile, project);
-			if (barrelExports.length > 0) {
-				graph.barrelFiles.add(file);
-				graph.barrelReExports.set(
-					file,
-					barrelExports.map(({ resolvedPath }) => normalizePath(resolvedPath))
-				);
-			} else {
-				graph.barrelFiles.delete(file);
-				graph.barrelReExports.delete(file);
-			}
-		}
-	}
-
-	graph.importedBy.clear();
-	for (const references of graph.imports.values()) {
-		for (const reference of references) {
-			const resolved = normalizePath(reference.resolvedPath);
-			const importers = graph.importedBy.get(resolved) ?? [];
-			importers.push(reference);
-			graph.importedBy.set(resolved, importers);
 		}
 	}
 }

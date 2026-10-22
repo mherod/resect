@@ -192,6 +192,10 @@ package self-import that the destination's own configuration cannot resolve.
 
 `DependencyGraph.barrelReExports` tracks actual `export ... from` relationships. DON'T infer re-exports from `graph.imports`; regular barrel imports are not exports.
 
+`move-graph.ts` owns sequential relocation and refresh of forward references,
+reverse references and barrel relationships. Move sessions supply current source
+contents; keep graph mutations here and retain no additional TypeScript program.
+
 Bundler-owned stylesheet and SQL imports resolve as `asset`, never as TypeScript graph nodes. DO preserve the reported module specifier while stripping `?query` and `#fragment` suffixes only for extension classification and filesystem lookup. Missing relative assets must remain unresolvable; bare package assets remain external.
 
 ## Performance and caching
