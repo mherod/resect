@@ -14,6 +14,7 @@ import {
 	calculateNewSpecifier,
 	findCrossPackageImport,
 	findPackageForPath,
+	findSubpathBarrelForFile,
 	isCrossPackageMove,
 	normalizePath,
 	resolveModuleSpecifier,
@@ -689,6 +690,10 @@ export function findDestinationBarrel(
 	targetPath: string,
 	workspace: WorkspaceInfo
 ): string | null {
+	const subpathBarrel = findSubpathBarrelForFile(targetPath, workspace);
+	if (subpathBarrel) {
+		return subpathBarrel.barrelPath;
+	}
 	const targetPackage = findPackageForPath(targetPath, workspace);
 	if (!targetPackage) {
 		return null;

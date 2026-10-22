@@ -226,7 +226,7 @@ warnings versus fatal write failures, and await every write before verification.
 
 For cross-package moves:
 
-- prefer explicit package `exports`, then root barrels, wildcard exports, then package subpaths; core guide owns resolver order;
+- prefer explicit file exports, then covering subpath barrels, root barrels, wildcard exports, then package subpaths; core guide owns resolver order;
 - `addExportToDestinationBarrel()` inserts `export * from "./relative-path"` after the final export and skips an existing entry;
 - `updateBarrelExports()` removes source re-exports;
 - `updateFileReferences()` removes cross-package `export-all`, `export-from`, and `export-all-as` references;
@@ -234,6 +234,10 @@ For cross-package moves:
 - external/internal dependency additions update the destination package manifest and honor restricted-dependency policy.
 
 DON'T rewrite `export * from "./moved-file"` to a package barrel; it causes TS2308 duplicates. DON'T move an entire mixed import; it causes TS2305.
+
+DO use the selected destination barrel for conflict checks, composed edits and
+export insertion. A move into an exported folder must update that folder's
+barrel and route consumers to its subpath without adding an export at the root.
 
 Batch moves (`move --batch`) validate non-empty `{ source, target }[]`, build context/graph once, check the worktree once, apply sequentially, refresh graph state between moves, and wrap one closing verification gate. Later moves must see earlier importer edits. CLI manifest and MCP/library array surfaces must stay in parity.
 

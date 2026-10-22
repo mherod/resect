@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import path from "node:path";
-import { makeTempDir } from "./__test-helpers.ts";
+import { makeFixture, makeTempDir } from "./__test-helpers.ts";
 import { extractCommonCommand, runExtractCommon } from "./extract-common.ts";
 
 const baseFixtureDir = path.join(
@@ -67,6 +67,67 @@ function runExtractCommonCli(args: string[]): {
 		exitCode: proc.exitCode,
 	};
 }
+
+test("workspace extraction preserves the root export when it does not update a folder barrel (#263)", async () => {
+	const declaration = `function formatDate(input: Date): string {
+  const iso = input.toISOString();
+  const parts = iso.split("T");
+  return parts[0] ?? "";
+}
+`;
+	const rootBarrel = 'export { formatDate } from "./loaders/date";\n';
+	const folderBarrel = 'export const loader = "loading";\n';
+	const dir = await makeFixture(
+		"extract-existing-export",
+		{
+			"pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n',
+			"tsconfig.json": JSON.stringify({
+				compilerOptions: {
+					module: "ESNext",
+					moduleResolution: "Bundler",
+					types: [],
+				},
+				include: ["packages/**/*.ts"],
+			}),
+			"packages/a/package.json": JSON.stringify({
+				name: "@fixture/a",
+				exports: {
+					".": "./src/index.ts",
+					"./loaders": "./src/loaders/index.ts",
+				},
+			}),
+			"packages/a/src/tsconfig.json":
+				'{"extends":"../../../tsconfig.json","include":["**/*.ts"]}',
+			"packages/a/src/index.ts": rootBarrel,
+			"packages/a/src/loaders/index.ts": folderBarrel,
+			"packages/a/src/loaders/date.ts": `export ${declaration}`,
+			"packages/b/package.json": JSON.stringify({ name: "@fixture/b" }),
+			"packages/b/src/tsconfig.json":
+				'{"extends":"../../../tsconfig.json","include":["**/*.ts"]}',
+			"packages/b/src/date.ts": `${declaration}\nexport const formatted = formatDate(new Date());\n`,
+		},
+		{ outsideRepo: true }
+	);
+	const result = await runExtractCommon({
+		directory: dir,
+		threshold: 0.95,
+		workspace: true,
+		verify: false,
+	});
+	expect(result.success).toBe(true);
+	expect(result.totalRemoved).toBe(1);
+	const consumer = await Bun.file(
+		path.join(dir, "packages/b/src/date.ts")
+	).text();
+	expect(consumer).toContain('from "@fixture/a"');
+	expect(consumer).not.toContain('from "@fixture/a/loaders"');
+	expect(await Bun.file(path.join(dir, "packages/a/src/index.ts")).text()).toBe(
+		rootBarrel
+	);
+	expect(
+		await Bun.file(path.join(dir, "packages/a/src/loaders/index.ts")).text()
+	).toBe(folderBarrel);
+});
 
 describe("extract-common", () => {
 	test("dry-run reports duplicates without modifying files", async () => {

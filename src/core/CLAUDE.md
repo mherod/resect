@@ -167,9 +167,18 @@ async function fileExists(filePath: string): Promise<boolean> {
 `findCrossPackageImport()` resolves in this order:
 
 1. Explicit non-wildcard `exports` entry via `findExplicitSubpathExport()`; this must beat root barrels (#93).
-2. Existing destination barrel for a file under `src/` -> package name.
-3. Wildcard `exports` -> package plus subpath.
-4. Package name plus relative subpath.
+2. Deepest existing source barrel covered by a dedicated export target -> that subpath (#263).
+3. Existing root barrel for a file under `src/` -> package name.
+4. Wildcard `exports` -> package plus subpath.
+5. Package name plus relative subpath.
+
+DO share `findSubpathBarrelForFile()` between import and destination-barrel
+selection. Match export targets, including nested conditions, through
+`package-export-targets.ts`; export keys need not match source folders. Reject
+ambiguous barrel mappings and use directory containment, not string prefixes.
+Workspace discovery probes these declared barrel candidates and watches absent
+ones too, so additions and removals invalidate cached routes. A nested barrel
+alone never proves the package root exists.
 
 DON'T run the barrel short-circuit before explicit exports or use relative cross-package paths.
 

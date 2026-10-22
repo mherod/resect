@@ -6,6 +6,11 @@ import type { ImportBinding, ReferenceType } from "../types/graph.ts";
 import type { ProjectConfig } from "../types.ts";
 import { mapConcurrent } from "./concurrency.ts";
 import type { DependencyGraph } from "./graph.ts";
+import {
+	collectExportSpecifiers,
+	expandEntrypointCandidates,
+	PACKAGE_SOURCE_EXTENSIONS,
+} from "./package-export-targets.ts";
 import { readPackageJson } from "./package-json.ts";
 import { isWithinPath } from "./path-utils.ts";
 import { normalizePath } from "./resolver.ts";
@@ -17,16 +22,6 @@ import {
 	WORKSPACE_HYDRATION_CONCURRENCY,
 } from "./workspace.ts";
 
-const SOURCE_EXTENSIONS = [
-	".ts",
-	".tsx",
-	".js",
-	".jsx",
-	".mts",
-	".cts",
-	".mjs",
-	".cjs",
-];
 const RE_EXPORT_TYPES = new Set<ReferenceType>([
 	"export-from",
 	"export-all",
@@ -595,85 +590,11 @@ function collectBinSpecifiers(packageJson: PackageJsonEntrypoints): string[] {
 	];
 }
 
-function collectExportSpecifiers(value: unknown, specifiers: string[]): void {
-	if (typeof value === "string") {
-		specifiers.push(value);
-		return;
-	}
-	if (Array.isArray(value)) {
-		for (const item of value) {
-			collectExportSpecifiers(item, specifiers);
-		}
-		return;
-	}
-	if (value && typeof value === "object") {
-		for (const nested of Object.values(value)) {
-			collectExportSpecifiers(nested, specifiers);
-		}
-	}
-}
-
-function expandEntrypointCandidates(
-	packageRoot: string,
-	specifier: string,
-	sourceDir: string | undefined
-): string[] {
-	if (
-		specifier.includes("*") ||
-		path.isAbsolute(specifier) ||
-		/^[a-z]+:/i.test(specifier)
-	) {
-		return [];
-	}
-
-	const relativeSpecifier = specifier.replace(/^\.\//, "");
-	const candidates = new Set<string>();
-	addExtensionCandidates(
-		path.resolve(packageRoot, relativeSpecifier),
-		candidates
-	);
-
-	if (sourceDir) {
-		const parts = relativeSpecifier.split(/[\\/]/);
-		const [firstPart, ...rest] = parts;
-		if (firstPart && ["dist", "build", "lib"].includes(firstPart)) {
-			addExtensionCandidates(
-				path.resolve(packageRoot, sourceDir, ...rest),
-				candidates
-			);
-		}
-	}
-
-	return [...candidates];
-}
-
-function addExtensionCandidates(
-	basePath: string,
-	candidates: Set<string>
-): void {
-	candidates.add(basePath);
-	const declarationBase = basePath.replace(/\.d\.(?:c|m)?ts$/i, "");
-	const parsed = path.parse(declarationBase);
-	const withoutExtension = parsed.ext
-		? path.join(parsed.dir, parsed.name)
-		: declarationBase;
-
-	for (const extension of SOURCE_EXTENSIONS) {
-		candidates.add(`${withoutExtension}${extension}`);
-	}
-
-	if (!parsed.ext) {
-		for (const extension of SOURCE_EXTENSIONS) {
-			candidates.add(path.join(declarationBase, `index${extension}`));
-		}
-	}
-}
-
 function isSourceEntrypointSpecifier(specifier: string): boolean {
 	const extension = path.extname(specifier.replace(/\*+$/, "file"));
 	return (
 		extension === "" ||
-		SOURCE_EXTENSIONS.includes(extension) ||
+		PACKAGE_SOURCE_EXTENSIONS.includes(extension) ||
 		/\.d\.(?:c|m)?ts$/i.test(specifier)
 	);
 }

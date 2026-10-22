@@ -11,6 +11,8 @@ import {
 	TS_JS_VUE_EXTENSIONS,
 	VUE_EXTENSION,
 } from "./constants.ts";
+import { subpathBarrelCandidates } from "./package-export-targets.ts";
+import { isWithinPath } from "./path-utils.ts";
 import type { WorkspaceInfo, WorkspacePackage } from "./workspace.ts";
 
 export type ResolveResult =
@@ -742,6 +744,53 @@ export interface SubpathExportMatch {
 	specifier: string;
 }
 
+/** Select one existing, unambiguous public barrel that covers the destination. */
+export function findSubpathBarrelForFile(
+	targetPath: string,
+	workspace: WorkspaceInfo
+): { barrelPath: string; specifier: string } | null {
+	const resolved = resolvePackageSubpath(targetPath, workspace);
+	if (!resolved) {
+		return null;
+	}
+	const { pkg } = resolved;
+	const barrels = new Set(pkg.barrelFiles?.map(normalizePath));
+	let selected: { barrelPath: string; specifier: string } | null = null;
+	for (const [key, candidates] of subpathBarrelCandidates(
+		pkg.path,
+		pkg.exports,
+		pkg.srcDir
+	)) {
+		const matches = candidates.filter((candidate) =>
+			barrels.has(normalizePath(candidate))
+		);
+		const barrelPath = matches.length === 1 ? matches[0] : undefined;
+		if (
+			!barrelPath ||
+			normalizePath(barrelPath) === normalizePath(targetPath)
+		) {
+			continue;
+		}
+		const directory = path.dirname(barrelPath);
+		if (!isWithinPath(directory, targetPath)) {
+			continue;
+		}
+		const specifier = `${pkg.name}/${key.slice(2)}`;
+		const selectedDepth = selected
+			? path.dirname(selected.barrelPath).length
+			: -1;
+		if (
+			directory.length > selectedDepth ||
+			(directory.length === selectedDepth &&
+				selected &&
+				specifier < selected.specifier)
+		) {
+			selected = { barrelPath, specifier };
+		}
+	}
+	return selected;
+}
+
 /**
  * If `targetPath` is covered by a dedicated, non-wildcard `exports` sub-path
  * entry of its owning package, return that match. This is the signal behind
@@ -775,8 +824,8 @@ export function findSubpathExportForFile(
 /**
  * For cross-package moves, determine the best import specifier from the destination package.
  *
- * When addingToBarrel is true, assumes the file will be exported from the package's
- * main barrel (index.ts), so imports should use just the package name.
+ * When addingToBarrel is true, route through the most specific existing public
+ * barrel that the move will update, falling back to the package's root barrel.
  *
  * A dedicated sub-path `exports` entry that maps to the moved file takes
  * precedence over the root barrel, so consumers keep their sub-path convention.
@@ -801,11 +850,24 @@ export function findCrossPackageImport(
 		return explicitExport;
 	}
 
-	// If we're adding to the barrel AND the barrel exists, use the package name.
+	const subpathBarrel = addingToBarrel
+		? findSubpathBarrelForFile(targetPath, workspace)
+		: null;
+	if (subpathBarrel) {
+		return subpathBarrel.specifier;
+	}
+
+	// If we're adding to the root barrel AND it exists, use the package name.
 	// The export will be added to the barrel, so consumers can import from the package.
 	// Without a barrel file, we must fall through to subpath imports to avoid broken imports.
 	// If it's in the src directory, it will be exported from the barrel.
-	const hasBarrel = pkg.barrelFiles && pkg.barrelFiles.length > 0;
+	const hasBarrel = pkg.barrelFiles?.some((barrel) => {
+		const directory = path.dirname(barrel);
+		return (
+			directory === pkg.path ||
+			directory === path.join(pkg.path, pkg.srcDir ?? "src")
+		);
+	});
 	if (
 		addingToBarrel &&
 		hasBarrel &&

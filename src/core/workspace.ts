@@ -11,6 +11,7 @@ import {
 } from "./bounded-cache.ts";
 import { mapConcurrent } from "./concurrency.ts";
 import { EXPORT_STATEMENT_PATTERN } from "./constants.ts";
+import { subpathBarrelCandidates } from "./package-export-targets.ts";
 import { readPackageJson } from "./package-json.ts";
 import { fileMtimeMs, samePathSet } from "./path-utils.ts";
 
@@ -257,6 +258,15 @@ function workspaceSnapshotPaths(
 	]);
 	for (const pkg of workspace.packages) {
 		paths.add(pkg.packageJsonPath);
+		for (const candidates of subpathBarrelCandidates(
+			pkg.path,
+			pkg.exports,
+			pkg.srcDir
+		).values()) {
+			for (const candidate of candidates) {
+				paths.add(candidate);
+			}
+		}
 		for (const sourceDirectory of ["src", "lib", "source"]) {
 			paths.add(path.join(pkg.path, sourceDirectory));
 			for (const barrelName of ["index.ts", "index.tsx", "index.js"]) {
@@ -574,15 +584,24 @@ async function parsePackage(
 	);
 
 	// Find barrel files (index.ts/index.tsx that contain exports)
-	const barrelCandidates: string[] = [];
+	const barrelCandidates = new Set<string>();
 	for (const barrelName of ["index.ts", "index.tsx", "index.js"]) {
-		barrelCandidates.push(path.join(pkgDir, barrelName));
+		barrelCandidates.add(path.join(pkgDir, barrelName));
 		if (srcDir) {
-			barrelCandidates.push(path.join(pkgDir, srcDir, barrelName));
+			barrelCandidates.add(path.join(pkgDir, srcDir, barrelName));
+		}
+	}
+	for (const candidates of subpathBarrelCandidates(
+		pkgDir,
+		pkg.exports,
+		srcDir
+	).values()) {
+		for (const candidate of candidates) {
+			barrelCandidates.add(candidate);
 		}
 	}
 	const barrelResults = await mapConcurrent(
-		barrelCandidates,
+		[...barrelCandidates],
 		async (candidate) => ((await isBarrelFile(candidate)) ? candidate : null),
 		{
 			concurrency: WORKSPACE_HYDRATION_CONCURRENCY,

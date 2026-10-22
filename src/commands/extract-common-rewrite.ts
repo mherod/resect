@@ -25,7 +25,8 @@ function computeSpecifier(
 	keepExtension = false
 ): string {
 	if (ws && isCrossPackageMove(filePath, importTarget, ws)) {
-		const pkgImport = findCrossPackageImport(importTarget, ws);
+		// Extraction changes declarations and consumers, but does not add barrel exports.
+		const pkgImport = findCrossPackageImport(importTarget, ws, false);
 		if (pkgImport) {
 			return pkgImport;
 		}

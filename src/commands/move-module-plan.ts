@@ -308,15 +308,12 @@ export async function planMoveModule(
 	// Check for all conflicts (export name + binding) in a single call
 	if (movedFileExports.length > 0) {
 		let targetBarrelAst: ts.SourceFile | undefined;
-		if (workspace) {
-			const destBarrelPath = findDestinationBarrel(targetPath, workspace);
-			if (destBarrelPath && (await fileExists(destBarrelPath))) {
-				const barrelContent = await readFile(destBarrelPath);
-				targetBarrelAst = createSourceFileFromText(
-					destBarrelPath,
-					barrelContent
-				);
-			}
+		if (destinationBarrel && (await fileExists(destinationBarrel))) {
+			const barrelContent = await readFile(destinationBarrel);
+			targetBarrelAst = createSourceFileFromText(
+				destinationBarrel,
+				barrelContent
+			);
 		}
 
 		const exportNames = movedFileExports.map((e) => e.name);
@@ -572,7 +569,7 @@ export async function planMoveModule(
 
 	// For cross-package moves, add export to destination barrel
 	if (workspace && crossPackage) {
-		const destBarrelPath = findDestinationBarrel(targetPath, workspace);
+		const destBarrelPath = destinationBarrel;
 		if (destBarrelPath) {
 			try {
 				if (await fileExists(destBarrelPath)) {
