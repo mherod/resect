@@ -17,7 +17,9 @@ transform configuration trust and import preference, shared-context batch moves,
 filename-casing enforcement, framework-aware naming safety, source-focused read-only analysis,
 framework-dispatched entrypoint safety, package public API protection, framework-aware barrel
 findings, quiet CLI termination when a downstream stdout consumer closes normally, and interactive
-liveness for long file scans without changing machine-readable or non-interactive output. Other
+liveness for long file scans without changing machine-readable or non-interactive output. It also
+covers exported-subpath move routing, inline binding and execution safety, exception recovery,
+explicit MCP source selection, and deferred literal re-export provenance. Other
 behaviours remain outside this baseline until they receive source-backed scenarios. The host
 operating system controls filesystem and process access; resect adds validation, dirty-worktree
 protection, dry-run previews, path-scoped Git staging, pre-execution trust warnings, bounded local
@@ -55,6 +57,16 @@ operation history, and verification boundaries but has no account, tenant, or re
 | SRC-026 | Repository owner issue | 2026-08-09 | https://github.com/mherod/resect/issues/202 | Git-ignored files treated as non-source and excluded from architecture analysis |
 | SRC-027 | Repository owner issue | 2026-08-10 | https://github.com/mherod/resect/issues/207 | Package `bin` targets rooting module reachability without conferring public API |
 | SRC-028 | Repository owner issue | 2026-08-10 | https://github.com/mherod/resect/issues/208 | Duplicate-declaration verdicts distinguishing shared structure from shared identity |
+| SRC-029 | Repository owner issue | 2026-08-22 | https://github.com/mherod/resect/issues/251 | Literal re-export provenance without changing export membership |
+| SRC-030 | Repository owner issue | 2026-09-18 | https://github.com/mherod/resect/issues/252 | Inline alias identity and consumer bindings |
+| SRC-031 | Repository owner issue | 2026-09-18 | https://github.com/mherod/resect/issues/253 | Checkpoint recovery after apply or verifier exceptions |
+| SRC-032 | Repository owner issue | 2026-09-18 | https://github.com/mherod/resect/issues/254 | Inline JSON rendering after the selected execution mode |
+| SRC-033 | Repository owner issue | 2026-09-18 | https://github.com/mherod/resect/issues/255 | Unforced inline conflict refusal before writes |
+| SRC-034 | Repository owner issue | 2026-09-18 | https://github.com/mherod/resect/issues/256 | Ignored-file inclusion in MCP naming application |
+| SRC-035 | Repository owner issue | 2026-09-18 | https://github.com/mherod/resect/issues/257 | Exact named TypeScript configuration scope in MCP find |
+| SRC-036 | Repository owner issue | 2026-10-21 | https://github.com/mherod/resect/issues/262 | Valid destination-package self-imports after a move |
+| SRC-037 | Repository owner issue | 2026-10-21 | https://github.com/mherod/resect/issues/263 | Declared folder-barrel routing for cross-package moves |
+| SRC-038 | Repository owner issue | 2026-08-12 | https://github.com/mherod/resect/issues/222 | Deferred organise and mock-cleanup workspace scope |
 
 ## Delivery and Decision Register
 
@@ -67,6 +79,9 @@ operation history, and verification boundaries but has no account, tenant, or re
 | DR-005 | [Details](docs/requirements-details.md#dr-005) | DECIDED | V1 | SRC-004, SRC-007 | A published configuration contract changes precedence. |
 | DR-006 | [Details](docs/requirements-details.md#dr-006) | DECIDED | V1 | SRC-011 | A repository-owner decision introduces transactional history, another retention limit, or automatic journaling. |
 | DR-007 | [Details](docs/requirements-details.md#dr-007) | DECIDED | V1 | SRC-019 | A repository-owner decision makes index mutation opt-in or expands staging beyond moved paths. |
+| DR-008 | [Details](docs/requirements-details.md#dr-008) | DECIDED | V1 | [Details](docs/requirements-details.md#dr-008) | The owner changes the cited safety or scope outcomes. |
+| DR-009 | Literal re-export provenance preserves export membership. | DECIDED | LATER | SRC-029 | The owner schedules or changes the metadata contract. |
+| DR-010 | [Details](docs/requirements-details.md#dr-010) | OPEN | LATER | SRC-038 | The owner decides the workspace mutation and verification boundary. |
 
 ## User Roles
 
@@ -108,6 +123,10 @@ operation history, and verification boundaries but has no account, tenant, or re
 | LIFE-NA-002 — Subject and observer perspectives | N/A — no action targets another account or tenant | Decision: DR-002 |
 | Journal entry lifecycle | JOUR-001, JOUR-002, UNDO-001, UNDO-002, UNDO-005 | Entries move from recorded to retained, selected, restored, or unavailable. |
 | LIFE-NA-004 — Concurrency winner and loser outcomes | N/A — batch application is sequential and the journal is not a cross-process transaction log | Decision: DR-004, DR-006 |
+| Selected source scope | NAM-009, FIND-001 | Explicit MCP inputs retain the same scope through planning and execution. |
+| Inline and subpath exit | MOVE-006, MOVE-007, INLN-001, INLN-002 | Applied and preview results preserve binding identity and declared package boundaries. |
+| Conflict and exception recovery | INLN-003, ROLL-002, ROLL-003, ROLL-004 | Refusal precedes writes; enabled restoration waits for pending writes to settle. |
+| Export provenance observation | EXPT-001, EXPT-002, EXPT-003 | Deferred metadata describes authored re-exports without changing membership. |
 
 ## Cross-Cutting Applicability
 
@@ -862,13 +881,167 @@ operation history, and verification boundaries but has no account, tenant, or re
 **When** an Analysis Consumer runs similarity analysis
 **Then** the group is reported as a high similarity rather than an exact duplicate
 
+## Feature: Declared Package Subpaths
+
+### MOVE-006 — Refactor Consumer — Route a moved export through its declared folder barrel
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P1 | **Fidelity:** DRIFTED | **Sources:** SRC-037
+
+**Given** a destination folder has a barrel targeted by a declared package subpath export
+**When** a Refactor Consumer moves an exported module into that folder
+**Then** the destination folder barrel re-exports the moved symbol
+**And** affected direct and source-barrel consumers use the declared subpath
+**And** the package root gains no unrelated export
+
+> **Fidelity note — DRIFTED:** Expected: folder export. Observed: root export. Gap: target-aware routing. Evidence: src/core/updater.ts#findDestinationBarrel@3c4ddbe.
+
+### MOVE-007 — Refactor Consumer — Preserve valid imports within the destination package
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P1 | **Fidelity:** DRIFTED | **Sources:** SRC-036
+
+**Given** a moved module imports another exported subpath barrel of its destination package
+**When** a Refactor Consumer applies the move
+**Then** the rewritten import resolves under the destination package configuration
+**And** the import uses a relative path or a declared package export without inventing an unexported index subpath
+**And** its imported symbol and local binding are preserved
+
+> **Fidelity note — DRIFTED:** Expected: valid self-import. Observed: unexported index alias. Gap: destination scope. Evidence: src/commands/move-plan.ts#updateInternalImports@3c4ddbe.
+
+## Feature: Inline Execution Safety
+
+### INLN-001 — Refactor Consumer — Preserve aliased export identity when inlining
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P1 | **Fidelity:** DRIFTED | **Sources:** SRC-030
+
+**Given** a barrel re-exports a symbol under an alias and a consumer imports that alias with a local binding
+**When** a Refactor Consumer inlines the barrel
+**Then** the direct import names the original exported symbol
+**And** the consumer retains its local binding and type-only status
+
+> **Fidelity note — DRIFTED:** Expected: original symbol. Observed: alias retained. Gap: export identity. Evidence: src/commands/inline.ts#inlineBarrel@3c4ddbe.
+
+### INLN-002 — Operator — Render JSON after the requested inline execution
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P1 | **Fidelity:** DRIFTED | **Sources:** SRC-032
+
+**Given** an Operator selects JSON output for inline with an explicit apply or dry-run mode
+**When** the inline command completes
+**Then** apply mode has performed the permitted edits while dry-run has changed no files
+**And** standard output contains one machine-readable report describing the actual execution outcome
+
+> **Fidelity note — DRIFTED:** Expected: requested execution. Observed: JSON returns early. Gap: render ordering. Evidence: src/commands/inline.ts#inlineCommand@3c4ddbe.
+
+### INLN-003 — Refactor Consumer — Refuse unforced inline conflicts before mutation
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P1 | **Fidelity:** DRIFTED | **Sources:** SRC-033
+
+**Given** an inline plan contains conflicts and the consumer has not enabled force
+**When** a Refactor Consumer requests application
+**Then** the operation reports the conflicts and refuses application
+**And** no importer or barrel is changed and no successful mutation is journalled
+
+> **Fidelity note — DRIFTED:** Expected: no writes. Observed: MCP applies a subset. Gap: pre-write refusal. Evidence: src/mcp-tools/mutating.ts#inlineTool@3c4ddbe.
+
+## Feature: Exceptional Mutation Recovery
+
+### ROLL-002 — Refactor Consumer — Restore an enabled checkpoint after an apply exception
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P1 | **Fidelity:** DRIFTED | **Sources:** SRC-031
+
+**Given** a mutation has an enabled checkpoint and its apply stage throws after a write
+**When** the mutation fails
+**Then** the affected files are restored to their checkpoint state when restoration succeeds
+**And** the result preserves the original failure and reports whether restoration succeeded
+
+> **Fidelity note — DRIFTED:** Expected: checkpoint recovery. Observed: apply throws outward. Gap: exception handling. Evidence: src/core/mutation-pipeline.ts#runMutation@3c4ddbe.
+
+### ROLL-003 — Refactor Consumer — Restore an enabled checkpoint after closing verification throws
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P1 | **Fidelity:** DRIFTED | **Sources:** SRC-031
+
+**Given** a workspace mutation has applied edits with checkpoint recovery enabled
+**When** closing workspace verification throws
+**Then** the affected files are restored when restoration succeeds
+**And** the result reports the verification failure and the actual restoration outcome
+
+> **Fidelity note — DRIFTED:** Expected: recovery on verifier throw. Observed: exception escapes. Gap: closing boundary. Evidence: src/core/mutation-pipeline.ts#runMutation@3c4ddbe.
+
+### ROLL-004 — Refactor Consumer — Settle pending writes before restoring a checkpoint
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P1 | **Fidelity:** DRIFTED | **Sources:** SRC-031
+
+**Given** a failed mutation has other writes already in progress and checkpoint recovery is enabled
+**When** the mutation restores its checkpoint
+**Then** all already-started writes settle before restoration begins
+**And** no write from that mutation changes the restored files after recovery completes
+
+> **Fidelity note — DRIFTED:** Expected: settled writes. Observed: early rejection. Gap: recovery ordering. Evidence: src/core/concurrency.ts#mapConcurrent@3c4ddbe.
+
+## Feature: Explicit MCP Source Scope
+
+### NAM-009 — API Consumer — Preserve ignored-file inclusion when applying naming fixes
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P2 | **Fidelity:** DRIFTED | **Sources:** SRC-034
+
+**Given** an API Consumer explicitly includes ignored files in an MCP naming request
+**When** the consumer applies the previewed naming fixes against unchanged files
+**Then** application uses the same ignored-file inclusion as the preview
+**And** requests without that option retain the default ignored-file exclusion
+
+> **Fidelity note — DRIFTED:** Expected: preview scope. Observed: apply drops inclusion. Gap: option forwarding. Evidence: src/mcp-tools/read-only.ts#namingTool@3c4ddbe.
+
+### FIND-001 — API Consumer — Search the exact named TypeScript configuration
+
+**Delivery:** V1 | **Decision:** DECIDED | **Priority:** P2 | **Fidelity:** DRIFTED | **Sources:** SRC-035
+
+**Given** an API Consumer supplies an existing TypeScript configuration file to MCP find
+**When** the consumer searches for a symbol
+**Then** the search uses that exact configuration and its source membership
+**And** process-isolation sizing uses the same selected scope
+**And** supplying a directory retains directory-based project discovery
+
+> **Fidelity note — DRIFTED:** Expected: exact config scope. Observed: directory discovery. Gap: input normalization. Evidence: src/mcp-tools/read-only.ts#findTool@3c4ddbe.
+
+## Feature: Literal Re-export Provenance
+
+### EXPT-001 — API Consumer — Observe a direct re-export source
+
+**Delivery:** LATER | **Decision:** DECIDED | **Priority:** P2 | **Fidelity:** MISSING | **Sources:** SRC-029
+
+**Given** a source file directly re-exports named or namespace exports from a module specifier
+**When** an API Consumer scans the file's exports
+**Then** each corresponding export record includes an optional from field containing the authored module-specifier text
+**And** obtaining the provenance requires no module resolution or additional filesystem reads
+
+> **Fidelity note — MISSING:** Search performed: src/core/scanner.ts#scanExports and src/types/analysis.ts@3c4ddbe. No evidence found: literal source provenance.
+
+### EXPT-002 — API Consumer — Preserve export membership without invented provenance
+
+**Delivery:** LATER | **Decision:** DECIDED | **Priority:** P2 | **Fidelity:** VERIFIED | **Sources:** SRC-029
+
+**Given** a source contains local declarations, local export lists, imported-then-exported symbols, export assignments, or bare star re-exports
+**When** an API Consumer scans its exports
+**Then** provenance is absent for those forms
+**And** existing export names, types, type-only flags, lines, order, and membership remain unchanged
+
+### EXPT-003 — API Consumer — Retain provenance in structured export reports
+
+**Delivery:** LATER | **Decision:** DECIDED | **Priority:** P2 | **Fidelity:** MISSING | **Sources:** SRC-029
+
+**Given** an export scan has a direct re-export record with literal source provenance
+**When** an API Consumer receives analyze export, unused-export, public-API-export, or find export JSON results
+**Then** the corresponding result preserves that provenance field
+**And** existing human-readable output remains unchanged
+
+> **Fidelity note — MISSING:** Search performed: src/commands/analyze.ts and src/commands/find.ts projections@3c4ddbe. No evidence found: forwarded provenance.
+
 ## Validation Receipts
 
 | Layer | Status | Receipt | Current artifact |
 |---|---|---|---|
-| Structure | PASS | STRUCT-20261021-001 | [.requirements-status.json](.requirements-status.json) `validation.structure` |
-| Document quality | PASS | QUALITY-20261021-001 | [.requirements-status.json](.requirements-status.json) `validation.documentQuality` |
-| Implementation | PASS | IMPL-20261021-001 | [.requirements-status.json](.requirements-status.json) `validation.implementation` |
+| Structure | PASS | STRUCT-20261021-003 | [.requirements-status.json](.requirements-status.json) `validation.structure` |
+| Document quality | PASS | QUALITY-20261021-002 | [.requirements-status.json](.requirements-status.json) `validation.documentQuality` |
+| Implementation | FAIL | IMPL-20261021-002 | [.requirements-status.json](.requirements-status.json) `validation.implementation` |
 
 The canonical validator, manual product-contract review, and focused implementation audit are
 independent. Counts, hashes, source commit, validator identities, timestamps, warning dispositions, and

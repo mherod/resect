@@ -63,6 +63,32 @@ unless the consumer explicitly forces it.
 A successful move in a Git worktree unconditionally stages only its source and destination as a
 rename; previews and non-Git moves do not stage.
 
+## DR-008
+
+**Decision**
+
+Extend the original baseline with the owner-reported inline safety, exceptional recovery,
+MCP source-scope, and declared-package-subpath outcomes. Existing scenarios remain unchanged.
+The broader destination-project verification suggestion in SRC-036 remains a follow-up proposal;
+MOVE-007 requires valid rewritten imports without deciding a new workspace verification policy.
+Recovery clauses apply only when checkpoint recovery is enabled; deliberate leave-applied modes
+must still report failure truthfully and are not silently converted into rollback modes.
+
+**Sources**
+
+SRC-030, SRC-031, SRC-032, SRC-033, SRC-034, SRC-035, SRC-036, SRC-037
+
+## DR-010
+
+**Decision under review**
+
+The owner requested workspace support for organise and mock-cleanup alongside internal context
+consolidation in SRC-038. Preserve that product request as separate deferred work. The repository
+owner must decide cross-project report identity, partial-failure behavior, fix scope, and verification
+before mutation support becomes ready. Internal context consolidation alone does not approve those
+outcomes. Review when [the workspace-scope issue #267](https://github.com/mherod/resect/issues/267)
+records the owner's decision. #222 remains the durable source and parent link.
+
 ## Operator
 
 **Limitation and direct-attempt coverage**
@@ -72,6 +98,8 @@ attempts, no-op or framework-reserved naming moves, false delete advice for conv
 entrypoints, and unexpected stream failures are refused, excluded, or reported; MOVE-002, CFG-004,
 BATCH-005, UNDO-004, NAM-005, ANLY-003, ANLY-005, ANLY-006, CLI-002. Scan progress is suppressed for
 JSON and non-interactive stderr; CLI-004, CLI-005.
+Unforced inline conflicts precede all writes; INLN-003. Enabled exception recovery reports the
+original error and restoration outcome, settling pending writes first; ROLL-002, ROLL-003, ROLL-004.
 
 **Passive perspective**
 
@@ -82,6 +110,8 @@ quiet expected closed-pipe exits, and interactive scan progress are observable; 
 MOVE-005, BATCH-008, JOUR-001, UNDO-003, NAM-001, NAM-004, AUDIT-001, AUDIT-002, AUDIT-003,
 ANLY-001, ANLY-002, ANLY-003, ANLY-004, ANLY-005, ANLY-006, ANLY-007, ANLY-008, ANLY-009, ANLY-010,
 ANLY-011, ANLY-012, BARL-001, BARL-002, CLI-001, CLI-003, CLI-006, CLI-007.
+Declared subpath moves and inline output preserve package and execution semantics; MOVE-006,
+MOVE-007, INLN-001, INLN-002.
 
 ## API Consumer
 
@@ -94,6 +124,8 @@ results.
 
 Invalid or empty batch input and unsafe undo attempts are rejected before mutation; BATCH-007,
 UNDO-004.
+Inline conflicts and exceptional mutation recovery share the refactor boundary; INLN-003,
+ROLL-002, ROLL-003, ROLL-004. Explicit MCP source selection survives execution; NAM-009, FIND-001.
 
 **Passive perspective**
 
@@ -103,6 +135,8 @@ exclusions, package public API and unknown-usage classifications, and framework-
 findings are structured; JOUR-001, UNDO-003, BATCH-006, NAM-001, NAM-004, AUDIT-004, ANLY-001,
 ANLY-002, ANLY-003, ANLY-004, ANLY-005, ANLY-006, ANLY-007, ANLY-008, ANLY-009, ANLY-010, ANLY-011,
 ANLY-012, BARL-001, BARL-002.
+Move and inline outcomes preserve binding identity; MOVE-006, MOVE-007, INLN-001. Deferred
+literal re-export metadata remains observable without changing membership; EXPT-001 through EXPT-003.
 
 ## Entry
 
@@ -153,7 +187,7 @@ and executable-config trust must be visible; DR-003, DR-006, DR-007.
 **Scenario IDs**
 
 CFG-001, CFG-005, NAM-004, AUDIT-001, ANLY-001, ANLY-003, ANLY-004, ANLY-005, ANLY-006, ANLY-007,
-ANLY-008, ANLY-009, ANLY-010, ANLY-011, ANLY-012, BARL-001
+ANLY-008, ANLY-009, ANLY-010, ANLY-011, ANLY-012, BARL-001, FIND-001, EXPT-001, EXPT-002, EXPT-003
 
 **Reason or decision**
 
@@ -166,12 +200,15 @@ Errors, degraded states, retry, and recovery
 
 **Scenario IDs**
 
-UNDO-004, UNDO-005, MOVE-002, TIDY-001, TIDY-002, ROLL-001, BATCH-004, CLI-001, CLI-002
+UNDO-004, UNDO-005, MOVE-002, TIDY-001, TIDY-002, ROLL-001, BATCH-004, CLI-001, CLI-002,
+INLN-003, ROLL-002, ROLL-003, ROLL-004
 
 **Reason or decision**
 
 Mutating and reversal failures report truthfully, while the CLI distinguishes an expected closed
 stdout pipe from unexpected stream failures.
+Inline conflicts are refused before mutation. Recovery-enabled apply and closing-verifier
+exceptions preserve the original failure and actual restoration outcome after pending writes settle.
 
 ## concern-11
 

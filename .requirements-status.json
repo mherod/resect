@@ -2,9 +2,9 @@
   "schemaVersion": 2,
   "projectId": "mherod/resect",
   "requirementsFile": "REQUIREMENTS.md",
-  "requirementsSha256": "3acb61623315658a837ed8c1e9e29693ceef3f014f6c6314e9a153e4fdb77f01",
-  "sourceCommit": "7b7687cacb33c5e45c7998a08e5526e40f1eae23",
-  "generatedAt": "2026-10-21T12:47:08Z",
+  "requirementsSha256": "a702da9adec7a04f8e0858da9df1278df9816e9f90a286610bf08e1fa1823cab",
+  "sourceCommit": "3c4ddbe0de1f5802e4e801bed1e13ba3ea2d5f9e",
+  "generatedAt": "2026-10-21T23:34:24Z",
   "validator": {
     "name": "generate-requirements",
     "version": "2.0.0",
@@ -13,103 +13,103 @@
   "validation": {
     "structure": {
       "status": "PASS",
-      "receiptId": "STRUCT-20261021-001",
+      "receiptId": "STRUCT-20261021-003",
       "validator": "validate-bdd",
       "validatorVersion": "2.0.0",
-      "requirementsSha256": "3acb61623315658a837ed8c1e9e29693ceef3f014f6c6314e9a153e4fdb77f01",
-      "sourceCommit": "7b7687cacb33c5e45c7998a08e5526e40f1eae23",
-      "generatedAt": "2026-10-21T12:47:08Z",
+      "requirementsSha256": "a702da9adec7a04f8e0858da9df1278df9816e9f90a286610bf08e1fa1823cab",
+      "sourceCommit": "3c4ddbe0de1f5802e4e801bed1e13ba3ea2d5f9e",
+      "generatedAt": "2026-10-21T23:34:24Z",
       "counts": {
-        "checked": 82,
+        "checked": 95,
         "errors": 0,
-        "warnings": 0
+        "warnings": 1
       },
       "notes": [
-        "Canonical structure, 82 stable scenarios, exact four-ID V1 critical path and zero physical-line warnings verified."
+        "Exact canonical assertion and validate-bdd with the supplied status log pass. No physical-line override was used.",
+        "Critical-path listed/computed sets both contain MOVE-002, TIDY-001, TIDY-002, BATCH-004; no OPEN V1 P0 blocker."
       ]
     },
     "documentQuality": {
       "status": "PASS",
-      "receiptId": "QUALITY-20261021-001",
-      "validator": "generate-requirements-manual-review",
+      "receiptId": "QUALITY-20261021-002",
+      "validator": "verify-requirements-document-quality",
       "validatorVersion": "2.0.0",
-      "requirementsSha256": "3acb61623315658a837ed8c1e9e29693ceef3f014f6c6314e9a153e4fdb77f01",
-      "sourceCommit": "7b7687cacb33c5e45c7998a08e5526e40f1eae23",
-      "generatedAt": "2026-10-21T12:47:08Z",
+      "requirementsSha256": "a702da9adec7a04f8e0858da9df1278df9816e9f90a286610bf08e1fa1823cab",
+      "sourceCommit": "3c4ddbe0de1f5802e4e801bed1e13ba3ea2d5f9e",
+      "generatedAt": "2026-10-21T23:34:24Z",
       "counts": {
-        "checked": 82,
+        "checked": 95,
         "errors": 0,
-        "warnings": 0
+        "warnings": 1
       },
       "notes": [
-        "Reviewed all 82 scenario clauses: one trigger and one observation/transaction boundary per scenario, explicit outcomes, stable actors and sources, and unchanged Delivery/Decision/Priority/Fidelity metadata.",
-        "Preserved the entire feature/scenario region byte-for-byte. All 27 relocated register values were compared after whitespace normalization, with each owning cell linked to docs/requirements-details.md.",
-        "Reviewed actor/group expansion, limitations, lifecycle and cross-cutting rows through their linked register details. Local CLI/MCP/library scope retains the existing sourced N/A decisions; no permission or product boundary was weakened.",
-        "All physical lines are at most 200 Unicode code points. The four V1 DECIDED P0 IDs remain MOVE-002, TIDY-001, TIDY-002 and BATCH-004; no open decisions, atomicity waivers, priority-skew or preamble warnings."
+        "Read every scenario and linked register detail. The original 82 scenario blocks are byte-equivalent; all 13 additions have resolved product sources, named actors, one trigger and at most three related outcomes.",
+        "The four fidelity-note locator defects from pass one are repaired; owning files and symbols resolve at the audited revision.",
+        "LATER/P2 warning accepted: three atomic parts of one optional additive metadata request share source-backed P2 priority. Do not invent priority changes solely to balance distribution.",
+        "Source-selection default/explicit alternatives express one scope-preservation boundary per invocation. Recovery state and truthful outcome belong to the same recovery transaction; pending-writer ordering is separately expressed by ROLL-004.",
+        "Generation applied only the independently proposed EXPT-002 fidelity correction and receipt status table; its ID, clauses, sources and other axes are unchanged."
       ]
     },
     "implementation": {
-      "status": "PASS",
-      "receiptId": "IMPL-20261021-001",
-      "validator": "bun-test-plus-clause-audit",
-      "validatorVersion": "1.4.3+generate-requirements-2.0.0",
-      "requirementsSha256": "3acb61623315658a837ed8c1e9e29693ceef3f014f6c6314e9a153e4fdb77f01",
-      "sourceCommit": "7b7687cacb33c5e45c7998a08e5526e40f1eae23",
-      "generatedAt": "2026-10-21T12:47:08Z",
+      "status": "FAIL",
+      "receiptId": "IMPL-20261021-002",
+      "validator": "verify-requirements-static-clause-audit",
+      "validatorVersion": "2.0.0",
+      "requirementsSha256": "a702da9adec7a04f8e0858da9df1278df9816e9f90a286610bf08e1fa1823cab",
+      "sourceCommit": "3c4ddbe0de1f5802e4e801bed1e13ba3ea2d5f9e",
+      "generatedAt": "2026-10-21T23:34:24Z",
       "counts": {
-        "checked": 82,
-        "errors": 0,
-        "warnings": 0
+        "checked": 95,
+        "errors": 12,
+        "warnings": 1
       },
       "notes": [
-        "Revalidated all 82 IDs at source commit 7b7687cacb33c5e45c7998a08e5526e40f1eae23, retaining the prior full clause audit and reviewing the complete implementation delta. Current code and test locators below provide clause evidence instead of new BDD anchors; all IDs VERIFIED, zero regressions or soft-only boundaries.",
-        "Final local full suite: 1336 pass, 0 fail, 4746 assertions, 107 files, 61.43 seconds. Typecheck, lint, compiled CLI/MCP builds, library build and package-size validation pass. ESLint was rerun after the suite because its concurrent attempt encountered a deleted temporary test fixture.",
-        "Prior-source GitHub CI https://github.com/mherod/resect/actions/runs/39598412339 passed. Final-head remote CI is verified separately by the PR workflow; this receipt does not claim that prior run validates subsequent commits.",
-        "MOVE-001 through MOVE-005: src/commands/move.ts#moveCommand and src/commands/move-apply.ts#applyMoveModulePlan; src/commands/move.test.ts:99,140,171,246,269 cover destination/importer edits, fatal writes, recoverable warnings, import-equals and path-scoped Git staging.",
-        "REN-001: src/commands/rename.ts#planRenameSymbol; src/commands/rename.test.ts:177 covers the export-equals declaration and assignment.",
-        "TIDY-001 through TIDY-002: src/core/mutation-pipeline.ts#runMutation and src/commands/tidy-apply.ts; src/commands/tidy.test.ts:400,462 cover forced-dirty truthful failure and thrown closing verification rollback.",
-        "ROLL-001: src/core/rollback.ts#createFileContentsRollbackStrategy; src/core/rollback.test.ts:20 covers restoring existing contents and removing newly created files.",
-        "JOUR-001 through JOUR-002: src/core/journal.ts and src/core/mutation-pipeline.ts#runMutation; src/commands/journal-integration.test.ts:47,87,112,149 and src/core/journal.test.ts:48,116 cover all journalled mutation kinds, metadata and newest-20 retention.",
-        "UNDO-001 through UNDO-005: src/core/journal.ts#undoJournalOperation and src/commands/undo.ts; src/core/journal.test.ts:48,85,151,173 and src/commands/undo.test.ts:50,85 cover latest/named restoration, verification, unchanged previews, conflicts and missing-entry refusal.",
-        "CFG-001 through CFG-006: src/core/project-config.ts and src/commands/config-defaults.ts; src/core/project-config.test.ts:12,45,68,77, src/commands/config-defaults.test.ts:8,28,59 and src/commands/discover.test.ts:27 cover nearest discovery, path bases, precedence, validation, inspection and absent config.",
-        "TRNS-001 through TRNS-003: src/commands/move-module-plan.ts and src/core/transform-config.ts; src/commands/move-transform.test.ts:166,187 and src/core/transform-config.test.ts:128 cover alias preference, relative default and warning before execution.",
-        "EXTN-001 through EXTN-005: src/core/resolver.ts and src/commands/move.ts; src/core/resolver.test.ts:185,285,305,414,420 and src/commands/move.test.ts:554,589,623,664 cover preserved/explicit target extensions, style composition, warning and invalid policy refusal.",
-        "BATCH-001 through BATCH-008: src/commands/move-batch.ts#moveBatchWithDependencies and src/mcp-tools/mutating.ts#moveTool; src/commands/move-batch.test.ts:81,91,109,137,156,175,343 and src/mcp-schema-parity.test.ts:178,221 cover previews, ordered shared context, importer refresh, partial failure, schema refusal, MCP defaults and Git staging.",
-        "NAM-001 through NAM-008: src/commands/naming.ts and src/core/framework-conventions.ts; src/commands/naming.test.ts:209,287,345,387,532,667,699,875,892,935,968 cover explicit casing, fixes/importers, case-only moves, threshold warning, valid framework locations, no-ops and convention inference exclusions.",
-        "AUDIT-001 through AUDIT-010: src/commands/audit.ts and src/core/non-source-files.ts; src/commands/audit.test.ts:147,238,368,568,590,612 and src/commands/unused.test.ts:1579,1593 cover output boundaries, unique/ambiguous source mapping, structured exclusions, ignored-file policy, fail-open status and ignored consumer edges.",
-        "ANLY-001 through ANLY-014: src/core/export-liveness.ts#evaluateExportLiveness, src/core/package-entrypoints.ts and src/core/resolver.ts; src/commands/unused.test.ts:55,156,683,741,795,834,866,928,1440,1470,1496; src/commands/analyze.test.ts:14,117,163,206,240; src/core/resolver.test.ts:1121,1145,1184,1208 and src/mcp-entrypoints.test.ts:31 cover generated/convention exclusions, public/bin distinctions, unknown traces, assets, dead chains, live sharing, cycles and surface parity.",
-        "BARL-001 through BARL-002: src/commands/barrel.ts; src/commands/barrel.test.ts:121,234,294 cover ordinary same-stem controls, protected framework unused verdicts, retained inventory and structured surface parity.",
-        "CLI-001 through CLI-007: src/cli-stream-errors.ts, src/cli-logger.ts and src/commands/registry.ts; src/cli.test.ts:161,172,240,278,313, src/cli-stream-errors.test.ts:44,54,62, src/cli-logger.test.ts:72,97,103 and audit/unused/tidy progress forwarding tests cover quiet expected EPIPE, visible unexpected errors, throttled stderr progress, JSON/non-TTY suppression and report formatting.",
-        "SIM-001 through SIM-003: src/core/similarity.ts#findSimilarGroups; src/core/similarity.test.ts:471,1822,1854,1895 and src/core/similarity-pruning.test.ts cover genuine small/large duplicates, shared-shape suppression, honest high/exact buckets and exhaustive candidate parity.",
-        "Worker/process parity, clean-exit/error/cancellation handling, incremental graph invalidation, missing-type verification preflight, and bounded similarity-cache tests also passed. VS Code performance measurements remain in docs/vscode-performance-plan.md and were not rerun for this documentation repair.",
-        "Final delta audit: src/mcp-tools/isolated-read-only.ts now sizes resolved ancestor/explicit projects and deduplicated workspace sources; all five read-only adapters await this decision. src/mcp-tools/isolated-read-only.test.ts proves small-project retention and exact process/in-process report parity, including workspace audit/unused. src/core/graph-incremental.test.ts gives each invalidating edit a distinct timestamp. Analysis and output clauses retain their prior behavior and all corresponding tests pass.",
-        "Report-only audit fingerprint matched before/after: branch/HEAD, binary worktree/index diffs, untracked path/type/content manifest and both artifact hashes. Receipts were persisted only after returning to the authorized generation step."
+        "Independently traced all 55 clauses of 13 added scenarios at source commit 3c4ddbe0de1f5802e4e801bed1e13ba3ea2d5f9e: 10 DRIFTED, 2 MISSING, 1 VERIFIED.",
+        "EXPT-002 is VERIFIED because current scanExports already omits provenance for local/assignment/star cases and preserves existing membership, names, types, type-only flags, lines and order. Remove its MISSING note; the absent additive metadata in EXPT-001/003 does not make this negative contract missing.",
+        "The prior 82-scenario receipt IMPL-20261021-001 at 7b7687cacb33c5e45c7998a08e5526e40f1eae23 is retained as historical evidence. Its full suite recorded 1336 passing tests and no failures; this audit ran no application or tests.",
+        "Reviewed the complete 7b7687 to 3c4ddbe delta: lazy Bun.Glob access and a Node-import regression test, package release/packaging/dependency metadata, and the prior receipt. No old scenario semantics were changed or evidence removed.",
+        "Current source shows 12 unsatisfied additions; no regression from a previously VERIFIED stable ID and no UI-only boundary were found. This is static source evidence, not fresh runtime or remote CI acceptance.",
+        "Complete detached-checkout fingerprint and requirements/status/details hashes match before and after. No project-file delta was introduced.",
+        "Historical 82-ID receipt and per-feature locators: https://github.com/mherod/resect/blob/3c4ddbe0de1f5802e4e801bed1e13ba3ea2d5f9e/.requirements-status.json. No earlier test run is represented as newly executed.",
+        "MOVE-006: DRIFTED. src/core/workspace.ts:32-33; src/core/resolver.ts:660-675; src/commands/move-module-plan.ts:118,255-278,573-596; src/core/updater.ts:688-708; src/commands/move-module-plan.ts:575-595; src/core/updater.ts:119-122,155-158,208-220; src/core/resolver.ts:784-815; src/core/updater.ts:704-708,741; src/commands/move-module-plan.ts:573-595",
+        "MOVE-007: DRIFTED. src/commands/move-plan.ts:22-58; src/core/resolver.ts:436-490; src/commands/move-module-plan.ts:464-480; src/commands/move-plan.ts:22-58; src/core/resolver.ts:298-313,335-386; src/core/resolver.ts:470-489,298-313; src/commands/move-plan.ts:64-83; src/commands/move-plan.ts:85-106; src/core/updater.ts:487-530",
+        "INLN-001: DRIFTED. src/commands/inline.ts:89-100; src/commands/inline.test.ts:240-257; src/commands/inline.ts:184,552-555; src/mcp-tools/mutating.ts:600-603; src/commands/inline.ts:89-100,426-432; src/commands/alias.ts:917-955; src/commands/inline.ts:417-432; src/commands/alias.ts:941-949",
+        "INLN-002: DRIFTED. src/commands/inline.ts:508-520; src/commands/command-spec.ts:708-714; src/commands/inline.ts:508-574; src/commands/inline.ts:557-574,592-625; src/commands/inline.ts:545-550,557-574; src/cli-logger.ts:30-31",
+        "INLN-003: DRIFTED. src/commands/inline.ts:273-308,398-415; src/mcp-tools/mutating.ts:600-603; src/mcp-tools/mutating.ts:576-607; src/commands/inline.ts:583-589; src/mcp-tools/mutating.ts:606-630,636-666; src/mcp-tools/mutating.ts:606-630; src/core/mutation-pipeline.ts:198-207",
+        "ROLL-002: DRIFTED. src/commands/extract-component-apply.ts:585-611; src/core/mutation-pipeline.ts:143-167; src/core/mutation-pipeline.ts:169-174; src/core/verify.ts:158-159; src/core/mutation-pipeline.ts:169-196; src/commands/extract-component-apply.ts:606-611; src/core/mutation-pipeline.ts:169-174,209-218",
+        "ROLL-003: DRIFTED. src/core/verify.ts:208-220; src/core/mutation-pipeline.ts:169-196; src/core/verify.ts:218-220; src/core/verify.ts:220; src/core/mutation-pipeline.ts:169-196; src/core/verify.ts:218-220; src/core/mutation-pipeline.ts:209-218",
+        "ROLL-004: DRIFTED. src/commands/extract-component-apply.ts:589-611; src/core/concurrency.ts:22-48; src/core/mutation-pipeline.ts:183-193; src/commands/extract-component-apply.ts:606-611; src/core/concurrency.ts:29-35,43-48; src/core/concurrency.ts:22-48; src/commands/extract-component-apply.ts:596-598",
+        "NAM-009: DRIFTED. src/mcp-tools/register-hygiene.ts:200-233; src/mcp-tools/read-only.ts:563-575; src/mcp-tools/read-only.ts:577-601; src/commands/naming.ts:804-818; src/mcp-tools/read-only.ts:590-613; src/commands/naming.ts:703-717",
+        "FIND-001: DRIFTED. src/mcp-tools/register-analysis.ts:55-59; src/mcp-tools/register-analysis.ts:68-71; src/mcp-tools/read-only.ts:64-84; src/mcp-tools/read-only.ts:73-81; src/core/tsconfig-discovery.ts:303-320; src/mcp-tools/isolated-read-only.ts:57-76; src/mcp-tools/read-only.ts:73-84; src/mcp-tools/isolated-read-only.test.ts:34-40",
+        "EXPT-001: MISSING. src/core/scanner.ts:906-940; src/index.ts:265,328; src/core/scanner.ts:797-945; src/core/scanner.ts:916-940; src/types/analysis.ts:35-40",
+        "EXPT-002: VERIFIED. src/core/scanner.ts:802-940; src/index.ts:265; src/core/scanner.ts:797-945; src/core/scanner.ts:809-940; src/types/analysis.ts:35-40; src/core/scanner.test.ts:158-173; src/core/scanner.ts:797-945; src/core/scanner.test.ts:145-173",
+        "EXPT-003: MISSING. src/types/analysis.ts:35-40; src/core/scanner.ts:916-940; src/commands/analyze.ts:44-90; src/commands/find.ts:45-69; src/mcp-tools/read-only.ts:83; src/commands/analyze.ts:50-55,78-90; src/commands/find.ts:62-68; src/commands/analyze.ts:284-307,372-375,419-426; src/commands/find.ts:292-338"
       ]
     }
   },
   "metrics": {
-    "totalScenarios": 82,
+    "totalScenarios": 95,
     "byDelivery": {
-      "V1": 82,
+      "V1": 92,
       "V2": 0,
-      "LATER": 0,
+      "LATER": 3,
       "UNSLICED": 0
     },
     "byDecision": {
-      "DECIDED": 82,
+      "DECIDED": 95,
       "OPEN": 0
     },
     "byPriority": {
       "P0": 4,
-      "P1": 40,
-      "P2": 38,
+      "P1": 48,
+      "P2": 43,
       "P3": 0
     },
     "priorityByDelivery": {
       "V1": {
         "P0": 4,
-        "P1": 40,
-        "P2": 38,
+        "P1": 48,
+        "P2": 40,
         "P3": 0
       },
       "V2": {
@@ -121,7 +121,7 @@
       "LATER": {
         "P0": 0,
         "P1": 0,
-        "P2": 0,
+        "P2": 3,
         "P3": 0
       },
       "UNSLICED": {
@@ -132,16 +132,16 @@
       }
     },
     "byFidelity": {
-      "VERIFIED": 82,
-      "DRIFTED": 0,
-      "MISSING": 0,
+      "VERIFIED": 83,
+      "DRIFTED": 10,
+      "MISSING": 2,
       "UNTESTABLE": 0
     },
     "coverage": {
       "v1Decided": {
-        "eligible": 82,
+        "eligible": 92,
         "verified": 82,
-        "percentage": 100
+        "percentage": 89.1
       },
       "v1LaunchCritical": {
         "eligible": 4,
@@ -182,12 +182,22 @@
     "fidelityNoteMismatchIds": [],
     "orphanAnchorIds": [],
     "preamble": {
-      "linesBeforeFirstScenario": 133,
-      "percentageBeforeFirstScenario": 15.2,
+      "linesBeforeFirstScenario": 152,
+      "percentageBeforeFirstScenario": 14.5,
       "warning": false,
       "disposition": null
     },
-    "prioritySkew": []
+    "prioritySkew": [
+      {
+        "delivery": "LATER",
+        "tier": "P2",
+        "count": 3,
+        "total": 3,
+        "percentage": 100,
+        "warning": true,
+        "disposition": "The three deferred scenarios describe one optional additive metadata request; none changes safety or launch eligibility. Keep their source-backed P2 priority instead of manufacturing a balanced distribution."
+      }
+    ]
   },
   "regressions": [],
   "retiredScenarioIds": []
