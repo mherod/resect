@@ -53,6 +53,23 @@ export interface ProjectFixture {
 	cleanup: () => Promise<void>;
 }
 
+/** Call at test-file scope to register cleanup for that file's projects. */
+export function createProjectFixtures(): (
+	options: ProjectFixtureOptions
+) => Promise<ProjectFixture> {
+	const projects: ProjectFixture[] = [];
+	afterAll(async () => {
+		for (const project of projects) {
+			await project.cleanup();
+		}
+	});
+	return async (options) => {
+		const project = await makeProject(options);
+		projects.push(project);
+		return project;
+	};
+}
+
 interface FixtureOptions {
 	/** When true, writes the strict preset unless one is provided in files. */
 	tsconfig?: boolean | TsconfigPreset | Record<string, unknown>;

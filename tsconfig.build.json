@@ -8,5 +8,10 @@
     "rootDir": "src"
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.test.ts", "node_modules"]
+  "exclude": [
+    "src/**/*.test.ts",
+    "node_modules",
+    "**/__fixtures__",
+    "**/__tmp_*"
+  ]
 }
