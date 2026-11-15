@@ -4,7 +4,10 @@ import { resolveAnalysisEntrypoint } from "../core/analysis-entrypoint.ts";
 import { runAnalysisJobs } from "../core/analysis-workers.ts";
 import { resolveTsConfig } from "../core/project.ts";
 import { isLargeProject } from "../core/project-scale.ts";
-import { discoverProject } from "../core/tsconfig-discovery.ts";
+import {
+	discoverProject,
+	discoverProjectInput,
+} from "../core/tsconfig-discovery.ts";
 import { discoverWorkspace } from "../core/workspace.ts";
 import { bunRuntime, getRuntime } from "../runtime/index.ts";
 import type {
@@ -45,7 +48,9 @@ export async function shouldIsolateReadOnlyTool(
 	);
 }
 
-function jobProjectDirectory(job: ReadOnlyWorkerJob): string | undefined {
+function jobProjectDirectory(
+	job: Exclude<ReadOnlyWorkerJob, { kind: "find" }>
+): string | undefined {
 	if (job.kind === "analyze") {
 		const [file, options] = job.args;
 		const tsconfig = resolveTsConfig(
@@ -53,9 +58,6 @@ function jobProjectDirectory(job: ReadOnlyWorkerJob): string | undefined {
 			path.dirname(path.resolve(file))
 		);
 		return tsconfig ? path.dirname(tsconfig) : undefined;
-	}
-	if (job.kind === "find") {
-		return path.resolve(job.args[1]);
 	}
 	// The report directory can be below (or outside) the project being loaded.
 	const [directory, options] = job.args;
@@ -69,6 +71,12 @@ function jobProjectDirectory(job: ReadOnlyWorkerJob): string | undefined {
 
 async function countJobSourceFiles(job: ReadOnlyWorkerJob): Promise<number> {
 	try {
+		if (job.kind === "find") {
+			// Size exactly the scope findTool searches: a named config's members,
+			// never its siblings. Unresolved input reports in-process (#257).
+			const scope = discoverProjectInput(job.args[1]);
+			return "discovery" in scope ? scope.discovery.fileOwnership.size : 0;
+		}
 		const directory = jobProjectDirectory(job);
 		if (!directory) {
 			return 0;

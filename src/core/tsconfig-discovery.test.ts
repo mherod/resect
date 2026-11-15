@@ -5,6 +5,7 @@ import path from "node:path";
 import { initializeGitRepository } from "../commands/__test-helpers.ts";
 import {
 	discoverProject,
+	discoverProjectInput,
 	type ProjectDiscovery,
 	setDiscoveryReglobThrottleMs,
 } from "./tsconfig-discovery";
@@ -322,6 +323,79 @@ describe("discoverProject cache", () => {
 					.find((c) => c.path.endsWith("tsconfig.json"))
 					?.pathAliases.get("@thing")
 			).toEqual(["./src/b.ts"]);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("discoverProjectInput (#257)", () => {
+	test("resolves directories, globbed configs and non-globbed config names", async () => {
+		const dir = await mkdtemp(path.join(tmpdir(), "resect-project-input-"));
+		try {
+			await writeProject(dir);
+			await mkdir(path.join(dir, "scripts"), { recursive: true });
+			await writeFile(
+				path.join(dir, "scripts", "tool.ts"),
+				"export const t = 1;\n"
+			);
+			await writeFile(
+				path.join(dir, "project.json"),
+				JSON.stringify({ include: ["scripts/*.ts"] })
+			);
+
+			expect(discoverProjectInput(dir).kind).toBe("directory");
+
+			const globbed = discoverProjectInput(path.join(dir, "tsconfig.json"));
+			if (globbed.kind !== "config") {
+				throw new Error(`expected config scope, got ${globbed.kind}`);
+			}
+			expect([...globbed.discovery.fileOwnership.keys()]).toEqual([
+				path.join(dir, "src", "index.ts"),
+			]);
+			// Repeated calls reuse the cached single-config view.
+			const again = discoverProjectInput(path.join(dir, "tsconfig.json"));
+			expect(again.kind === "config" && again.discovery).toBe(
+				globbed.discovery
+			);
+
+			// Discovery only globs tsconfig*.json; other names use the same parser.
+			const custom = discoverProjectInput(path.join(dir, "project.json"));
+			if (custom.kind !== "config") {
+				throw new Error(`expected config scope, got ${custom.kind}`);
+			}
+			expect([...custom.discovery.fileOwnership.keys()]).toEqual([
+				path.join(dir, "scripts", "tool.ts"),
+			]);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("reports missing and invalid configs and keeps .json directories as directories", async () => {
+		const dir = await mkdtemp(path.join(tmpdir(), "resect-project-input-"));
+		try {
+			await writeFile(path.join(dir, "tsconfig.json"), "{ not json");
+			await writeFile(
+				path.join(dir, "tsconfig.bad-extends.json"),
+				JSON.stringify({ extends: "./missing-base.json" })
+			);
+			await mkdir(path.join(dir, "packages.json"), { recursive: true });
+
+			expect(discoverProjectInput(path.join(dir, "absent.json"))).toEqual({
+				kind: "missing-config",
+				path: path.join(dir, "absent.json"),
+			});
+			for (const name of ["tsconfig.json", "tsconfig.bad-extends.json"]) {
+				const invalid = discoverProjectInput(path.join(dir, name));
+				if (invalid.kind !== "invalid-config") {
+					throw new Error(`expected invalid config, got ${invalid.kind}`);
+				}
+				expect(invalid.reason).not.toBe("unreadable configuration");
+			}
+			expect(discoverProjectInput(path.join(dir, "packages.json")).kind).toBe(
+				"directory"
+			);
 		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}

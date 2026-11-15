@@ -127,6 +127,55 @@ test("isolation sizes ancestor and explicit projects instead of the report direc
 	}
 });
 
+test("find isolation sizes only the selected config's members (#257)", async () => {
+	const directory = await makeFixture("isolation-find-config", {
+		"tsconfig.json": JSON.stringify({ include: ["src/*.ts", "scripts/*.ts"] }),
+		"tsconfig.build.json": JSON.stringify({
+			include: ["src/*.ts"],
+			exclude: ["src/*.test.ts"],
+		}),
+		"src/alpha.ts": "export const alpha = 1;",
+		"src/beta.ts": "export const beta = 2;",
+		"src/alpha.test.ts": "export const alphaCase = 3;",
+		"scripts/tool.ts": "export const tool = 4;",
+	});
+	try {
+		const build = path.join(directory, "tsconfig.build.json");
+		const full = path.join(directory, "tsconfig.json");
+		const findIn = (project: string): ReadOnlyWorkerJob => ({
+			kind: "find",
+			args: ["alpha", project],
+		});
+		setIsolatedReadOnlyTools(true);
+		// Build owns 2 sources; its 4-source sibling must not decide isolation.
+		setLargeProjectSourceFiles(3);
+		expect(await shouldIsolateReadOnlyTool(findIn(build))).toBe(false);
+		expect(await shouldIsolateReadOnlyTool(findIn(full))).toBe(true);
+		expect(await shouldIsolateReadOnlyTool(findIn(directory))).toBe(true);
+		setLargeProjectSourceFiles(2);
+		expect(await shouldIsolateReadOnlyTool(findIn(build))).toBe(true);
+		// Unresolved input stays in-process, where it reports its error.
+		for (const missing of [
+			path.join(directory, "tsconfig.missing.json"),
+			path.join(directory, "absent"),
+		]) {
+			expect(await shouldIsolateReadOnlyTool(findIn(missing))).toBe(false);
+		}
+		setLargeProjectSourceFiles(0);
+		for (const project of [build, full]) {
+			const job = findIn(project);
+			setIsolatedReadOnlyTools(false);
+			const expected = await runProcessJob(job);
+			setIsolatedReadOnlyTools(true);
+			expect(await runProcessJob(job)).toEqual(expected);
+		}
+	} finally {
+		setIsolatedReadOnlyTools(false);
+		setLargeProjectSourceFiles(undefined);
+		await cleanup(directory);
+	}
+});
+
 test("workspace isolation counts unique sources across sibling projects", async () => {
 	const directory = await makeFixture("isolation-workspace", {
 		"package.json": JSON.stringify({

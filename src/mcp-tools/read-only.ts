@@ -44,7 +44,10 @@ import { checkRollbackSafeWorktree } from "../core/git.ts";
 import { loadProject, resolveTsConfig } from "../core/project.ts";
 import { analyzeSimilarity } from "../core/similarity.ts";
 import { serializeStructuredEdits } from "../core/text-changes.ts";
-import { discoverProject } from "../core/tsconfig-discovery.ts";
+import {
+	discoverProject,
+	discoverProjectInput,
+} from "../core/tsconfig-discovery.ts";
 import { discoverWorkspace } from "../core/workspace.ts";
 import type { FilenameCasing, NamingOptions } from "../types/naming.ts";
 import type { TidyFixCategory } from "../types/tidy.ts";
@@ -70,15 +73,23 @@ export async function findTool(
 	if (await shouldIsolateReadOnlyTool(job)) {
 		return runIsolatedReadOnlyTool(job);
 	}
-	const absoluteProject = path.resolve(project);
-	const discovery = discoverProject(absoluteProject);
-	if (discovery.configs.length === 0) {
-		return errorText(`No tsconfig.json files found in ${absoluteProject}`);
+	// `project` is a directory or one tsconfig; isolation sizes the same scope.
+	const scope = discoverProjectInput(project);
+	if (scope.kind === "missing-config") {
+		return errorText(`tsconfig not found: ${scope.path}`);
 	}
+	if (scope.kind === "invalid-config") {
+		return errorText(`Invalid tsconfig: ${scope.path}: ${scope.reason}`);
+	}
+	if (scope.discovery.configs.length === 0) {
+		return errorText(`No tsconfig.json files found in ${scope.path}`);
+	}
+	const baseDir =
+		scope.kind === "config" ? path.dirname(scope.path) : scope.path;
 	const result = await searchAsync(
 		query,
-		discovery.fileOwnership,
-		absoluteProject,
+		scope.discovery.fileOwnership,
+		baseDir,
 		type
 	);
 	return jsonText(findReportToJson(query, result));

@@ -27,6 +27,9 @@ const SKIP_DIRECTORIES = new Set([
 	".cache",
 ]);
 
+/** TS18003 "No inputs were found": an empty project is still a valid config. */
+const NO_INPUTS_FOUND = 18_003;
+
 export interface TsConfigInfo {
 	/** Absolute path to the tsconfig.json file */
 	path: string;
@@ -192,6 +195,80 @@ export function findOwningConfig(
 ): TsConfigInfo | undefined {
 	const absolutePath = path.resolve(filePath);
 	return discovery.fileOwnership.get(absolutePath);
+}
+
+/**
+ * A `project` argument resolved to the source scope it names (#257): a
+ * directory keeps multi-config discovery, while an explicit config file owns
+ * only its own members, so sibling configs cannot widen the scope.
+ */
+export type ProjectInputDiscovery =
+	| { kind: "directory"; path: string; discovery: ProjectDiscovery }
+	| { kind: "config"; path: string; discovery: ProjectDiscovery }
+	| { kind: "missing-config"; path: string }
+	| { kind: "invalid-config"; path: string; reason: string };
+
+/** Single-config views of cached discovery entries, released with them. */
+const configScopeCache = new WeakMap<TsConfigInfo, ProjectDiscovery>();
+
+/**
+ * Resolve a directory-or-tsconfig argument. Config files reuse the cached
+ * discovery of their directory (falling back to the same parser for names the
+ * glob does not match) and never borrow ownership from sibling configs.
+ */
+export function discoverProjectInput(
+	projectPath: string
+): ProjectInputDiscovery {
+	const absolute = path.resolve(projectPath);
+	if (!ts.sys.fileExists(absolute)) {
+		// Same convention as resolveTsConfig: a `.json` argument names a config.
+		if (absolute.endsWith(".json") && !ts.sys.directoryExists(absolute)) {
+			return { kind: "missing-config", path: absolute };
+		}
+		return {
+			kind: "directory",
+			path: absolute,
+			discovery: discoverProject(absolute),
+		};
+	}
+	const config =
+		discoverProject(path.dirname(absolute)).configs.find(
+			(candidate) => path.resolve(candidate.path) === absolute
+		) ?? parseTsConfig(absolute, new Map(), new Set());
+	if (!config) {
+		return {
+			kind: "invalid-config",
+			path: absolute,
+			reason: describeConfigError(absolute),
+		};
+	}
+	let discovery = configScopeCache.get(config);
+	if (!discovery) {
+		discovery = {
+			configs: [config],
+			fileOwnership: new Map(config.files.map((file) => [file, config])),
+			rootConfig: config,
+		};
+		configScopeCache.set(config, discovery);
+	}
+	return { kind: "config", path: absolute, discovery };
+}
+
+/** First read or parse diagnostic for a config that parseTsConfig rejected. */
+function describeConfigError(tsconfigPath: string): string {
+	const configFile = ts.readConfigFile(tsconfigPath, (f) => ts.sys.readFile(f));
+	const diagnostic =
+		configFile.error ??
+		ts
+			.parseJsonConfigFileContent(
+				configFile.config,
+				ts.sys,
+				path.dirname(tsconfigPath)
+			)
+			.errors.find((error) => error.code !== NO_INPUTS_FOUND);
+	return diagnostic
+		? ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")
+		: "unreadable configuration";
 }
 
 /**
@@ -488,7 +565,7 @@ function parseTsConfig(
 	);
 
 	// Ignore "No inputs were found" errors
-	const realErrors = parsed.errors.filter((e) => e.code !== 18_003);
+	const realErrors = parsed.errors.filter((e) => e.code !== NO_INPUTS_FOUND);
 	if (realErrors.length > 0) {
 		return null;
 	}

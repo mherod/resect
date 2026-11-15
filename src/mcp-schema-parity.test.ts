@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
@@ -345,6 +346,52 @@ for (const { name, keys, cliOnly } of [
 		}
 	});
 }
+
+test("registered find accepts a project directory or an explicit tsconfig (#257)", async () => {
+	const handler = REGISTERED_HANDLERS.get("find");
+	if (!handler) {
+		throw new Error("Missing find handler");
+	}
+	const schema = z.object(registeredSchema("find"));
+	// The published contract keeps advertising both forms without a new key.
+	expect(Object.keys(registeredSchema("find"))).toEqual([
+		"query",
+		"project",
+		"type",
+	]);
+	expect(MCP_DESCRIPTIONS.project.required).toContain(
+		"project root or a tsconfig.json"
+	);
+	const root = await makeTempDir("find-registered-config");
+	try {
+		await Bun.write(
+			`${root}/tsconfig.json`,
+			JSON.stringify({ include: ["src/*.ts", "scripts/*.ts"] })
+		);
+		await Bun.write(
+			`${root}/tsconfig.build.json`,
+			JSON.stringify({ include: ["src/*.ts"] })
+		);
+		await Bun.write(`${root}/src/gadget.ts`, "export const gadget = 1;");
+		await Bun.write(`${root}/scripts/gadget-tool.ts`, "export const tool = 2;");
+		const run = async (project: string) =>
+			parseMcpTextPayload<{ files: string[] }>(
+				await handler(schema.parse({ query: "gadget", project, type: "file" }))
+			).files;
+		expect(await run(root)).toEqual([
+			"src/gadget.ts",
+			"scripts/gadget-tool.ts",
+		]);
+		expect(await run(`${root}/tsconfig.json`)).toEqual(await run(root));
+		const relativeBuild = path.relative(
+			process.cwd(),
+			`${root}/tsconfig.build.json`
+		);
+		expect(await run(relativeBuild)).toEqual(["src/gadget.ts"]);
+	} finally {
+		await cleanup(root);
+	}
+});
 
 test("deps MCP handler still defaults an omitted dryRun to a safe preview", async () => {
 	const handler = REGISTERED_HANDLERS.get("deps");
