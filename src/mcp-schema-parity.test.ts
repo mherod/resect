@@ -3,8 +3,10 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import {
+	cleanup,
 	makeFixture,
 	makeProject,
+	makeTempDir,
 	parseMcpTextPayload,
 } from "./commands/__test-helpers.ts";
 import { COMMAND_SPECS, cliHelp } from "./commands/command-spec.ts";
@@ -182,6 +184,28 @@ const QUERY_BASELINE = {
 	},
 } as const;
 
+// D2 receipts captured from the shipped registrations at dcf7c9d before migration.
+const DIRECTORY_BASELINE = {
+	discover: {
+		help: "3eaf8344ded74823831fec8a3e8736869eff7e415105ef337b7a79075fd377c9",
+		schema: "5e3bf1f6862167e43c793d4f21aa0de773416eece53776958e8c570c069e7a0f",
+		prose: "85e36882b5203b35f5835c286cc4d7431503d78347cdbaa06334db84cb6cf095",
+		flags: ["verbose", "workspace", "only-related-to", "json"],
+	},
+	workspace: {
+		help: "644b36a10757c62fbeb730826802a997840e7fdc5033b6dd502ec2c92448ba95",
+		schema: "609a94907dd0e7f957e353bd858cbc3a35929ecbbb02bec9fec54fe6a0b91caa",
+		prose: "c656914aa702c4e4e6ee017b9c054ef8d3821ce7b4bd68441fbbd7007fbb08bd",
+		flags: ["verbose", "json"],
+	},
+	deps: {
+		help: "374fa0059c14268989a150fb85ec92dbc5d861ef115247b80e95d56287e79bcf",
+		schema: "5135281b7d564e0f60434b1f68823d19c35d19ae10c828aba261e54b6fd3b3da",
+		prose: "7a09554ad7432a21f27ec0bb5969a2e1d8e2e3e6748404a3cbd80d720b613c59",
+		flags: ["fix", "dry-run", "force", "strict", "json"],
+	},
+} as const;
+
 function stableContract(value: unknown): unknown {
 	if (Array.isArray(value)) {
 		return value.map(stableContract);
@@ -207,6 +231,7 @@ function contractHash(value: unknown): string {
 for (const [name, baseline] of Object.entries({
 	...REPORT_BASELINE,
 	...QUERY_BASELINE,
+	...DIRECTORY_BASELINE,
 })) {
 	test(`${name} preserves its registered schema and exact CLI presentation`, () => {
 		const command = COMMANDS.find((candidate) => candidate.name === name);
@@ -277,6 +302,75 @@ for (const { name, keys, required } of [
 		}
 	});
 }
+
+for (const { name, keys, cliOnly } of [
+	{
+		name: "discover",
+		keys: ["directory"],
+		cliOnly: ["verbose", "workspace", "onlyRelatedTo", "json"],
+	},
+	{ name: "workspace", keys: ["directory"], cliOnly: ["verbose", "json"] },
+	{
+		name: "deps",
+		keys: ["directory", "fix", "dryRun", "force", "strict"],
+		cliOnly: ["json"],
+	},
+]) {
+	test(`${name} MCP keeps a required plain directory and no CLI-only fields`, () => {
+		const shape = registeredSchema(name);
+		const schema = z.object(shape);
+		expect(Object.keys(shape)).toEqual(keys);
+		for (const key of cliOnly) {
+			expect(shape).not.toHaveProperty(key);
+		}
+		expect(schema.parse({ directory: "" })).toEqual({ directory: "" });
+		expect(schema.safeParse({}).success).toBeFalse();
+		for (const directory of [1, false, null, {}, []]) {
+			expect(schema.safeParse({ directory }).success).toBeFalse();
+		}
+		for (const flag of keys.filter((key) => key !== "directory")) {
+			// Omitted flags stay undefined: handler defaults, never schema defaults.
+			expect(schema.parse({ directory: "." })).not.toHaveProperty(flag);
+			for (const value of [true, false]) {
+				expect(schema.parse({ directory: ".", [flag]: value })).toEqual({
+					directory: ".",
+					[flag]: value,
+				});
+			}
+			for (const value of ["true", 1, null, []]) {
+				expect(
+					schema.safeParse({ directory: ".", [flag]: value }).success
+				).toBeFalse();
+			}
+		}
+	});
+}
+
+test("deps MCP handler still defaults an omitted dryRun to a safe preview", async () => {
+	const handler = REGISTERED_HANDLERS.get("deps");
+	if (!handler) {
+		throw new Error("Missing deps handler");
+	}
+	const root = await makeTempDir("deps-default-preview");
+	try {
+		await Bun.write(
+			`${root}/pnpm-workspace.yaml`,
+			"packages:\n  - 'packages/*'\n"
+		);
+		await Bun.write(
+			`${root}/package.json`,
+			`${JSON.stringify({ name: "root", private: true })}\n`
+		);
+		const schema = z.object(registeredSchema("deps"));
+		const result = parseMcpTextPayload<{ dryRun: boolean; applied: boolean }>(
+			await handler(schema.parse({ directory: root, fix: true }))
+		);
+		expect(result.dryRun).toBeTrue();
+		expect(result.applied).toBeFalse();
+	} finally {
+		await cleanup(root);
+	}
+});
 
 test("query MCP cardinalities and optional fields retain their existing domains", async () => {
 	const find = z.object(registeredSchema("find"));

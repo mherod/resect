@@ -9,7 +9,6 @@
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
 import { affected } from "../commands/affected.ts";
 import { analyzeImpact } from "../commands/analyze-impact.ts";
 import {
@@ -17,6 +16,14 @@ import {
 	AUDIT_POSITIONAL_DESCRIPTORS,
 } from "../commands/command-descriptor.ts";
 import { mcpDescription } from "../commands/command-spec.ts";
+import {
+	DEPS_OPTION_DESCRIPTORS,
+	DEPS_POSITIONAL_DESCRIPTORS,
+	DISCOVER_OPTION_DESCRIPTORS,
+	DISCOVER_POSITIONAL_DESCRIPTORS,
+	WORKSPACE_OPTION_DESCRIPTORS,
+	WORKSPACE_POSITIONAL_DESCRIPTORS,
+} from "../commands/directory-descriptors.ts";
 import { toZodShape } from "../commands/option-descriptor-zod.ts";
 import {
 	AFFECTED_OPTION_DESCRIPTORS,
@@ -119,13 +126,10 @@ export function registerAnalysisTools(server: McpServer): void {
 		"discover",
 		{
 			description: mcpDescription("discover"),
-			inputSchema: {
-				directory: z
-					.string()
-					.describe(
-						"Absolute or cwd-relative path to the directory to scan for tsconfig.json files (usually the repo root)"
-					),
-			},
+			inputSchema: toZodShape([
+				...DISCOVER_POSITIONAL_DESCRIPTORS,
+				...DISCOVER_OPTION_DESCRIPTORS,
+			]),
 		},
 		async ({ directory }) => {
 			return withErrorHandling(async () => {
@@ -138,13 +142,10 @@ export function registerAnalysisTools(server: McpServer): void {
 		"workspace",
 		{
 			description: mcpDescription("workspace"),
-			inputSchema: {
-				directory: z
-					.string()
-					.describe(
-						"Absolute or cwd-relative path to the workspace root (the directory containing pnpm-workspace.yaml or a package.json with a 'workspaces' field)"
-					),
-			},
+			inputSchema: toZodShape([
+				...WORKSPACE_POSITIONAL_DESCRIPTORS,
+				...WORKSPACE_OPTION_DESCRIPTORS,
+			]),
 		},
 		async ({ directory }) => {
 			return withErrorHandling(async () => {
@@ -157,35 +158,10 @@ export function registerAnalysisTools(server: McpServer): void {
 		"deps",
 		{
 			description: mcpDescription("deps"),
-			inputSchema: {
-				directory: z
-					.string()
-					.describe(
-						"Absolute or cwd-relative path to a pnpm, Yarn, or npm workspace"
-					),
-				fix: z
-					.boolean()
-					.optional()
-					.describe(
-						"Plan or apply dependency contract repairs (default false)"
-					),
-				dryRun: z
-					.boolean()
-					.optional()
-					.describe(
-						"Preview repairs without writing files (default true for MCP safety)"
-					),
-				force: z
-					.boolean()
-					.optional()
-					.describe("Override the dirty-worktree guard when applying repairs"),
-				strict: z
-					.boolean()
-					.optional()
-					.describe(
-						"Return the tool result as an error when drift, conflicts, or policy issues are found"
-					),
-			},
+			inputSchema: toZodShape([
+				...DEPS_POSITIONAL_DESCRIPTORS,
+				...DEPS_OPTION_DESCRIPTORS,
+			]),
 		},
 		async ({ directory, fix, dryRun, force, strict }) => {
 			return withErrorHandling(async () => {

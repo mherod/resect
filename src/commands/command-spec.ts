@@ -41,6 +41,14 @@ import {
 	type CommandDescriptor,
 } from "./command-descriptor.ts";
 import {
+	DEPS_OPTION_DESCRIPTORS,
+	DEPS_POSITIONAL_DESCRIPTORS,
+	DISCOVER_OPTION_DESCRIPTORS,
+	DISCOVER_POSITIONAL_DESCRIPTORS,
+	WORKSPACE_OPTION_DESCRIPTORS,
+	WORKSPACE_POSITIONAL_DESCRIPTORS,
+} from "./directory-descriptors.ts";
+import {
 	MOVE_OPTION_DESCRIPTORS,
 	MOVE_POSITIONAL_DESCRIPTORS,
 } from "./move-descriptors.ts";
@@ -225,6 +233,8 @@ Examples:
 	},
 	{
 		name: "discover",
+		options: DISCOVER_OPTION_DESCRIPTORS,
+		positionals: DISCOVER_POSITIONAL_DESCRIPTORS,
 		usage: "<directory>",
 		summary: "Discover tsconfig files and project structure",
 		cliHelp: `
@@ -236,10 +246,7 @@ Arguments:
   directory    Path to the project directory to scan
 
 Options:
-  --verbose          Show detailed file ownership and path aliases
-  --workspace        Scan across all workspace packages
-  --only-related-to  Filter file ownership output to a file, folder, or glob pattern
-  --json             Output results as JSON
+${toCliHelpOptions(DISCOVER_OPTION_DESCRIPTORS)}
 
 Output includes:
   • All tsconfig.json files found
@@ -257,6 +264,8 @@ Examples:
 	},
 	{
 		name: "workspace",
+		options: WORKSPACE_OPTION_DESCRIPTORS,
+		positionals: WORKSPACE_POSITIONAL_DESCRIPTORS,
 		usage: "<directory>",
 		summary: "Discover pnpm/yarn/npm workspace packages",
 		cliHelp: `
@@ -268,8 +277,7 @@ Arguments:
   directory    Path to the workspace root
 
 Options:
-  --verbose    Show detailed export maps
-  --json       Output results as JSON
+${toCliHelpOptions(WORKSPACE_OPTION_DESCRIPTORS)}
 
 Examples:
   ${CLI_NAME} workspace .
@@ -281,6 +289,8 @@ Examples:
 	},
 	{
 		name: "deps",
+		options: DEPS_OPTION_DESCRIPTORS,
+		positionals: DEPS_POSITIONAL_DESCRIPTORS,
 		usage: "<directory>",
 		summary: "Check and repair workspace consumer dependency contracts",
 		cliHelp: `
@@ -293,11 +303,7 @@ Arguments:
   directory    Path to a pnpm, Yarn, or npm workspace
 
 Options:
-  --fix        Repair manifest and Turbo dependency drift
-  --dry-run    Preview --fix edits without writing files
-  --force      Allow --fix in a dirty git worktree
-  --strict     Exit non-zero when drift, conflicts, or policy issues are found
-  --json       Output the structured report and planned edits as JSON
+${toCliHelpOptions(DEPS_OPTION_DESCRIPTORS)}
 
 Safety:
   • Conflicts and malformed policies block all writes

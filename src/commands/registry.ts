@@ -13,6 +13,11 @@ import {
 } from "./command-descriptor.ts";
 import { CLI_NAME, cliHelp } from "./command-spec.ts";
 import { depsCommand } from "./deps.ts";
+import {
+	DEPS_OPTION_DESCRIPTORS,
+	DISCOVER_OPTION_DESCRIPTORS,
+	WORKSPACE_OPTION_DESCRIPTORS,
+} from "./directory-descriptors.ts";
 import { discoverCommand } from "./discover.ts";
 import { extractCommonCommand } from "./extract-common.ts";
 import { extractComponentCommand } from "./extract-component.ts";
@@ -261,15 +266,12 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "discover",
 		helpText: cliHelp("discover"),
-		options: ["verbose", "workspace", "only-related-to", "json"],
+		options: DISCOVER_OPTION_DESCRIPTORS.map(({ name }) => name),
 		run: async ([directory], values) => {
 			requireArg("discover", "<directory>", directory);
 			await discoverCommand({
 				directory,
-				verbose: values.verbose,
-				workspace: values.workspace,
-				json: values.json,
-				onlyRelatedTo: values["only-related-to"],
+				...parseDeclaredOptions(DISCOVER_OPTION_DESCRIPTORS, values),
 			});
 		},
 	},
@@ -277,13 +279,12 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "workspace",
 		helpText: cliHelp("workspace"),
-		options: ["verbose", "json"],
+		options: WORKSPACE_OPTION_DESCRIPTORS.map(({ name }) => name),
 		run: async ([directory], values) => {
 			requireArg("workspace", "<directory>", directory);
 			await workspaceCommand({
 				directory,
-				verbose: values.verbose,
-				json: values.json,
+				...parseDeclaredOptions(WORKSPACE_OPTION_DESCRIPTORS, values),
 			});
 		},
 	},
@@ -291,16 +292,12 @@ export const COMMANDS: CommandDef[] = [
 	{
 		name: "deps",
 		helpText: cliHelp("deps"),
-		options: ["fix", "dry-run", "force", "strict", "json"],
+		options: DEPS_OPTION_DESCRIPTORS.map(({ name }) => name),
 		run: async ([directory], values) => {
 			requireArg("deps", "<directory>", directory);
 			await depsCommand({
 				directory,
-				fix: values.fix,
-				dryRun: values["dry-run"],
-				force: values.force,
-				strict: values.strict,
-				json: values.json,
+				...parseDeclaredOptions(DEPS_OPTION_DESCRIPTORS, values),
 			});
 		},
 	},
